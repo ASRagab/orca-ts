@@ -6,10 +6,9 @@ export function jsonSchemaFromZod(schema: z.ZodType): unknown {
 }
 
 export function canonicalJsonSchemas(): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(CanonicalSchemas).map(([name, schema]) => [
-      name,
-      jsonSchemaFromZod(schema)
-    ])
-  );
+  const schemas: Record<string, unknown> = {};
+  for (const [name, schema] of Object.entries(CanonicalSchemas)) {
+    schemas[name] = jsonSchemaFromZod(schema);
+  }
+  return schemas;
 }

@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "neverthrow";
-import type { z } from "zod";
+import type { ZodType } from "zod";
 import { structuredOutputValidationFailed } from "./errors.ts";
 import type { RuntimeError } from "./schemas.ts";
 
@@ -9,7 +9,7 @@ export interface StructuredOutput<T> {
 }
 
 export function parseStructuredOutput<T>(
-  schema: z.ZodType<T>,
+  schema: ZodType<T>,
   raw: unknown
 ): Result<StructuredOutput<T>, RuntimeError> {
   const parsed = schema.safeParse(raw);
@@ -20,7 +20,7 @@ export function parseStructuredOutput<T>(
   return err(
     structuredOutputValidationFailed({
       raw,
-      issues: parsed.error.issues.map((issue) => issue.message)
+      issues: parsed.error.issues.map(({ message }) => message)
     })
   );
 }

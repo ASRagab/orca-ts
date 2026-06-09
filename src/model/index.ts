@@ -1,4 +1,4 @@
-export * from "./backend-config.ts";
+export type * from "./backend-config.ts";
 export * from "./brand.ts";
 export * from "./errors.ts";
 export * from "./json-schema.ts";

@@ -27,7 +27,6 @@ export function createAskUserMcpServer(options: AskUserMcpServerOptions): AskUse
         readonly id?: string | number;
         readonly method?: string;
         readonly params?: {
-          readonly name?: string;
           readonly arguments?: { readonly question?: string };
         };
         readonly question?: string;
@@ -50,10 +49,10 @@ export function createAskUserMcpServer(options: AskUserMcpServerOptions): AskUse
   return {
     url: server.url.href.replace(/\/$/, ""),
     async ask(request) {
-      return await options.responder(request);
+      return options.responder(request);
     },
     async close() {
-      await server.stop(true);
+      return server.stop(true);
     }
   };
 }

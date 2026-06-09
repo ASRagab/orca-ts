@@ -20,16 +20,18 @@ export interface ConversationHarnessOptions<B extends BackendTag> {
 export async function collectConversation<B extends BackendTag>(
   options: ConversationHarnessOptions<B>
 ): Promise<ConversationCapture<B>> {
+  const { backend, capacity, canAskUser, consume } = options;
   const conversation = new StreamConversation({
-    backend: options.backend,
-    ...(options.capacity === undefined ? {} : { capacity: options.capacity }),
-    ...(options.canAskUser === undefined ? {} : { canAskUser: options.canAskUser })
+    backend,
+    ...(capacity === undefined ? {} : { capacity }),
+    ...(canAskUser === undefined ? {} : { canAskUser })
   });
 
   try {
-    await options.consume(conversation);
+    await consume(conversation);
   } catch (error) {
-    conversation.fail(backendFailed(options.backend, errorMessage(error)));
+    const message = error instanceof Error ? error.message : String(error);
+    conversation.fail(backendFailed(backend, message));
   }
 
   const events: ConversationEvent[] = [];
@@ -38,8 +40,4 @@ export async function collectConversation<B extends BackendTag>(
   }
 
   return { events, outcome: await conversation.awaitResult() };
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

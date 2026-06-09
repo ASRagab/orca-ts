@@ -50,7 +50,7 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
     this.iteratorStarted = true;
 
     return {
-      next: async () => this.next()
+      next: () => this.next()
     };
   }
 
@@ -66,7 +66,7 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
       return { value: undefined, done: true };
     }
 
-    return await new Promise<IteratorResult<T>>((resolve) => this.takers.push(resolve));
+    return new Promise<IteratorResult<T>>((resolve) => this.takers.push(resolve));
   }
 
   private ensureOpen(): void {

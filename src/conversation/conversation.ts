@@ -61,20 +61,16 @@ export class StreamConversation<B extends BackendTag> implements Conversation<B>
   }
 
   async emit(event: ConversationEvent): Promise<Result<void, RuntimeError>> {
+    let unsupportedReason: string | undefined;
+
     if (event.type === "user_question" && !this.canAskUser) {
-      const error = unsupportedFeature(
-        event.type,
-        "Human interaction events require an explicit interactive conversation"
-      );
-      this.fail(error);
-      return err(error);
+      unsupportedReason = "Human interaction events require an explicit interactive conversation";
+    } else if (event.type === "approve_tool") {
+      unsupportedReason = "Live approval events are unsupported for autonomous execution";
     }
 
-    if (event.type === "approve_tool") {
-      const error = unsupportedFeature(
-        event.type,
-        "Live approval events are unsupported for autonomous execution"
-      );
+    if (unsupportedReason !== undefined) {
+      const error = unsupportedFeature(event.type, unsupportedReason);
       this.fail(error);
       return err(error);
     }
