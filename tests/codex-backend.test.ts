@@ -255,7 +255,11 @@ describe("Codex live backend constructor", () => {
     });
   });
 
-  test("routes interactive ask_user calls through the Orca MCP bridge", async () => {
+  test("surfaces interactive ask_user as a question; the answer arrives on item.completed", async () => {
+    // The answer is routed by the Orca MCP HTTP bridge (responder), not the
+    // consumer; Codex re-emits it on the matching `item.completed`. So the
+    // consumer must emit the question for display and turn that completion into
+    // the tool_result — without invoking the responder a second time.
     let args: readonly string[] = [];
     let closeBridge!: () => void;
     const closed = new Promise<void>((resolve) => {
@@ -283,6 +287,16 @@ describe("Codex live backend constructor", () => {
               server: "orca",
               tool: "ask_user",
               arguments: { question: "Continue?" }
+            }
+          },
+          {
+            type: "item.completed",
+            item: {
+              id: "ask_1",
+              type: "mcp_tool_call",
+              server: "orca",
+              tool: "ask_user",
+              result: { content: [{ text: "answer:Continue?" }] }
             }
           },
           { type: "item.completed", item: { id: "msg", type: "agent_message", text: "done" } },

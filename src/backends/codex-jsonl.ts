@@ -2,7 +2,6 @@ import type { z } from "zod";
 import {
   collectConversation,
   StreamConversation,
-  type AskUserRequest,
   type ConversationCapture
 } from "../conversation/index.ts";
 import {
@@ -84,7 +83,12 @@ export function codexExecJsonlArgs(args: CodexExecArgs = {}): readonly string[] 
 
 export interface CodexJsonlOptions<Output = unknown> {
   readonly schema?: z.ZodType<Output>;
-  readonly askUser?: (request: AskUserRequest) => Promise<string>;
+  /** Interactive conversations surface the agent's `ask_user` call as a
+   * `user_question` event for the renderer. The answer is NOT routed here — Codex
+   * obtains it from the Orca MCP HTTP bridge and re-emits it on the matching
+   * `item.completed`, which the tool-result branch turns into a `tool_result`.
+   * Autonomous conversations leave this false and reject `ask_user` explicitly. */
+  readonly interactive?: boolean;
 }
 
 export async function collectCodexJsonl<Output = unknown>(
@@ -152,15 +156,12 @@ export function createCodexJsonlConsumer<Output = unknown>(
 
       if (line.type === "item.started" && isToolItem(line.item)) {
         if (line.item.server === "orca" && line.item.tool === "ask_user") {
-          if (options.askUser) {
+          if (options.interactive) {
+            // Surface the question for the renderer only. The answer travels
+            // Codex ↔ Orca MCP HTTP bridge and arrives on the matching
+            // `item.completed`, which the tool-result branch emits below.
             const question = askUserQuestion(line.item.arguments);
             await conversation.emit({ type: "user_question", question });
-            const answer = await options.askUser({ question, rawInput: line.item.arguments });
-            await conversation.emit({
-              type: "tool_result",
-              toolCallId: line.item.id ?? "",
-              output: answer
-            });
             return;
           }
           completed = true;

@@ -105,7 +105,6 @@ export async function runCodexConversation<Output>(
       ...(config.mcpServerUrl === undefined ? {} : { mcpServerUrl: config.mcpServerUrl })
     });
 
-    const server = askUserServer;
     await runSubprocessConversation({
       backend: "codex",
       command,
@@ -118,9 +117,9 @@ export async function runCodexConversation<Output>(
       createConsumer: () =>
         createCodexJsonlConsumer(conversation, {
           ...(config.schema === undefined ? {} : { schema: config.schema }),
-          ...(server === undefined
-            ? {}
-            : { askUser: async (askRequest) => await server.ask(askRequest) })
+          // The answer is routed by the MCP HTTP bridge (askUserServer), not the
+          // consumer; the consumer only surfaces the question for the renderer.
+          ...(config.interactive ? { interactive: true } : {})
         })
     });
   } catch (error) {

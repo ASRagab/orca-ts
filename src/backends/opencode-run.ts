@@ -231,22 +231,43 @@ async function defaultStartServer(options: OpenCodeBackendOptions): Promise<Open
     stdio: ["ignore", "pipe", "pipe"]
   });
 
+  // Read until the "listening on …" line WITHOUT breaking the stream: a `break`
+  // out of `for await (splitLines(stdout))` calls the iterator's `.return()`,
+  // which destroys `child.stdout` — then the server can't drain and a post-startup
+  // log write hits a closed pipe. Instead attach a persistent `data` listener
+  // (keeps the stream in flowing mode, draining forever) and resolve off it.
   const stdout = child.stdout;
-  let baseUrl: string | undefined;
-  for await (const line of splitLines(stdout)) {
-    const match = ListeningLine.exec(line);
-    if (match) {
-      baseUrl = match[1];
-      break;
-    }
-  }
-  if (baseUrl === undefined) {
+  let baseUrl: string;
+  try {
+    baseUrl = await new Promise<string>((resolve, reject) => {
+      let buffer = "";
+      let resolved = false;
+      stdout.on("data", (chunk: Buffer | string) => {
+        if (resolved) {
+          return; // listener stays attached purely to drain the pipe
+        }
+        buffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+        const match = ListeningLine.exec(buffer);
+        if (match?.[1] !== undefined) {
+          resolved = true;
+          resolve(match[1]);
+        }
+      });
+      child.once("error", (error: Error) => {
+        if (!resolved) {
+          reject(error);
+        }
+      });
+      stdout.once("end", () => {
+        if (!resolved) {
+          reject(new Error("opencode serve did not report a listening URL"));
+        }
+      });
+    });
+  } catch (error) {
     child.kill("SIGINT");
-    throw new Error("opencode serve did not report a listening URL");
+    throw error;
   }
-
-  // Keep draining stdout so the server's log output can't back-fill the pipe.
-  stdout.resume();
 
   return {
     url: baseUrl,
