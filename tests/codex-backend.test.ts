@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { claude, codex, sessionId, z, type CodexProcess } from "../src/index.ts";
+import { codex, gemini, sessionId, z, type CodexProcess } from "../src/index.ts";
 
 describe("Codex live backend constructor", () => {
   test("starts codex exec JSONL and returns normalized conversation output", async () => {
@@ -227,30 +227,30 @@ describe("Codex live backend constructor", () => {
   });
 
   test("returns explicit unsupported structured-output and resume paths", async () => {
-    const structured = await claude()
+    const structured = await gemini()
       .autonomous({ prompt: "json", schema: z.object({ answer: z.string() }) })
       .awaitResult();
     expect(structured).toEqual({
       type: "failed",
       error: {
         _tag: "UnsupportedFeature",
-        feature: "claude structured output",
-        reason: "claude backend does not support live structured output"
+        feature: "gemini structured output",
+        reason: "gemini backend does not support live structured output"
       }
     });
 
-    const resume = await claude()
+    const resume = await gemini()
       .autonomous({
         prompt: "continue",
-        config: { resumeSessionId: sessionId("claude", "claude-prev") }
+        config: { resumeSessionId: sessionId("gemini", "gemini-prev") }
       })
       .awaitResult();
     expect(resume).toEqual({
       type: "failed",
       error: {
         _tag: "UnsupportedFeature",
-        feature: "claude resume",
-        reason: "claude backend does not support session resume"
+        feature: "gemini resume",
+        reason: "gemini backend does not support session resume"
       }
     });
   });

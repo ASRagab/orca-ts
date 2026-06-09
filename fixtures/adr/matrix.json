@@ -33,7 +33,19 @@
     "adr": "0006",
     "title": "Drive Claude Code via stream-json instead of TTY handoff",
     "disposition": "ported",
-    "acceptance": "Claude Tier 1 fixtures map inbound messages to normalized events."
+    "acceptance": "Claude Tier 1 fixtures map inbound messages to normalized events; the live `claude()` driver spawns claude stream-json over the shared subprocess helper and returns branded results.",
+    "selfHostingParity": [
+      {
+        "capability": "live autonomous driver",
+        "status": "revived",
+        "acceptance": "Claude fake-process tests cover ordered events, branded result, model/resume/permission args, stdin user-turn delivery, structured output (valid + invalid), stream-ended-before-result, and cancellation."
+      },
+      {
+        "capability": "interactive ask_user bridge",
+        "status": "cut",
+        "acceptance": "Autonomous-only (`canAskUser=false`); the MCP ask-user bridge and `--mcp-config` wiring are intentionally not ported per ADR 0012."
+      }
+    ]
   },
   {
     "adr": "0007",
@@ -137,7 +149,19 @@
     "adr": "0014",
     "title": "OpenCode server driver",
     "disposition": "ported",
-    "acceptance": "OpenCode Tier 1 fixtures and lifecycle tests pass."
+    "acceptance": "OpenCode Tier 1 fixtures and lifecycle tests pass; the live `opencode()` driver runs turns through a shared serve+SSE manager and returns branded results.",
+    "selfHostingParity": [
+      {
+        "capability": "live autonomous driver",
+        "status": "revived",
+        "acceptance": "OpenCode fake-transport tests cover branded result, server reuse across conversations with teardown on shutdown, structured result via SSE, cancellation keeping the server alive, and failed startup."
+      },
+      {
+        "capability": "serve lifecycle teardown",
+        "status": "intentionally different",
+        "acceptance": "orca-ts has no global Ox-scope hook, so the shared server is torn down via a caller-invoked `opencode().shutdown()` rather than `releaseAfterScope`."
+      }
+    ]
   },
   {
     "adr": "0015",

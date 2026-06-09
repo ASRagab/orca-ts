@@ -36,9 +36,6 @@ export function unsupportedBackend<B extends BackendTag>(tag: B): LlmBackend<B> 
   };
 }
 
-export const claude = () => unsupportedBackend("claude");
-export const opencode = () => unsupportedBackend("opencode");
-export const pi = () => unsupportedBackend("pi");
 export const gemini = () => unsupportedBackend("gemini");
 
 export function fakeResult<B extends BackendTag>(
