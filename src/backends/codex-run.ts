@@ -169,61 +169,46 @@ function resolveCodexConfig<Output>(
   const optionConfig = options.config;
   const requestConfig = request.config;
 
-  const model = requestConfig?.model ?? optionConfig?.model ?? options.model;
-  if (model !== undefined) {
-    config.model = model;
-  }
-
-  const systemPrompt = requestConfig?.systemPrompt ?? optionConfig?.systemPrompt;
-  if (systemPrompt !== undefined) {
-    config.systemPrompt = systemPrompt;
-  }
-
-  const approvalPolicy =
-    requestConfig?.approvalPolicy ?? optionConfig?.approvalPolicy ?? options.approvalPolicy;
-  if (approvalPolicy !== undefined) {
-    config.approvalPolicy = approvalPolicy;
-  }
-
-  const sandbox = requestConfig?.sandbox ?? optionConfig?.sandbox ?? options.sandbox;
-  if (sandbox !== undefined) {
-    config.sandbox = sandbox;
-  }
-
-  const readOnly = requestConfig?.readOnly ?? optionConfig?.readOnly ?? options.readOnly;
-  if (readOnly !== undefined) {
-    config.readOnly = readOnly;
-  }
-
-  const selfManagedGit = requestConfig?.selfManagedGit ?? optionConfig?.selfManagedGit;
-  if (selfManagedGit !== undefined) {
-    config.selfManagedGit = selfManagedGit;
-  }
-
-  const retryAttempts = requestConfig?.retry?.attempts ?? optionConfig?.retry?.attempts;
-  if (retryAttempts !== undefined) {
-    config.retryAttempts = retryAttempts;
-  }
-
-  const schema =
+  setConfigValue(config, "model", requestConfig?.model ?? optionConfig?.model ?? options.model);
+  setConfigValue(config, "systemPrompt", requestConfig?.systemPrompt ?? optionConfig?.systemPrompt);
+  setConfigValue(
+    config,
+    "approvalPolicy",
+    requestConfig?.approvalPolicy ?? optionConfig?.approvalPolicy ?? options.approvalPolicy
+  );
+  setConfigValue(config, "sandbox", requestConfig?.sandbox ?? optionConfig?.sandbox ?? options.sandbox);
+  setConfigValue(config, "readOnly", requestConfig?.readOnly ?? optionConfig?.readOnly ?? options.readOnly);
+  setConfigValue(
+    config,
+    "selfManagedGit",
+    requestConfig?.selfManagedGit ?? optionConfig?.selfManagedGit
+  );
+  setConfigValue(config, "retryAttempts", requestConfig?.retry?.attempts ?? optionConfig?.retry?.attempts);
+  setConfigValue(
+    config,
+    "schema",
     requestConfig?.structuredOutput?.schema ??
-    request.schema ??
-    (optionConfig?.structuredOutput?.schema as z.ZodType<Output> | undefined);
-  if (schema !== undefined) {
-    config.schema = schema;
-  }
-
-  const resumeSessionId = requestConfig?.resumeSessionId;
-  if (resumeSessionId !== undefined) {
-    config.resumeSessionId = String(resumeSessionId);
-  }
-
-  const interactive = requestConfig?.interactive ?? optionConfig?.interactive;
-  if (interactive !== undefined) {
-    config.interactive = interactive;
-  }
+      request.schema ??
+      (optionConfig?.structuredOutput?.schema as z.ZodType<Output> | undefined)
+  );
+  setConfigValue(
+    config,
+    "resumeSessionId",
+    requestConfig?.resumeSessionId === undefined ? undefined : String(requestConfig.resumeSessionId)
+  );
+  setConfigValue(config, "interactive", requestConfig?.interactive ?? optionConfig?.interactive);
 
   return config;
+}
+
+function setConfigValue<Output, Key extends keyof ResolvedCodexConfig<Output>>(
+  config: ResolvedCodexConfig<Output>,
+  key: Key,
+  value: ResolvedCodexConfig<Output>[Key]
+): void {
+  if (value !== undefined) {
+    config[key] = value;
+  }
 }
 
 function composePrompt<Output>(prompt: string, config: ResolvedCodexConfig<Output>): string {
@@ -270,7 +255,7 @@ async function* splitLines(
   let buffer = "";
 
   for await (const chunk of chunks) {
-    buffer += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+    buffer += decodeChunk(decoder, chunk);
     let newlineIndex = buffer.indexOf("\n");
     while (newlineIndex !== -1) {
       const line = buffer.slice(0, newlineIndex).replace(/\r$/, "");
@@ -292,11 +277,16 @@ async function collectText(chunks: AsyncIterable<string | Uint8Array> | undefine
   }
 
   const decoder = new TextDecoder();
-  let text = "";
+  const text: string[] = [];
   for await (const chunk of chunks) {
-    text += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+    text.push(decodeChunk(decoder, chunk));
   }
-  return text + decoder.decode();
+  text.push(decoder.decode());
+  return text.join("");
+}
+
+function decodeChunk(decoder: TextDecoder, chunk: string | Uint8Array): string {
+  return typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
 }
 
 function errorMessage(error: unknown): string {

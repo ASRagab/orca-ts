@@ -38,7 +38,7 @@ interface CodexLine {
     readonly output?: unknown;
     readonly arguments?: unknown;
     readonly result?: {
-      readonly content?: ReadonlyArray<{ readonly type?: string; readonly text?: string }>;
+      readonly content?: ReadonlyArray<{ readonly text?: string }>;
     } | null;
     readonly error?: string | null;
   };
@@ -59,6 +59,7 @@ export interface CodexExecArgs {
 
 export function codexExecJsonlArgs(args: CodexExecArgs = {}): readonly string[] {
   const sandbox = args.sandbox ?? (args.readOnly ? "read-only" : undefined);
+  const promptArgs = args.prompt === undefined ? [] : [args.prompt];
   const commonArgs = [
     "--json",
     ...(args.model ? ["--model", args.model] : []),
@@ -74,11 +75,11 @@ export function codexExecJsonlArgs(args: CodexExecArgs = {}): readonly string[] 
       "resume",
       ...commonArgs,
       args.resumeSessionId,
-      ...(args.prompt !== undefined ? [args.prompt] : [])
+      ...promptArgs
     ];
   }
 
-  return ["exec", ...commonArgs, ...(args.prompt !== undefined ? [args.prompt] : [])];
+  return ["exec", ...commonArgs, ...promptArgs];
 }
 
 export interface CodexJsonlOptions<Output = unknown> {
@@ -90,7 +91,7 @@ export async function collectCodexJsonl<Output = unknown>(
   lines: readonly string[],
   options: CodexJsonlOptions<Output> = {}
 ): Promise<CodexParseResult> {
-  return await collectConversation({
+  return collectConversation({
     backend: "codex",
     consume: async (conversation) => {
       await consumeCodexJsonl(lines, conversation, options);
@@ -139,7 +140,8 @@ export function createCodexJsonlConsumer<Output = unknown>(
         line = JSON.parse(raw) as CodexLine;
       } catch (error) {
         completed = true;
-        conversation.fail(backendFailed("codex", `invalid codex JSONL: ${errorMessage(error)}`));
+        const message = error instanceof Error ? error.message : String(error);
+        conversation.fail(backendFailed("codex", `invalid codex JSONL: ${message}`));
         return;
       }
 
@@ -297,7 +299,7 @@ function toolOutput(item: NonNullable<CodexLine["item"]>): unknown {
   if (item.output !== undefined) {
     return item.output;
   }
-  const content = textContent(item.result?.content);
+  const content = item.result?.content?.map((part) => part.text ?? "").join("") ?? "";
   if (content.length > 0) {
     return content;
   }
@@ -312,18 +314,10 @@ function askUserQuestion(input: unknown): string {
   return "";
 }
 
-function textContent(content: ReadonlyArray<{ readonly text?: string }> | undefined): string {
-  return content?.map((part) => part.text ?? "").join("") ?? "";
-}
-
 function normalizeCodexUsage(usage: CodexLine["usage"]): Usage {
   return {
     input: usage?.input_tokens ?? 0,
     output: usage?.output_tokens ?? 0,
     ...(usage?.reasoning_output_tokens ? { reasoning: usage.reasoning_output_tokens } : {})
   };
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

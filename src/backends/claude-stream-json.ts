@@ -45,7 +45,7 @@ type ClaudeContentBlock =
 export type ClaudeParseResult = ConversationCapture<"claude">;
 
 export async function collectClaudeStreamJson(lines: readonly string[]): Promise<ClaudeParseResult> {
-  return await collectConversation({
+  return collectConversation({
     backend: "claude",
     consume: async (conversation) => {
       await consumeClaudeStreamJson(lines, conversation);
@@ -101,7 +101,7 @@ async function consumeMessage(
   conversation: StreamConversation<"claude">
 ): Promise<void> {
   const content = line.message?.content ?? [];
-  let emittedAssistantContent = false;
+  let endsAssistantTurn = false;
 
   for (const block of content) {
     switch (block.type) {
@@ -112,7 +112,6 @@ async function consumeMessage(
           name: block.name,
           input: block.input
         });
-        emittedAssistantContent = true;
         break;
       case "tool_result":
         await conversation.emit({
@@ -124,12 +123,15 @@ async function consumeMessage(
         break;
       case "text":
         await conversation.emit({ type: "assistant_text_delta", text: block.text });
-        emittedAssistantContent = true;
         break;
+    }
+
+    if (line.type === "assistant" && (block.type === "tool_use" || block.type === "text")) {
+      endsAssistantTurn = true;
     }
   }
 
-  if (line.type === "assistant" && emittedAssistantContent) {
+  if (endsAssistantTurn) {
     await conversation.emit({ type: "assistant_turn_end" });
   }
 }

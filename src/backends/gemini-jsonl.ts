@@ -42,12 +42,10 @@ export function geminiSettingsWritesForV1(): readonly string[] {
   return [];
 }
 
-export async function collectGeminiJsonl(lines: readonly string[]): Promise<GeminiParseResult> {
-  return await collectConversation({
+export function collectGeminiJsonl(lines: readonly string[]): Promise<GeminiParseResult> {
+  return collectConversation({
     backend: "gemini",
-    consume: async (conversation) => {
-      await consumeGeminiJsonl(lines, conversation);
-    }
+    consume: (conversation) => consumeGeminiJsonl(lines, conversation)
   });
 }
 
