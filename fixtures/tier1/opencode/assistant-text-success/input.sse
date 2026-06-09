@@ -1,0 +1,4 @@
+data: {"type":"message.part.delta","properties":{"sessionID":"ses_A","field":"text","delta":"Hel"}}
+data: {"type":"message.part.delta","properties":{"sessionID":"ses_A","field":"text","delta":"lo"}}
+data: {"type":"message.updated","properties":{"info":{"role":"assistant","sessionID":"ses_A","tokens":{"input":10,"output":2,"reasoning":0,"cache":{"read":1,"write":0}},"modelID":"gpt-4o-mini","finish":"stop"}}}
+data: {"type":"session.idle","properties":{"sessionID":"ses_A"}}

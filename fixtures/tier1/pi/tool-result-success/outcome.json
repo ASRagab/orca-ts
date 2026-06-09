@@ -1,0 +1,12 @@
+{
+  "type": "success",
+  "result": {
+    "backend": "pi",
+    "sessionId": "pi-session",
+    "output": "",
+    "usage": {
+      "input": 0,
+      "output": 0
+    }
+  }
+}

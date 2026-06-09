@@ -1,0 +1,10 @@
+{
+  "commits": [],
+  "planFiles": {},
+  "terminal": [
+    "prompt: Check status",
+    "tokens: input=1 output=2",
+    "plan 1/3"
+  ],
+  "events": []
+}

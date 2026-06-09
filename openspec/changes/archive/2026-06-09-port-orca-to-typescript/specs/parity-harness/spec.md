@@ -1,0 +1,56 @@
+## ADDED Requirements
+
+### Requirement: Shared event and result model is frozen as JSON
+The system SHALL define a canonical language-neutral JSON contract for normalized conversation events, Orca runtime events, LLM results, usage accounting, and backend tags before backend implementation begins.
+
+#### Scenario: Model schema exports canonical JSON
+- **WHEN** the model package is built
+- **THEN** it exports JSON Schema for every canonical event and result type used by fixtures
+
+#### Scenario: Model change is intentional
+- **WHEN** a canonical event or result shape changes
+- **THEN** the affected fixtures and specs must be updated in the same change
+
+### Requirement: Tier 1 fixtures verify stream-to-event parity
+For each backend, the system SHALL include scripted transport input fixtures, expected normalized event fixtures, and expected result or error fixtures. TypeScript backend tests SHALL feed scripted inputs through fake processes or fake transports and assert exact JSON equality.
+
+#### Scenario: Backend fixture passes
+- **WHEN** a backend test consumes `input.jsonl` or equivalent scripted stream data
+- **THEN** the emitted events and final result match the corresponding golden JSON fixtures exactly
+
+#### Scenario: Backend parser drifts
+- **WHEN** a backend adapter emits a normalized event that differs from the golden fixture
+- **THEN** the Tier 1 test fails with a diff that identifies the mismatched event or result
+
+### Requirement: Tier 2 fixtures verify flow behavior
+The system SHALL include native TypeScript e2e fixtures against fake agents for user-visible flow behavior not covered by stream parsing. Tier 2 SHALL assert git commits, persisted plan files, and terminal/event-log output.
+
+#### Scenario: Plan flow golden run passes
+- **WHEN** a fake-agent flow implements a persisted plan
+- **THEN** the commits, `.orca/plan-<hash>.md` content, and event log match the golden fixture
+
+#### Scenario: Review flow golden run passes
+- **WHEN** a fake-agent flow runs review and fix automation
+- **THEN** reviewer selection, fix-loop events, commits, and terminal output match the golden fixture
+
+### Requirement: Scala oracle is local-only and retired per slice
+The system SHALL use the Scala implementation as a local author-time oracle while creating fixtures for a slice. Once the TypeScript fixtures for that slice are frozen, CI SHALL run only TypeScript checks for that slice.
+
+#### Scenario: Slice fixture is created from Scala behavior
+- **WHEN** a new slice ports Scala behavior
+- **THEN** the implementer compares TypeScript output against the local Scala oracle before freezing the JSON fixture
+
+#### Scenario: CI runs after fixture freeze
+- **WHEN** CI validates a completed slice
+- **THEN** CI runs TypeScript tests without requiring the Scala repository or JVM toolchain
+
+### Requirement: ADR disposition is tracked as acceptance criteria
+The system SHALL maintain a matrix that maps each referenced Scala ADR to a port disposition and at least one acceptance test or explicit cut/deferred marker.
+
+#### Scenario: ADR behavior is ported
+- **WHEN** an ADR behavior is marked ported
+- **THEN** at least one TypeScript test or fixture demonstrates the accepted behavior
+
+#### Scenario: ADR behavior is cut or deferred
+- **WHEN** an ADR behavior is marked cut or deferred
+- **THEN** the matrix records the rationale and any reserved compatibility seam

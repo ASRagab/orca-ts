@@ -1,0 +1,12 @@
+{
+  "type": "success",
+  "result": {
+    "backend": "codex",
+    "sessionId": "thr-mcp",
+    "output": "done",
+    "usage": {
+      "input": 0,
+      "output": 0
+    }
+  }
+}

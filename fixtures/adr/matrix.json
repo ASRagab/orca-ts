@@ -1,0 +1,92 @@
+[
+  {
+    "adr": "0001",
+    "title": "Implement Orca in direct-style Scala 3 on Ox",
+    "disposition": "ported",
+    "acceptance": "Flow scripts compile and read top-to-bottom without effect generators."
+  },
+  {
+    "adr": "0002",
+    "title": "Flow scripts use a context-function DSL with an ambient FlowContext",
+    "disposition": "ported",
+    "acceptance": "AsyncLocalStorage FlowContext resolves default services and overrides."
+  },
+  {
+    "adr": "0003",
+    "title": "LLM backends are pluggable behind an `LlmBackend[B <: Backend]` trait",
+    "disposition": "ported",
+    "acceptance": "Branded backend session identifiers reject cross-backend usage at typecheck time."
+  },
+  {
+    "adr": "0004",
+    "title": "Split the codebase into `tools / flow / backend / runner` modules",
+    "disposition": "ported",
+    "acceptance": "TypeScript package directories and import boundaries encode dependency direction."
+  },
+  {
+    "adr": "0005",
+    "title": "Reshape the flow DSL so `import orca.{*, given}` is the whole ceremony",
+    "disposition": "ported",
+    "acceptance": "Common flow scripts compile from the public package root."
+  },
+  {
+    "adr": "0006",
+    "title": "Drive Claude Code via stream-json instead of TTY handoff",
+    "disposition": "ported",
+    "acceptance": "Claude Tier 1 fixtures map inbound messages to normalized events."
+  },
+  {
+    "adr": "0007",
+    "title": "Drive Codex via `codex exec --json` stdio JSONL",
+    "disposition": "ported",
+    "acceptance": "Codex Tier 1 fixtures map JSONL events to normalized events and synthesized results."
+  },
+  {
+    "adr": "0008",
+    "title": "Terminal output: event log + status bar",
+    "disposition": "ported",
+    "acceptance": "Status bar and plain-mode terminal golden tests pass."
+  },
+  {
+    "adr": "0009",
+    "title": "Announce typeclass for friendly summaries of structured outputs",
+    "disposition": "ported",
+    "acceptance": "Structured result events emit raw output and optional summaries through a callback."
+  },
+  {
+    "adr": "0010",
+    "title": "Prompts and helper-function convention",
+    "disposition": "ported",
+    "acceptance": "Default prompts are exported and override-by-argument works."
+  },
+  {
+    "adr": "0011",
+    "title": "Reviewer roster and aspects",
+    "disposition": "ported",
+    "acceptance": "Reviewer prompts byte-match the Scala source."
+  },
+  {
+    "adr": "0012",
+    "title": "MCP host bridge for mid-session user input",
+    "disposition": "cut",
+    "acceptance": "Reserved event variants exist, canAskUser is false, and unsupported requests fail explicitly."
+  },
+  {
+    "adr": "0013",
+    "title": "Persistent plans as the default for multi-task flows",
+    "disposition": "ported",
+    "acceptance": "Plan path, recovery, and implement-loop Tier 2 golden tests pass."
+  },
+  {
+    "adr": "0014",
+    "title": "OpenCode server driver",
+    "disposition": "ported",
+    "acceptance": "OpenCode Tier 1 fixtures and lifecycle tests pass."
+  },
+  {
+    "adr": "0015",
+    "title": "Drive Gemini CLI via `gemini --output-format stream-json` stdio JSONL",
+    "disposition": "ported",
+    "acceptance": "Gemini Tier 1 fixtures pass without settings mutation for ask-user wiring."
+  }
+]

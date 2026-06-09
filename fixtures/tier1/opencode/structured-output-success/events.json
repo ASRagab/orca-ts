@@ -1,0 +1,11 @@
+[
+  {
+    "type": "tool_result",
+    "toolCallId": "prt_1",
+    "output": "ok",
+    "isError": false
+  },
+  {
+    "type": "assistant_turn_end"
+  }
+]

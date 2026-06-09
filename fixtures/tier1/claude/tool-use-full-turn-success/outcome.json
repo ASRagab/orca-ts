@@ -1,0 +1,8 @@
+{
+  "type": "success",
+  "result": {
+    "backend": "claude",
+    "sessionId": "sid-6",
+    "output": ""
+  }
+}

@@ -1,0 +1,16 @@
+[
+  {
+    "type": "assistant_tool_call",
+    "id": "call-1",
+    "name": "bash",
+    "input": {
+      "command": "ls"
+    }
+  },
+  {
+    "type": "tool_result",
+    "toolCallId": "call-1",
+    "output": "ok\n",
+    "isError": false
+  }
+]

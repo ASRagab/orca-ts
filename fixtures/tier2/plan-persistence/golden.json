@@ -1,0 +1,11 @@
+{
+  "commits": [],
+  "planFiles": {
+    ".orca/plan-demo.md": "# Plan\n\n- [ ] Implement task\n"
+  },
+  "terminal": [
+    "step: plan started",
+    "step: plan completed"
+  ],
+  "events": []
+}

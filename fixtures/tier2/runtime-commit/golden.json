@@ -1,0 +1,10 @@
+{
+  "commits": [
+    "add file"
+  ],
+  "planFiles": {},
+  "terminal": [
+    "tool: git.commit"
+  ],
+  "events": []
+}

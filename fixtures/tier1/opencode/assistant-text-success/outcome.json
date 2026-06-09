@@ -1,0 +1,13 @@
+{
+  "type": "success",
+  "result": {
+    "backend": "opencode",
+    "sessionId": "ses_A",
+    "output": "Hello",
+    "usage": {
+      "input": 11,
+      "output": 2,
+      "reasoning": 0
+    }
+  }
+}

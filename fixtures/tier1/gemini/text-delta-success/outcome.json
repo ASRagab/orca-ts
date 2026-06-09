@@ -1,0 +1,12 @@
+{
+  "type": "success",
+  "result": {
+    "backend": "gemini",
+    "sessionId": "sess-1",
+    "output": "hello",
+    "usage": {
+      "input": 10,
+      "output": 3
+    }
+  }
+}

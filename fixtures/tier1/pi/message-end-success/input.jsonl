@@ -1,0 +1,3 @@
+{"type":"response","id":"orca-prompt","command":"prompt","success":true}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"answer"}],"usage":{"input":10,"output":5},"model":"pi-model"}}
+{"type":"agent_end","messages":[]}

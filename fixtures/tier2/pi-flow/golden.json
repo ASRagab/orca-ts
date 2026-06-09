@@ -1,0 +1,17 @@
+{
+  "commits": [],
+  "planFiles": {},
+  "terminal": [
+    "prompt: Pi fake flow",
+    "answer"
+  ],
+  "events": [
+    {
+      "type": "assistant_text_delta",
+      "text": "answer"
+    },
+    {
+      "type": "assistant_turn_end"
+    }
+  ]
+}

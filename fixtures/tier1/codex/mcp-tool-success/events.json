@@ -1,0 +1,22 @@
+[
+  {
+    "type": "assistant_tool_call",
+    "id": "i_m",
+    "name": "docs.search",
+    "input": {
+      "q": "hi"
+    }
+  },
+  {
+    "type": "tool_result",
+    "toolCallId": "i_m",
+    "output": "page-1"
+  },
+  {
+    "type": "assistant_text_delta",
+    "text": "done"
+  },
+  {
+    "type": "assistant_turn_end"
+  }
+]

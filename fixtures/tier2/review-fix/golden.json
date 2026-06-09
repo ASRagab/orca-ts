@@ -1,0 +1,16 @@
+{
+  "commits": [
+    "apply review fixes"
+  ],
+  "planFiles": {},
+  "terminal": [
+    "step: review started",
+    "step: review completed"
+  ],
+  "events": [
+    "review:test:started",
+    "review:test:completed",
+    "fix:started",
+    "fix:completed"
+  ]
+}

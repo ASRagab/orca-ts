@@ -1,0 +1,1 @@
+data: {"type":"session.error","properties":{"sessionID":"ses_A","error":{"message":"boom"}}}

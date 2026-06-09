@@ -1,0 +1,11 @@
+{
+  "type": "success",
+  "result": {
+    "backend": "opencode",
+    "sessionId": "ses_A",
+    "output": "{\"x\":1}",
+    "structured": {
+      "x": 1
+    }
+  }
+}

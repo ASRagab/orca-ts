@@ -1,0 +1,9 @@
+[
+  {
+    "type": "assistant_text_delta",
+    "text": "hello"
+  },
+  {
+    "type": "assistant_turn_end"
+  }
+]

@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"thr-mcp"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"i_m","type":"mcp_tool_call","server":"docs","tool":"search","arguments":{"q":"hi"},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"i_m","type":"mcp_tool_call","server":"docs","tool":"search","arguments":{"q":"hi"},"result":{"content":[{"type":"text","text":"page-1"}],"structured_content":null},"error":null,"status":"completed"}}
+{"type":"item.completed","item":{"id":"i_a","type":"agent_message","text":"done"}}
+{"type":"turn.completed","usage":{"input_tokens":0,"output_tokens":0,"cached_input_tokens":0,"reasoning_output_tokens":0}}

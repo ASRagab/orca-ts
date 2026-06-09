@@ -1,0 +1,13 @@
+[
+  {
+    "type": "assistant_tool_call",
+    "id": "id-1",
+    "name": "Bash",
+    "input": {
+      "cmd": "ls"
+    }
+  },
+  {
+    "type": "assistant_turn_end"
+  }
+]

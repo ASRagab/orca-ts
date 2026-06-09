@@ -1,0 +1,219 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "const": "NothingToCommit"
+        }
+      },
+      "required": [
+        "_tag"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "const": "BranchAlreadyExists"
+        },
+        "branch": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "branch"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "const": "PushRejected"
+        },
+        "remote": {
+          "type": "string"
+        },
+        "stderr": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "stderr"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "const": "CommandFailed"
+        },
+        "command": {
+          "type": "string"
+        },
+        "exitCode": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stdout": {
+          "type": "string"
+        },
+        "stderr": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "command",
+        "exitCode",
+        "stdout",
+        "stderr"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "const": "StructuredOutputValidationFailed"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "raw": {}
+      },
+      "required": [
+        "_tag",
+        "issues",
+        "raw"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "const": "UnsupportedFeature"
+        },
+        "feature": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "feature",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "const": "BackendFailed"
+        },
+        "backend": {
+          "type": "string",
+          "enum": [
+            "claude",
+            "codex",
+            "opencode",
+            "pi",
+            "gemini"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "backend",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "const": "TypecheckFailed"
+        },
+        "stdout": {
+          "type": "string"
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "exitCode": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "_tag",
+        "stdout",
+        "stderr",
+        "exitCode"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "const": "FileSystemError"
+        },
+        "path": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "path",
+        "message"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

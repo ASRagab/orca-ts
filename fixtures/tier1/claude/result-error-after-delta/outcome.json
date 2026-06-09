@@ -1,0 +1,8 @@
+{
+  "type": "failed",
+  "error": {
+    "_tag": "BackendFailed",
+    "backend": "claude",
+    "message": "claude session failed: API Error: 400 quota exceeded"
+  }
+}

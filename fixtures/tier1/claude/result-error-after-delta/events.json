@@ -1,0 +1,11 @@
+[
+  {
+    "type": "assistant_text_delta",
+    "text": "API Error: 400 quota exceeded"
+  },
+  {
+    "type": "error",
+    "code": "backend_failed",
+    "message": "session failed (see message above)"
+  }
+]

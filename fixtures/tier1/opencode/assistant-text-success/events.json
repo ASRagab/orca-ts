@@ -1,0 +1,13 @@
+[
+  {
+    "type": "assistant_text_delta",
+    "text": "Hel"
+  },
+  {
+    "type": "assistant_text_delta",
+    "text": "lo"
+  },
+  {
+    "type": "assistant_turn_end"
+  }
+]

@@ -1,0 +1,3 @@
+{"type":"tool_execution_start","toolCallId":"call-1","toolName":"bash","args":{"command":"ls"}}
+{"type":"tool_execution_end","toolCallId":"call-1","toolName":"bash","result":{"content":[{"type":"text","text":"ok\n"}],"details":{}},"isError":false}
+{"type":"agent_end","messages":[]}

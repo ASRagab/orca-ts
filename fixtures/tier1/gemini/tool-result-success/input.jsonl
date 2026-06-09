@@ -1,0 +1,5 @@
+{"type":"init","session_id":"s"}
+{"type":"tool_use","tool_name":"Bash","tool_id":"b1","parameters":{"command":"ls"}}
+{"type":"tool_result","tool_id":"b1","status":"success","output":"hello.txt"}
+{"type":"message","role":"assistant","content":"done"}
+{"type":"result","status":"success","stats":{"input_tokens":0,"output_tokens":0}}

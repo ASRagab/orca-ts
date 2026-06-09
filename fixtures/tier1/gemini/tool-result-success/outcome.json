@@ -1,0 +1,12 @@
+{
+  "type": "success",
+  "result": {
+    "backend": "gemini",
+    "sessionId": "s",
+    "output": "done",
+    "usage": {
+      "input": 0,
+      "output": 0
+    }
+  }
+}

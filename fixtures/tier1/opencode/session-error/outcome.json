@@ -1,0 +1,8 @@
+{
+  "type": "failed",
+  "error": {
+    "_tag": "BackendFailed",
+    "backend": "opencode",
+    "message": "boom"
+  }
+}
