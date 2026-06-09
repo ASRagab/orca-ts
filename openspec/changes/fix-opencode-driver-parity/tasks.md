@@ -42,5 +42,5 @@
 ## 7. Verification
 
 - [x] 7.1 `bun run typecheck && bun run lint && bun test tests/opencode-backend.test.ts`
-- [ ] 7.2 Live smoke: `ORCA_REAL_BACKEND=opencode bun run test:integration:real`
+- [x] 7.2 Live smoke: `ORCA_REAL_BACKEND=opencode bun run test:integration:real`
 - [ ] 7.3 Re-run single-file dogfood (`bun ./bin/orca --backend opencode workflows/ai-slop-cleanup.ts --no-publish --start-group=flow/tools/runner --max-files=1`) and confirm previously opaque errors now surface readable messages (plan Part 2 step 1)
