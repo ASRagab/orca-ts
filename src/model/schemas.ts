@@ -26,6 +26,11 @@ export const AssistantTurnEndSchema = z.object({
   type: z.literal("assistant_turn_end")
 });
 
+export const AssistantThinkingDeltaSchema = z.object({
+  type: z.literal("assistant_thinking_delta"),
+  text: z.string()
+});
+
 export const AssistantToolCallSchema = z.object({
   type: z.literal("assistant_tool_call"),
   id: z.string(),
@@ -66,6 +71,7 @@ export const ApproveToolSchema = z.object({
 export const ConversationEventSchema = z.discriminatedUnion("type", [
   AssistantTextDeltaSchema,
   AssistantTurnEndSchema,
+  AssistantThinkingDeltaSchema,
   AssistantToolCallSchema,
   ToolResultSchema,
   ConversationErrorSchema,

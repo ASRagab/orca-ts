@@ -76,6 +76,7 @@ export async function runOpenCodeConversation<Output>(
   } else {
     conversation.signal.addEventListener("abort", forwardAbort, { once: true });
   }
+  let abortServerTurn: (() => void) | undefined;
 
   try {
     const server = await manager.get();
@@ -84,18 +85,36 @@ export async function runOpenCodeConversation<Output>(
     // Open the SSE stream first so no turn events are missed, then start the turn.
     const events = await http.openEvents(streamController.signal);
     const serverSession = await resolveServerSession(http, config.resumeSessionId);
+
+    // Best-effort server-side abort on cancel (Scala `OpencodeConversation.cancel`):
+    // without it a cancelled turn keeps editing headless on the shared server.
+    abortServerTurn = (): void => {
+      void http.postJson(`/session/${serverSession}/abort`, "{}").catch(() => undefined);
+    };
+    if (conversation.signal.aborted) {
+      abortServerTurn();
+    } else {
+      conversation.signal.addEventListener("abort", abortServerTurn, { once: true });
+    }
+
     const body = openCodeMessageBody(request.prompt, config);
     await http.postJson(`/session/${serverSession}/prompt_async`, body);
 
-    const consumer = createOpenCodeSseConsumer(conversation);
+    const consumer = createOpenCodeSseConsumer(conversation, serverSession);
     const inactivityMs = options.inactivityTimeoutMs ?? 120_000;
     const iterator = events[Symbol.asyncIterator]();
+    // Deadline-based watchdog: only lines relevant to this session push the
+    // deadline out, so foreign-session chatter can't mask a dead turn.
+    let deadline = Date.now() + inactivityMs;
     for (;;) {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const inactivity = new Promise<"stalled">((resolve) => {
-        timer = setTimeout(() => {
-          resolve("stalled");
-        }, inactivityMs);
+        timer = setTimeout(
+          () => {
+            resolve("stalled");
+          },
+          Math.max(deadline - Date.now(), 0)
+        );
       });
       const next = await Promise.race([iterator.next(), inactivity]);
       clearTimeout(timer);
@@ -117,9 +136,12 @@ export async function runOpenCodeConversation<Output>(
       if (conversation.signal.aborted) {
         return;
       }
-      await consumer.consume(next.value);
+      const relevant = await consumer.consume(next.value);
       if (consumer.completed) {
         return;
+      }
+      if (relevant) {
+        deadline = Date.now() + inactivityMs;
       }
     }
 
@@ -132,6 +154,9 @@ export async function runOpenCodeConversation<Output>(
     }
   } finally {
     conversation.signal.removeEventListener("abort", forwardAbort);
+    if (abortServerTurn) {
+      conversation.signal.removeEventListener("abort", abortServerTurn);
+    }
     streamController.abort();
   }
 }
@@ -232,7 +257,8 @@ export function opencode(options: OpenCodeBackendOptions = {}): OpenCodeBackend 
         capacity: options.capacity ?? 256,
         canAskUser: false
         // Cancellation aborts the conversation signal, which closes the SSE
-        // stream the driver is reading; the shared server is left running.
+        // stream and best-effort aborts the server-side session; the shared
+        // server process itself is left running.
       });
 
       queueMicrotask(() => {
