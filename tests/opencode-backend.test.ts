@@ -116,6 +116,25 @@ describe("OpenCode live backend constructor", () => {
     expect(signals).toEqual([]);
   });
 
+  test("fails the turn when the event stream stalls past the inactivity timeout", async () => {
+    const backend = opencode({
+      startServer: () => Promise.resolve(fakeServer()),
+      connect: () => stallingHttp(),
+      inactivityTimeoutMs: 40
+    });
+
+    const outcome = await backend.autonomous({ prompt: "run" }).awaitResult();
+
+    expect(outcome).toEqual({
+      type: "failed",
+      error: {
+        _tag: "BackendFailed",
+        backend: "opencode",
+        message: "opencode emitted no event for 40ms; treating the turn as stalled"
+      }
+    });
+  });
+
   test("reports failed startup as a backend failure", async () => {
     const backend = opencode({
       startServer: () => Promise.reject(new Error("serve missing"))
@@ -149,6 +168,30 @@ function fakeHttp(sse: readonly string[], posts: Array<{ path: string; body: str
     },
     openEvents() {
       return Promise.resolve(lineStream(sse));
+    }
+  };
+}
+
+/** Yields two non-terminal events, then never produces another — models
+ * opencode 1.16.2 going silent (no `session.idle`, no heartbeat) mid-turn. */
+function stallingHttp(): OpenCodeHttp {
+  return {
+    postJson(path) {
+      if (path === "/session") {
+        return Promise.resolve(JSON.stringify({ id: "ses_test" }));
+      }
+      return Promise.resolve("");
+    },
+    openEvents() {
+      return Promise.resolve(
+        (async function* (): AsyncIterable<string> {
+          yield 'data: {"type":"message.part.delta","properties":{"field":"text","delta":"working"}}';
+          yield 'data: {"type":"message.updated","properties":{"info":{"sessionID":"ses_x"}}}';
+          await new Promise<void>(() => {
+            // never resolves: the stream stalls with no further events
+          });
+        })()
+      );
     }
   };
 }

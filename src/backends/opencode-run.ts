@@ -32,6 +32,13 @@ export interface OpenCodeBackendOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly capacity?: number;
   readonly config?: BackendConfig<"opencode">;
+  /** Fail the turn if the `/event` stream delivers nothing for this many ms.
+   * opencode 1.16.2 can stop emitting events entirely (no `session.idle`, no
+   * heartbeat) — e.g. when a structured-output turn follows tool use — which
+   * would otherwise hang the driver forever. Defaults to 120s; an actively
+   * streaming turn resets the timer on every event, so legitimate slow turns are
+   * unaffected. */
+  readonly inactivityTimeoutMs?: number;
   /** Seam: start (or reuse) the serve process. Defaults to spawning `opencode serve`. */
   readonly startServer?: () => Promise<OpenCodeServerProcess>;
   /** Seam: build an HTTP/SSE client for a started server. Defaults to `fetch`. */
@@ -81,11 +88,36 @@ export async function runOpenCodeConversation<Output>(
     await http.postJson(`/session/${serverSession}/prompt_async`, body);
 
     const consumer = createOpenCodeSseConsumer(conversation);
-    for await (const raw of events) {
+    const inactivityMs = options.inactivityTimeoutMs ?? 120_000;
+    const iterator = events[Symbol.asyncIterator]();
+    for (;;) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const inactivity = new Promise<"stalled">((resolve) => {
+        timer = setTimeout(() => {
+          resolve("stalled");
+        }, inactivityMs);
+      });
+      const next = await Promise.race([iterator.next(), inactivity]);
+      clearTimeout(timer);
+
+      if (next === "stalled") {
+        if (!conversation.signal.aborted) {
+          conversation.fail(
+            backendFailed(
+              "opencode",
+              `opencode emitted no event for ${String(inactivityMs)}ms; treating the turn as stalled`
+            )
+          );
+        }
+        return;
+      }
+      if (next.done) {
+        break;
+      }
       if (conversation.signal.aborted) {
         return;
       }
-      await consumer.consume(raw);
+      await consumer.consume(next.value);
       if (consumer.completed) {
         return;
       }
