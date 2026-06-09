@@ -1,0 +1,28 @@
+[
+  {
+    "type": "assistant_tool_call",
+    "id": "edit_1",
+    "name": "file_change",
+    "input": {
+      "path": "src/example.ts",
+      "changes": [
+        {
+          "op": "replace",
+          "line": 1
+        }
+      ]
+    }
+  },
+  {
+    "type": "tool_result",
+    "toolCallId": "edit_1",
+    "output": "1 file changed"
+  },
+  {
+    "type": "assistant_text_delta",
+    "text": "changed"
+  },
+  {
+    "type": "assistant_turn_end"
+  }
+]

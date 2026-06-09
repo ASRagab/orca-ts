@@ -1,0 +1,12 @@
+{
+  "type": "success",
+  "result": {
+    "backend": "codex",
+    "sessionId": "thr-command",
+    "output": "verified",
+    "usage": {
+      "input": 1,
+      "output": 2
+    }
+  }
+}

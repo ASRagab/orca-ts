@@ -1,5 +1,9 @@
-import { backendFailed, sessionId, type ConversationEvent, type Usage } from "../model/index.ts";
-import { StreamConversation, type Outcome } from "../conversation/index.ts";
+import { backendFailed, sessionId, type Usage } from "../model/index.ts";
+import {
+  collectConversation,
+  StreamConversation,
+  type ConversationCapture
+} from "../conversation/index.ts";
 
 interface PiLine {
   readonly type?: string;
@@ -21,10 +25,7 @@ interface PiLine {
   };
 }
 
-export interface PiParseResult {
-  readonly events: readonly ConversationEvent[];
-  readonly outcome: Outcome<"pi">;
-}
+export type PiParseResult = ConversationCapture<"pi">;
 
 export function piRpcArgs(sessionDir: string): readonly string[] {
   return ["--mode", "rpc", "--session-dir", sessionDir];
@@ -38,15 +39,12 @@ export async function collectPiRpc(
   lines: readonly string[],
   piSessionId = "pi-session"
 ): Promise<PiParseResult> {
-  const conversation = new StreamConversation({ backend: "pi" });
-  await consumePiRpc(lines, conversation, piSessionId);
-
-  const events: ConversationEvent[] = [];
-  for await (const event of conversation.events()) {
-    events.push(event);
-  }
-
-  return { events, outcome: await conversation.awaitResult() };
+  return await collectConversation({
+    backend: "pi",
+    consume: async (conversation) => {
+      await consumePiRpc(lines, conversation, piSessionId);
+    }
+  });
 }
 
 export async function consumePiRpc(

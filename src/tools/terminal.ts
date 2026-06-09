@@ -44,7 +44,7 @@ export function renderOrcaEvent(event: OrcaEvent): string {
     case "assistant_message":
       return event.text;
     case "tokens_used":
-      return `tokens: input=${event.usage.input} output=${event.usage.output}`;
+      return `tokens: input=${String(event.usage.input)} output=${String(event.usage.output)}`;
     case "structured_result":
       return event.summary ?? JSON.stringify(event.raw);
     case "step":
@@ -59,8 +59,8 @@ export function renderStatusBar(
   options: StatusBarOptions = {}
 ): string {
   const env = options.env ?? process.env;
-  const isTTY = options.isTTY ?? process.stdout.isTTY === true;
-  const text = `${status.label} ${status.current}/${status.total}`;
+  const isTTY = options.isTTY ?? process.stdout.isTTY;
+  const text = `${status.label} ${String(status.current)}/${String(status.total)}`;
 
   if (env.NO_COLOR || env.CI || !isTTY) {
     return text;

@@ -28,7 +28,7 @@ describe("StreamConversation", () => {
       type: "success",
       result: {
         backend: "claude",
-        sessionId: "s1",
+        sessionId: sessionId("claude", "s1"),
         output: "a"
       }
     });
@@ -60,9 +60,24 @@ describe("StreamConversation", () => {
       error: {
         _tag: "UnsupportedFeature",
         feature: "user_question",
-        reason: "Human interaction events are reserved but unsupported in v1"
+        reason: "Human interaction events require an explicit interactive conversation"
       }
     });
+  });
+
+  test("emits user questions in explicit interactive conversations", async () => {
+    const conversation = new StreamConversation({ backend: "codex", canAskUser: true });
+    const emitted = await conversation.emit({ type: "user_question", question: "Continue?" });
+    const events = drainEvents(conversation.events());
+
+    conversation.succeed({
+      backend: "codex",
+      sessionId: sessionId("codex", "interactive"),
+      output: ""
+    });
+
+    expect(emitted.isOk()).toBe(true);
+    expect(await events).toEqual([{ type: "user_question", question: "Continue?" }]);
   });
 
   test("fails reserved approval events", async () => {
@@ -80,8 +95,16 @@ describe("StreamConversation", () => {
       error: {
         _tag: "UnsupportedFeature",
         feature: "approve_tool",
-        reason: "Human interaction events are reserved but unsupported in v1"
+        reason: "Live approval events are unsupported for autonomous execution"
       }
     });
   });
 });
+
+async function drainEvents(events: AsyncIterable<unknown>): Promise<unknown[]> {
+  const collected: unknown[] = [];
+  for await (const event of events) {
+    collected.push(event);
+  }
+  return collected;
+}

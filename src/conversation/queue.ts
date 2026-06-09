@@ -12,16 +12,11 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
   }
 
   async push(item: T): Promise<void> {
-    if (this.closed) {
-      throw new Error("Queue is closed");
-    }
+    this.ensureOpen();
 
-    while (this.items.length >= this.capacity && !this.closed) {
+    while (this.items.length >= this.capacity) {
       await new Promise<void>((resolve) => this.pushWaiters.push(resolve));
-    }
-
-    if (this.closed) {
-      throw new Error("Queue is closed");
+      this.ensureOpen();
     }
 
     const taker = this.takers.shift();
@@ -72,5 +67,11 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
     }
 
     return await new Promise<IteratorResult<T>>((resolve) => this.takers.push(resolve));
+  }
+
+  private ensureOpen(): void {
+    if (this.closed) {
+      throw new Error("Queue is closed");
+    }
   }
 }

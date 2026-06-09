@@ -4,3 +4,11 @@ dist/
 .DS_Store
 .orca/
 .*.bun-build
+
+workflows/
+bin/
+
+# Local dogfooding/scratch artifacts.
+CONTEXT.md
+.claude/handoffs/
+tests/ai-slop-cleanup-workflow.test.ts

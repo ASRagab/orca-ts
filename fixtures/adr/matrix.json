@@ -39,7 +39,34 @@
     "adr": "0007",
     "title": "Drive Codex via `codex exec --json` stdio JSONL",
     "disposition": "ported",
-    "acceptance": "Codex Tier 1 fixtures map JSONL events to normalized events and synthesized results."
+    "acceptance": "Codex Tier 1 fixtures map JSONL events to normalized events and synthesized results.",
+    "selfHostingParity": [
+      {
+        "capability": "backend config",
+        "status": "revived",
+        "acceptance": "Codex option-mapping tests cover model, approval policy, read-only mode, self-managed git prompts, retry metadata, and structured output schema flags."
+      },
+      {
+        "capability": "sessions/resume",
+        "status": "revived",
+        "acceptance": "Codex session tests prove fresh thread capture, branded TypeScript session handles, and explicit unsupported resume failures for mismatched backends."
+      },
+      {
+        "capability": "structured output",
+        "status": "revived",
+        "acceptance": "Codex structured-output tests pass JSON Schema, parse valid JSON, and return typed validation errors with raw output on invalid data."
+      },
+      {
+        "capability": "normalized tool events",
+        "status": "revived",
+        "acceptance": "Codex parser fixtures preserve stable tool-call ids, tool names, raw inputs, result content, and error status."
+      },
+      {
+        "capability": "full host-side child tool mediation",
+        "status": "intentionally different",
+        "acceptance": "TypeScript mirrors Scala by observing backend CLI tool events and enforcing worktree/verification boundaries instead of replacing Bash/Edit/Read execution with an Orca-owned router."
+      }
+    ]
   },
   {
     "adr": "0008",
@@ -68,14 +95,43 @@
   {
     "adr": "0012",
     "title": "MCP host bridge for mid-session user input",
-    "disposition": "cut",
-    "acceptance": "Reserved event variants exist, canAskUser is false, and unsupported requests fail explicitly."
+    "disposition": "deferred",
+    "acceptance": "Autonomous flows still reject human interaction, while explicit interactive Codex sessions use an Orca-owned ask_user MCP bridge.",
+    "selfHostingParity": [
+      {
+        "capability": "ask_user",
+        "status": "revived",
+        "acceptance": "Interactive ask_user tests cover question emission, response routing, cancellation cleanup, and autonomous rejection."
+      },
+      {
+        "capability": "approval events",
+        "status": "deferred",
+        "acceptance": "Codex approval remains spawn-policy based until JSONL exposes approval request events; the matrix records the limitation."
+      },
+      {
+        "capability": "non-Codex interactive bridges",
+        "status": "deferred",
+        "acceptance": "The MCP ask_user bridge is backend-neutral at the API boundary but Codex-backed first in live execution; other live adapters remain explicit unsupported paths."
+      }
+    ]
   },
   {
     "adr": "0013",
     "title": "Persistent plans as the default for multi-task flows",
     "disposition": "ported",
-    "acceptance": "Plan path, recovery, and implement-loop Tier 2 golden tests pass."
+    "acceptance": "Plan path, recovery, and implement-loop Tier 2 golden tests pass.",
+    "selfHostingParity": [
+      {
+        "capability": "persistent task planning",
+        "status": "revived",
+        "acceptance": "Plan tests persist prompts, task state, and recovery metadata without assuming a domain-specific task source."
+      },
+      {
+        "capability": "parent-owned git boundaries",
+        "status": "revived",
+        "acceptance": "Workflow tests detect unexpected child commits unless self-managed git is explicitly enabled."
+      }
+    ]
   },
   {
     "adr": "0014",

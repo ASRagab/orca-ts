@@ -1,5 +1,21 @@
-import { backendFailed, sessionId, unsupportedFeature, type ConversationEvent, type Usage } from "../model/index.ts";
-import { StreamConversation, type Outcome } from "../conversation/index.ts";
+import type { z } from "zod";
+import {
+  collectConversation,
+  StreamConversation,
+  type AskUserRequest,
+  type ConversationCapture
+} from "../conversation/index.ts";
+import {
+  backendFailed,
+  parseStructuredOutput,
+  sessionId,
+  structuredOutputValidationFailed,
+  unsupportedFeature,
+  type BackendApprovalPolicy,
+  type BackendSandboxMode,
+  type RuntimeError,
+  type Usage
+} from "../model/index.ts";
 
 interface CodexLine {
   readonly type?: string;
@@ -13,8 +29,13 @@ interface CodexLine {
     readonly id?: string;
     readonly type?: string;
     readonly text?: string;
+    readonly name?: string;
     readonly server?: string;
     readonly tool?: string;
+    readonly command?: unknown;
+    readonly path?: string;
+    readonly changes?: unknown;
+    readonly output?: unknown;
     readonly arguments?: unknown;
     readonly result?: {
       readonly content?: ReadonlyArray<{ readonly type?: string; readonly text?: string }>;
@@ -23,44 +44,66 @@ interface CodexLine {
   };
 }
 
-export interface CodexParseResult {
-  readonly events: readonly ConversationEvent[];
-  readonly outcome: Outcome<"codex">;
-}
+export type CodexParseResult = ConversationCapture<"codex">;
 
 export interface CodexExecArgs {
   readonly model?: string;
-  readonly approvalPolicy?: "auto" | "never" | "on-request";
+  readonly approvalPolicy?: BackendApprovalPolicy;
+  readonly sandbox?: BackendSandboxMode;
+  readonly readOnly?: boolean;
+  readonly outputSchemaPath?: string;
+  readonly resumeSessionId?: string;
+  readonly mcpServerUrl?: string;
   readonly prompt?: string;
 }
 
 export function codexExecJsonlArgs(args: CodexExecArgs = {}): readonly string[] {
-  return [
-    "exec",
+  const sandbox = args.sandbox ?? (args.readOnly ? "read-only" : undefined);
+  const commonArgs = [
     "--json",
     ...(args.model ? ["--model", args.model] : []),
-    ...(args.approvalPolicy ? ["--approval-policy", args.approvalPolicy] : []),
-    ...(args.prompt !== undefined ? [args.prompt] : [])
+    ...(args.approvalPolicy ? ["-c", `approval_policy="${args.approvalPolicy}"`] : []),
+    ...(args.mcpServerUrl ? ["-c", `mcp_servers.orca.url=${JSON.stringify(args.mcpServerUrl)}`] : []),
+    ...(sandbox ? ["--sandbox", sandbox] : []),
+    ...(args.outputSchemaPath ? ["--output-schema", args.outputSchemaPath] : [])
   ];
-}
 
-export async function collectCodexJsonl(lines: readonly string[]): Promise<CodexParseResult> {
-  const conversation = new StreamConversation({ backend: "codex" });
-  await consumeCodexJsonl(lines, conversation);
-
-  const events: ConversationEvent[] = [];
-  for await (const event of conversation.events()) {
-    events.push(event);
+  if (args.resumeSessionId) {
+    return [
+      "exec",
+      "resume",
+      ...commonArgs,
+      args.resumeSessionId,
+      ...(args.prompt !== undefined ? [args.prompt] : [])
+    ];
   }
 
-  return { events, outcome: await conversation.awaitResult() };
+  return ["exec", ...commonArgs, ...(args.prompt !== undefined ? [args.prompt] : [])];
 }
 
-export async function consumeCodexJsonl(
+export interface CodexJsonlOptions<Output = unknown> {
+  readonly schema?: z.ZodType<Output>;
+  readonly askUser?: (request: AskUserRequest) => Promise<string>;
+}
+
+export async function collectCodexJsonl<Output = unknown>(
   lines: readonly string[],
-  conversation: StreamConversation<"codex">
+  options: CodexJsonlOptions<Output> = {}
+): Promise<CodexParseResult> {
+  return await collectConversation({
+    backend: "codex",
+    consume: async (conversation) => {
+      await consumeCodexJsonl(lines, conversation, options);
+    }
+  });
+}
+
+export async function consumeCodexJsonl<Output = unknown>(
+  lines: readonly string[],
+  conversation: StreamConversation<"codex">,
+  options: CodexJsonlOptions<Output> = {}
 ): Promise<void> {
-  const consumer = createCodexJsonlConsumer(conversation);
+  const consumer = createCodexJsonlConsumer(conversation, options);
   for (const raw of lines) {
     await consumer.consume(raw);
   }
@@ -73,8 +116,9 @@ export interface CodexJsonlConsumer {
   finish(): void;
 }
 
-export function createCodexJsonlConsumer(
-  conversation: StreamConversation<"codex">
+export function createCodexJsonlConsumer<Output = unknown>(
+  conversation: StreamConversation<"codex">,
+  options: CodexJsonlOptions<Output> = {}
 ): CodexJsonlConsumer {
   let threadId = "";
   let output = "";
@@ -104,32 +148,48 @@ export function createCodexJsonlConsumer(
         return;
       }
 
-      if (line.type === "item.started" && line.item?.type === "mcp_tool_call") {
+      if (line.type === "item.started" && isToolItem(line.item)) {
         if (line.item.server === "orca" && line.item.tool === "ask_user") {
+          if (options.askUser) {
+            const question = askUserQuestion(line.item.arguments);
+            await conversation.emit({ type: "user_question", question });
+            const answer = await options.askUser({ question, rawInput: line.item.arguments });
+            await conversation.emit({
+              type: "tool_result",
+              toolCallId: line.item.id ?? "",
+              output: answer
+            });
+            return;
+          }
           completed = true;
-          conversation.fail(unsupportedFeature("codex ask_user", "Codex ask_user MCP bridge is unsupported in v1"));
+          conversation.fail(
+            unsupportedFeature(
+              "codex ask_user",
+              "Codex ask_user MCP bridge requires an explicit interactive conversation"
+            )
+          );
           return;
         }
         await conversation.emit({
           type: "assistant_tool_call",
           id: line.item.id ?? "",
-          name: `${line.item.server ?? ""}.${line.item.tool ?? ""}`,
-          input: line.item.arguments ?? {}
+          name: toolName(line.item),
+          input: toolInput(line.item)
         });
         return;
       }
 
-      if (line.type === "item.completed" && line.item?.type === "mcp_tool_call") {
-        if (line.item.error) {
-          completed = true;
-          conversation.fail(backendFailed("codex", line.item.error));
-          return;
-        }
+      if (line.type === "item.completed" && isToolItem(line.item)) {
         await conversation.emit({
           type: "tool_result",
           toolCallId: line.item.id ?? "",
-          output: textContent(line.item.result?.content)
+          output: toolOutput(line.item),
+          ...(line.item.error ? { isError: true } : {})
         });
+        if (line.item.error) {
+          completed = true;
+          conversation.fail(backendFailed("codex", line.item.error));
+        }
         return;
       }
 
@@ -142,11 +202,19 @@ export function createCodexJsonlConsumer(
 
       if (line.type === "turn.completed") {
         await conversation.emit({ type: "assistant_turn_end" });
+        const structured = parseCodexStructuredOutput(options.schema, output);
+        if (structured.type === "failed") {
+          completed = true;
+          conversation.fail(structured.error);
+          return;
+        }
+
         completed = true;
         conversation.succeed({
           backend: "codex",
           sessionId: sessionId("codex", threadId),
           output,
+          ...(structured.value === undefined ? {} : { structured: structured.value }),
           usage: normalizeCodexUsage(line.usage)
         });
       }
@@ -160,6 +228,88 @@ export function createCodexJsonlConsumer(
       conversation.fail(backendFailed("codex", "codex stream ended before turn.completed"));
     }
   };
+}
+
+function parseCodexStructuredOutput<Output>(
+  schema: z.ZodType<Output> | undefined,
+  output: string
+):
+  | { readonly type: "success"; readonly value?: Output }
+  | { readonly type: "failed"; readonly error: RuntimeError } {
+  if (!schema) {
+    return { type: "success" };
+  }
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(output) as unknown;
+  } catch {
+    return {
+      type: "failed",
+      error: structuredOutputValidationFailed({
+        raw: output,
+        issues: ["Codex structured output was not valid JSON"]
+      })
+    };
+  }
+
+  const parsed = parseStructuredOutput(schema, raw);
+  if (parsed.isErr()) {
+    return { type: "failed", error: parsed.error };
+  }
+
+  return { type: "success", value: parsed.value.value };
+}
+
+function isToolItem(item: CodexLine["item"]): item is NonNullable<CodexLine["item"]> {
+  return (
+    item?.type === "mcp_tool_call" ||
+    item?.type === "command_execution" ||
+    item?.type === "file_change" ||
+    item?.type === "tool_call"
+  );
+}
+
+function toolName(item: NonNullable<CodexLine["item"]>): string {
+  if (item.type === "mcp_tool_call") {
+    return `${item.server ?? ""}.${item.tool ?? ""}`;
+  }
+  return item.name ?? item.tool ?? item.type ?? "tool_call";
+}
+
+function toolInput(item: NonNullable<CodexLine["item"]>): unknown {
+  if (item.arguments !== undefined) {
+    return item.arguments;
+  }
+  if (item.command !== undefined) {
+    return { command: item.command };
+  }
+  if (item.path !== undefined || item.changes !== undefined) {
+    return {
+      ...(item.path === undefined ? {} : { path: item.path }),
+      ...(item.changes === undefined ? {} : { changes: item.changes })
+    };
+  }
+  return {};
+}
+
+function toolOutput(item: NonNullable<CodexLine["item"]>): unknown {
+  if (item.output !== undefined) {
+    return item.output;
+  }
+  const content = textContent(item.result?.content);
+  if (content.length > 0) {
+    return content;
+  }
+  return item.error ?? "";
+}
+
+function askUserQuestion(input: unknown): string {
+  if (typeof input === "object" && input !== null && "question" in input) {
+    const question = (input as { readonly question?: unknown }).question;
+    return typeof question === "string" ? question : "";
+  }
+  return "";
 }
 
 function textContent(content: ReadonlyArray<{ readonly text?: string }> | undefined): string {

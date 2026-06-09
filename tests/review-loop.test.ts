@@ -12,18 +12,18 @@ describe("review and fix loop", () => {
     const fixed: string[] = [];
 
     const result = await runReviewAndFixLoop({
-      loadPrompts: async () => prompts,
-      review: async (reviewer) =>
-        ok([
+      loadPrompts: () => Promise.resolve(prompts),
+      review: (reviewer) =>
+        Promise.resolve(ok([
           {
             reviewer: reviewer.id,
             message: `${reviewer.id} finding`,
             fixable: reviewer.id === "test"
           }
-        ]),
-      fix: async (issues) => {
+        ])),
+      fix: (issues) => {
         fixed.push(...issues.map((issue) => issue.message));
-        return ok(undefined);
+        return Promise.resolve(ok(undefined));
       }
     });
 

@@ -13,6 +13,32 @@ export interface QuietProcOptions {
   readonly signal?: AbortSignal;
 }
 
+export interface VerificationCommand {
+  readonly command: string;
+  readonly args?: readonly string[];
+  readonly cwd?: string;
+}
+
+export type VerificationCommandResult =
+  | {
+      readonly type: "success";
+      readonly command: string;
+      readonly stdout: string;
+      readonly stderr: string;
+      readonly exitCode: 0;
+    }
+  | {
+      readonly type: "failed";
+      readonly command: string;
+      readonly stdout: string;
+      readonly stderr: string;
+      readonly exitCode: number | null;
+    };
+
+export interface CommandTool {
+  run(command: VerificationCommand): Promise<VerificationCommandResult>;
+}
+
 export async function runQuiet(
   command: string,
   args: readonly string[] = [],
@@ -54,4 +80,43 @@ export async function runQuiet(
       stderr
     })
   );
+}
+
+export function createCommandTool(defaultCwd = process.cwd()): CommandTool {
+  return {
+    async run(command) {
+      const args = command.args ?? [];
+      const rendered = [command.command, ...args].join(" ");
+      const result = await runQuiet(command.command, args, { cwd: command.cwd ?? defaultCwd });
+
+      if (result.isOk()) {
+        return {
+          type: "success",
+          command: rendered,
+          stdout: result.value.stdout,
+          stderr: result.value.stderr,
+          exitCode: 0
+        };
+      }
+
+      const error = result.error;
+      if (error._tag === "CommandFailed") {
+        return {
+          type: "failed",
+          command: error.command,
+          stdout: error.stdout,
+          stderr: error.stderr,
+          exitCode: error.exitCode
+        };
+      }
+
+      return {
+        type: "failed",
+        command: rendered,
+        stdout: "",
+        stderr: JSON.stringify(error),
+        exitCode: null
+      };
+    }
+  };
 }

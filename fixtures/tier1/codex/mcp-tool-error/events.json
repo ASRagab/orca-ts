@@ -1,0 +1,16 @@
+[
+  {
+    "type": "assistant_tool_call",
+    "id": "mcp_1",
+    "name": "docs.search",
+    "input": {
+      "q": "bad"
+    }
+  },
+  {
+    "type": "tool_result",
+    "toolCallId": "mcp_1",
+    "output": "search failed",
+    "isError": true
+  }
+]

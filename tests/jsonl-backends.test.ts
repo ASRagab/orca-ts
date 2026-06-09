@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod";
 import {
   collectCodexJsonl,
   collectGeminiJsonl,
@@ -10,7 +11,8 @@ import {
   geminiSettingsWritesForV1,
   geminiStreamJsonArgs,
   piPromptCommand,
-  piRpcArgs
+  piRpcArgs,
+  sessionId
 } from "../src/index.ts";
 
 describe("Codex JSONL Tier 1 fixtures", () => {
@@ -29,7 +31,7 @@ describe("Codex JSONL Tier 1 fixtures", () => {
       error: {
         _tag: "UnsupportedFeature",
         feature: "codex ask_user",
-        reason: "Codex ask_user MCP bridge is unsupported in v1"
+        reason: "Codex ask_user MCP bridge requires an explicit interactive conversation"
       }
     });
   });
@@ -40,9 +42,71 @@ describe("Codex JSONL Tier 1 fixtures", () => {
       "--json",
       "--model",
       "gpt-5",
-      "--approval-policy",
-      "auto"
+      "-c",
+      "approval_policy=\"auto\""
     ]);
+  });
+
+  test("builds read-only, schema, and resume args", () => {
+    expect(
+      codexExecJsonlArgs({
+        readOnly: true,
+        outputSchemaPath: "/tmp/schema.json",
+        resumeSessionId: "codex-thread",
+        prompt: "continue"
+      })
+    ).toEqual([
+      "exec",
+      "resume",
+      "--json",
+      "--sandbox",
+      "read-only",
+      "--output-schema",
+      "/tmp/schema.json",
+      "codex-thread",
+      "continue"
+    ]);
+  });
+
+  test("validates structured output from JSONL", async () => {
+    const actual = await collectCodexJsonl(
+      [
+        "{\"type\":\"thread.started\",\"thread_id\":\"thr\"}",
+        "{\"type\":\"item.completed\",\"item\":{\"id\":\"msg\",\"type\":\"agent_message\",\"text\":\"{\\\"answer\\\":\\\"yes\\\"}\"}}",
+        "{\"type\":\"turn.completed\"}"
+      ],
+      { schema: z.object({ answer: z.string() }) }
+    );
+
+    expect(actual.outcome).toEqual({
+      type: "success",
+      result: {
+        backend: "codex",
+        sessionId: sessionId("codex", "thr"),
+        output: "{\"answer\":\"yes\"}",
+        structured: { answer: "yes" },
+        usage: { input: 0, output: 0 }
+      }
+    });
+  });
+
+  test("fails invalid structured output with raw output", async () => {
+    const actual = await collectCodexJsonl(
+      [
+        "{\"type\":\"thread.started\",\"thread_id\":\"thr\"}",
+        "{\"type\":\"item.completed\",\"item\":{\"id\":\"msg\",\"type\":\"agent_message\",\"text\":\"{\\\"answer\\\":1}\"}}",
+        "{\"type\":\"turn.completed\"}"
+      ],
+      { schema: z.object({ answer: z.string() }) }
+    );
+
+    expect(actual.outcome.type).toBe("failed");
+    if (actual.outcome.type === "failed") {
+      expect(actual.outcome.error._tag).toBe("StructuredOutputValidationFailed");
+      if (actual.outcome.error._tag === "StructuredOutputValidationFailed") {
+        expect(actual.outcome.error.raw).toEqual({ answer: 1 });
+      }
+    }
   });
 });
 
@@ -130,6 +194,6 @@ async function assertJsonlFixtures(
     const actual = await collect(input, dir);
 
     expect(actual.events as unknown).toEqual(expectedEvents);
-    expect(actual.outcome as unknown).toEqual(expectedOutcome);
+    expect(actual.outcome).toEqual(expectedOutcome);
   }
 }

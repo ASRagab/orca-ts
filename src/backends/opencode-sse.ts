@@ -1,5 +1,9 @@
-import { backendFailed, sessionId, type ConversationEvent, type Usage } from "../model/index.ts";
-import { StreamConversation, type Outcome } from "../conversation/index.ts";
+import { backendFailed, sessionId, type Usage } from "../model/index.ts";
+import {
+  collectConversation,
+  StreamConversation,
+  type ConversationCapture
+} from "../conversation/index.ts";
 
 interface OpenCodeSseEvent {
   readonly type?: string;
@@ -41,10 +45,7 @@ interface OpenCodeTokens {
   };
 }
 
-export interface OpenCodeParseResult {
-  readonly events: readonly ConversationEvent[];
-  readonly outcome: Outcome<"opencode">;
-}
+export type OpenCodeParseResult = ConversationCapture<"opencode">;
 
 export interface OpenCodeServerProcess {
   readonly url: string;
@@ -57,15 +58,12 @@ export interface OpenCodeServerManager {
 }
 
 export async function collectOpenCodeSse(lines: readonly string[]): Promise<OpenCodeParseResult> {
-  const conversation = new StreamConversation({ backend: "opencode" });
-  await consumeOpenCodeSse(lines, conversation);
-
-  const events: ConversationEvent[] = [];
-  for await (const event of conversation.events()) {
-    events.push(event);
-  }
-
-  return { events, outcome: await conversation.awaitResult() };
+  return await collectConversation({
+    backend: "opencode",
+    consume: async (conversation) => {
+      await consumeOpenCodeSse(lines, conversation);
+    }
+  });
 }
 
 export async function consumeOpenCodeSse(

@@ -1,4 +1,4 @@
-import { claude, flow, llm, z } from "../src/index.ts";
+import { codex, flow, llm, z } from "../src/index.ts";
 
 const BugfixResult = z.object({
   rootCause: z.string(),
@@ -6,7 +6,7 @@ const BugfixResult = z.object({
 });
 
 await flow(process.argv.slice(2))(async () => {
-  const conversation = llm().autonomous(claude(), {
+  const conversation = llm().autonomous(codex(), {
     prompt: "Reproduce the bug, fix the root cause, and report verification.",
     schema: BugfixResult
   });

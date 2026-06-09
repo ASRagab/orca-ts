@@ -5,7 +5,7 @@ A review of the Scala 3 `orca` codebase and an end-to-end, drift-minimizing stra
 ## TL;DR — settled decisions
 | #   | Decision | Resolution |
 | --- | --- | --- |
-| 1   | Why port | Broaden contributors + lighter distribution + ecosystem alignment + dogfooding. **Not** perf (orca is I/O-bound on agent latency; runtime is noise). |
+| 1   | Why port | Broaden contributors + lighter distribution + ecosystem alignment. **Not** perf (orca is I/O-bound on agent latency; runtime is noise). |
 | 2   | Architecture | **Faithful SPI port.** Multi-backend is foundational. Claude Agent SDK is a _future_ drop-in behind `Conversation`, not the foundation. |
 | 3   | Language | **TypeScript** — only target that keeps orca's thesis: "looks like a script, but typed, with author-time feedback." |
 | 4   | Phasing | 5 vertical slices, each **parity-gated**: Claude-autonomous (+Plan+review) → OpenCode → Codex+Gemini → Pi. |

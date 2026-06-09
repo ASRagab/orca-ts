@@ -1,5 +1,9 @@
-import { backendFailed, sessionId, type ConversationEvent } from "../model/index.ts";
-import { StreamConversation, type Outcome } from "../conversation/index.ts";
+import { backendFailed, sessionId } from "../model/index.ts";
+import {
+  collectConversation,
+  StreamConversation,
+  type ConversationCapture
+} from "../conversation/index.ts";
 
 interface ClaudeStreamLine {
   readonly type?: string;
@@ -38,24 +42,15 @@ type ClaudeContentBlock =
       readonly text: string;
     };
 
-export interface ClaudeParseResult {
-  readonly events: readonly ConversationEvent[];
-  readonly outcome: Outcome<"claude">;
-}
+export type ClaudeParseResult = ConversationCapture<"claude">;
 
 export async function collectClaudeStreamJson(lines: readonly string[]): Promise<ClaudeParseResult> {
-  const conversation = new StreamConversation({ backend: "claude" });
-  await consumeClaudeStreamJson(lines, conversation);
-
-  const events: ConversationEvent[] = [];
-  for await (const event of conversation.events()) {
-    events.push(event);
-  }
-
-  return {
-    events,
-    outcome: await conversation.awaitResult()
-  };
+  return await collectConversation({
+    backend: "claude",
+    consume: async (conversation) => {
+      await consumeClaudeStreamJson(lines, conversation);
+    }
+  });
 }
 
 export async function consumeClaudeStreamJson(
