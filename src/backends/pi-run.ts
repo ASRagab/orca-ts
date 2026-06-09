@@ -79,14 +79,13 @@ export async function runPiConversation<Output>(
       conversation,
       setProcess,
       stdin: "pipe",
-      closeOnComplete: true,
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
       ...(options.env === undefined ? {} : { env: options.env }),
       ...(options.spawnProcess === undefined ? {} : { spawnProcess: options.spawnProcess }),
       onStart: (process) => {
         process.write?.(`${piPromptCommand(composePrompt(request.prompt, config))}\n`);
-        // Pi rpc keeps reading stdin for the next command; leave it open and let
-        // `closeOnComplete` kill the process once `agent_end` settles the turn.
+        // Pi rpc keeps reading stdin for the next command; leave it open. The
+        // shared helper kills the process once `agent_end` settles the turn.
       },
       createConsumer: () => createPiRpcConsumer(conversation, piSessionId, consumerOptions)
     });

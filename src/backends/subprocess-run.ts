@@ -57,10 +57,6 @@ export interface RunSubprocessOptions<B extends BackendTag> {
   /** Runs right after spawn (before the read loop) — claude/pi write the opening
    * user turn to stdin and close it here. */
   readonly onStart?: (process: SubprocessProcess) => void | Promise<void>;
-  /** Kill the process once the consumer reports `completed` instead of waiting for
-   * the stdout stream to end — for persistent processes (pi rpc) that stay open
-   * for the next command after a turn settles. */
-  readonly closeOnComplete?: boolean;
 }
 
 /** Shared spawn → stdout-line-stream → consumer → outcome plumbing for
@@ -102,9 +98,12 @@ export async function runSubprocessConversation<B extends BackendTag>(
     }
     await consumer.consume(line);
     if (consumer.completed) {
-      if (options.closeOnComplete) {
-        process.kill();
-      }
+      // Kill the child once the consumer has settled the conversation on a
+      // terminal event (success, modeled failure, or early parse/tool error).
+      // Safe because we only reach here after consuming that event — the agent's
+      // session rollout is already flushed — and it stops a persistent process
+      // (pi rpc) or a stalled CLI from lingering after Orca has the outcome.
+      process.kill();
       break;
     }
   }

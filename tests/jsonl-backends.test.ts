@@ -59,12 +59,23 @@ describe("Codex JSONL Tier 1 fixtures", () => {
       "exec",
       "resume",
       "--json",
-      "--sandbox",
-      "read-only",
       "--output-schema",
       "/tmp/schema.json",
+      // `codex exec resume` rejects `--sandbox`; sandbox is a config override here.
+      "-c",
+      "sandbox_mode=\"read-only\"",
       "codex-thread",
       "continue"
+    ]);
+  });
+
+  test("plain exec keeps the exec-only --sandbox flag", () => {
+    expect(codexExecJsonlArgs({ readOnly: true, prompt: "go" })).toEqual([
+      "exec",
+      "--json",
+      "--sandbox",
+      "read-only",
+      "go"
     ]);
   });
 

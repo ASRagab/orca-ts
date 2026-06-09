@@ -1,5 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** Reviewer prompt markdown ships alongside this module, so resolve the default
+ * directory relative to the package — not `process.cwd()`, which is the caller's
+ * project when the review tool runs inside another repo. */
+const defaultReviewersDir = fileURLToPath(new URL("./prompts/reviewers", import.meta.url));
 
 export const ReviewerIds = [
   "code-functionality",
@@ -23,7 +29,7 @@ export interface ReviewerPrompt {
 }
 
 export async function loadReviewerPrompts(
-  root = join(process.cwd(), "src", "review", "prompts", "reviewers")
+  root = defaultReviewersDir
 ): Promise<ReviewerPrompt[]> {
   return await Promise.all(
     ReviewerIds.map(async (id) => {

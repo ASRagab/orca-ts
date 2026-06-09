@@ -64,7 +64,6 @@ export function codexExecJsonlArgs(args: CodexExecArgs = {}): readonly string[] 
     ...(args.model ? ["--model", args.model] : []),
     ...(args.approvalPolicy ? ["-c", `approval_policy="${args.approvalPolicy}"`] : []),
     ...(args.mcpServerUrl ? ["-c", `mcp_servers.orca.url=${JSON.stringify(args.mcpServerUrl)}`] : []),
-    ...(sandbox ? ["--sandbox", sandbox] : []),
     ...(args.outputSchemaPath ? ["--output-schema", args.outputSchemaPath] : [])
   ];
 
@@ -73,12 +72,21 @@ export function codexExecJsonlArgs(args: CodexExecArgs = {}): readonly string[] 
       "exec",
       "resume",
       ...commonArgs,
+      // `codex exec resume` rejects the exec-only `--sandbox` flag; express the
+      // sandbox as the equivalent config override instead (same form as
+      // `approval_policy` above).
+      ...(sandbox ? ["-c", `sandbox_mode="${sandbox}"`] : []),
       args.resumeSessionId,
       ...promptArgs
     ];
   }
 
-  return ["exec", ...commonArgs, ...promptArgs];
+  return [
+    "exec",
+    ...commonArgs,
+    ...(sandbox ? ["--sandbox", sandbox] : []),
+    ...promptArgs
+  ];
 }
 
 export interface CodexJsonlOptions<Output = unknown> {
