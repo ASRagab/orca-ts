@@ -46,13 +46,10 @@ export function claudeStreamJsonArgs<Output>(config: ResolvedClaudeConfig<Output
     "--include-partial-messages",
     ...(config.model ? ["--model", config.model] : []),
     ...(config.resumeSessionId ? ["--resume", config.resumeSessionId] : []),
-    ...permissionModeArgs(config.readOnly),
+    "--permission-mode",
+    config.readOnly ? "plan" : "bypassPermissions",
     ...(config.schema ? ["--json-schema", JSON.stringify(jsonSchemaFromZod(config.schema))] : [])
   ];
-}
-
-function permissionModeArgs(readOnly: boolean | undefined): readonly string[] {
-  return ["--permission-mode", readOnly ? "plan" : "bypassPermissions"];
 }
 
 function userTurnLine(text: string): string {

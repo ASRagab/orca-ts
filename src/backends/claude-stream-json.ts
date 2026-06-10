@@ -27,7 +27,6 @@ interface ClaudeStreamLine {
     };
   };
   readonly message?: {
-    readonly role?: string;
     readonly content?: readonly ClaudeContentBlock[];
   };
 }
@@ -75,7 +74,7 @@ export async function consumeClaudeStreamJson<Output = unknown>(
       continue;
     }
 
-    const line = JSON.parse(raw) as ClaudeStreamLine;
+    const line = parseClaudeLine(raw);
     await consumeClaudeLine(line, conversation, options);
   }
 }
@@ -104,7 +103,7 @@ export function createClaudeStreamConsumer<Output = unknown>(
 
       let line: ClaudeStreamLine;
       try {
-        line = JSON.parse(raw) as ClaudeStreamLine;
+        line = parseClaudeLine(raw);
       } catch (error) {
         completed = true;
         const message = error instanceof Error ? error.message : String(error);
@@ -128,6 +127,10 @@ export function createClaudeStreamConsumer<Output = unknown>(
       );
     }
   };
+}
+
+function parseClaudeLine(raw: string): ClaudeStreamLine {
+  return JSON.parse(raw) as ClaudeStreamLine;
 }
 
 async function consumeClaudeLine<Output>(
@@ -235,7 +238,7 @@ async function consumeResult<Output>(
 
 function parseClaudeStructuredOutput<Output>(
   schema: z.ZodType<Output> | undefined,
-  output: unknown,
+  output: string,
   structuredOutput: unknown
 ):
   | { readonly type: "success"; readonly value?: Output }
@@ -248,14 +251,13 @@ function parseClaudeStructuredOutput<Output>(
   if (structuredOutput !== undefined) {
     raw = structuredOutput;
   } else {
-    const text = typeof output === "string" ? output : "";
     try {
-      raw = JSON.parse(text) as unknown;
+      raw = JSON.parse(output) as unknown;
     } catch {
       return {
         type: "failed",
         error: structuredOutputValidationFailed({
-          raw: text,
+          raw: output,
           issues: ["Claude structured output was not valid JSON"]
         })
       };
