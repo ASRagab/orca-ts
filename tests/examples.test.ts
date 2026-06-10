@@ -10,7 +10,8 @@ describe("examples", () => {
       "implement-enhanced.ts",
       "implement.ts",
       "issue-pr-bugfix.ts",
-      "issue-pr.ts"
+      "issue-pr.ts",
+      "multi-backend-compare.ts",
     ]);
   });
 

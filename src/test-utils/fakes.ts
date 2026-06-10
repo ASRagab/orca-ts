@@ -1,6 +1,10 @@
 import type { ConversationEvent, LlmResult } from "../model/index.ts";
 import { err, ok, type Result } from "neverthrow";
 import type { RuntimeError } from "../model/index.ts";
+import type { LlmBackend, LlmTool, AutonomousRequest } from "../backends/types.ts";
+import { StreamConversation, type Conversation } from "../conversation/conversation.ts";
+import { sessionId } from "../model/brand.ts";
+import type { BackendTag } from "../model/schemas.ts";
 
 export interface FakeSubprocess {
   readonly lines: readonly string[];
@@ -51,6 +55,59 @@ export function scriptedRpc<Request, Response>(
 
 export function fakeAgentRun(events: readonly ConversationEvent[], result: LlmResult): FakeAgentRun {
   return { events, result };
+}
+
+export interface FakeLlmBackend extends LlmBackend<"codex"> {
+  readonly calls: readonly string[];
+}
+
+export function fakeBackend(outputs: readonly string[]): FakeLlmBackend {
+  const queue = [...outputs];
+  const calls: string[] = [];
+  return {
+    tag: "codex" as const,
+    calls,
+    autonomous<Output>(request: AutonomousRequest<Output, "codex">): Conversation<"codex"> {
+      calls.push(request.prompt);
+      const output = queue.shift();
+      if (output === undefined) {
+        throw new Error(`fakeBackend: scripted outputs exhausted (${calls.length} calls made)`);
+      }
+      const callIndex = calls.length;
+      const conv = new StreamConversation<"codex">({ backend: "codex" });
+      void Promise.resolve().then(async () => {
+        await conv.emit({ type: "assistant_text_delta", text: output });
+        await conv.emit({ type: "assistant_turn_end" });
+        conv.succeed({
+          backend: "codex",
+          sessionId: sessionId("codex", `fake-session-${callIndex}`),
+          output,
+        });
+      });
+      return conv;
+    }
+  };
+}
+
+export interface EventRecorder<E = ConversationEvent> {
+  readonly push: (event: E) => void;
+  readonly events: () => readonly E[];
+}
+
+export function eventRecorder<E = ConversationEvent>(): EventRecorder<E> {
+  const captured: E[] = [];
+  return {
+    push: (event) => { captured.push(event); },
+    events: () => captured,
+  };
+}
+
+export function createFakeLlmTool(fake: FakeLlmBackend): LlmTool {
+  return {
+    autonomous<B extends BackendTag, Output>(_backend: LlmBackend<B>, req: AutonomousRequest<Output, B>) {
+      return fake.autonomous(req as unknown as AutonomousRequest<Output, "codex">) as unknown as Conversation<B>;
+    }
+  };
 }
 
 export function scriptedFakeAgent(steps: readonly ScriptedFakeAgentStep[]): ScriptedFakeAgent {

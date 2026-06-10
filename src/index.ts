@@ -2,6 +2,7 @@ export * from "./backends/index.ts";
 export * from "./conversation/index.ts";
 export * from "./flow/index.ts";
 export * from "./model/index.ts";
+export * from "./monitor/index.ts";
 export * from "./plan/index.ts";
 export * from "./review/index.ts";
 export * from "./runner/index.ts";

@@ -1,4 +1,4 @@
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import {
   claude,
   codex,
@@ -12,7 +12,8 @@ import {
   pi,
   z,
   type BackendTag,
-  type LlmBackend
+  type LlmBackend,
+  WorkflowMonitor,
 } from "../src/index.ts";
 
 export const PullRequestTitle = "Clean up AI-slop patterns in source and tests";
@@ -45,6 +46,7 @@ export interface WorkflowArgs {
   readonly base: string;
   readonly branch: string;
   readonly publish: boolean;
+  readonly monitor: boolean;
   readonly startGroup?: CleanupGroup;
   readonly maxFiles?: number;
 }
@@ -102,6 +104,7 @@ export function parseWorkflowArgs(argv: readonly string[]): WorkflowArgs {
     base: readFlag(argv, "--base") ?? "main",
     branch: readFlag(argv, "--branch") ?? DefaultCleanupBranch,
     publish: !argv.includes("--no-publish"),
+    monitor: argv.includes("--monitor"),
     ...(startGroup ? { startGroup } : {}),
     ...(maxFiles === undefined ? {} : { maxFiles })
   };
@@ -437,14 +440,24 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 async function runCleanupWorkflow(args: WorkflowArgs): Promise<void> {
   const selected = selectBackend();
   console.log(`Cleanup backend: ${selected.tag}${selected.model ? ` (${selected.model})` : ""}`);
+  const monitor = args.monitor ? new WorkflowMonitor(selected.tag) : undefined;
   try {
-    await runCleanupWithBackend(args, selected);
+    await runCleanupWithBackend(args, selected, monitor);
   } finally {
     await selected.shutdown?.();
+    if (monitor) {
+      const logDir = join(process.cwd(), ".orca", "monitoring");
+      await monitor.writeLog(logDir);
+      console.log(`Monitor log written to ${logDir}/${monitor.runId}.json`);
+    }
   }
 }
 
-async function runCleanupWithBackend(args: WorkflowArgs, selected: SelectedBackend): Promise<void> {
+async function runCleanupWithBackend(
+  args: WorkflowArgs,
+  selected: SelectedBackend,
+  monitor?: WorkflowMonitor,
+): Promise<void> {
   await assertCleanWorktree();
   const branch = await ensureCleanupBranch(args.branch);
   const baselineValidation = await runCommandPlan([
@@ -493,11 +506,19 @@ async function runCleanupWithBackend(args: WorkflowArgs, selected: SelectedBacke
       const startedAt = Date.now();
       console.log(`Cleaning ${file} (${String(processed)}${args.maxFiles ? `/${String(args.maxFiles)}` : ""})`);
       const outcome = await cleanupFile(file, trackedFiles, acceptedPaths, selected);
-      const elapsedSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+      const durationMs = Date.now() - startedAt;
+      const elapsedSeconds = (durationMs / 1000).toFixed(1);
       const verdict =
         outcome.changedFiles.length > 0 ? "changed" : outcome.skippedFiles.length > 0 ? "skipped" : "no-op";
       const skipReason = outcome.skippedFiles[0]?.reason;
       console.log(`  ${file}: ${verdict} in ${elapsedSeconds}s${skipReason ? ` (${skipReason})` : ""}`);
+      monitor?.recordOutcome({
+        file,
+        verdict,
+        durationMs,
+        smellsRemoved: outcome.changedFiles.flatMap((f) => f.smellsRemoved),
+        ...(skipReason ? { reason: skipReason } : {}),
+      });
       validation.push(...outcome.validation);
       skippedFiles.push(...outcome.skippedFiles);
 
