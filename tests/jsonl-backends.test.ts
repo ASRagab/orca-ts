@@ -101,6 +101,31 @@ describe("Codex JSONL Tier 1 fixtures", () => {
     });
   });
 
+  test("uses last agent_message for structured output when codex emits progress blobs", async () => {
+    // Codex emits one agent_message per step (progress updates then final answer).
+    // Concatenating all steps produces invalid JSON; only the last message is the result.
+    const actual = await collectCodexJsonl(
+      [
+        '{"type":"thread.started","thread_id":"thr"}',
+        '{"type":"item.completed","item":{"id":"m1","type":"agent_message","text":"{\\"answer\\":\\"thinking\\"}"}}',
+        '{"type":"item.completed","item":{"id":"m2","type":"agent_message","text":"{\\"answer\\":\\"done\\"}"}}',
+        '{"type":"turn.completed"}'
+      ],
+      { schema: z.object({ answer: z.string() }) }
+    );
+
+    expect(actual.outcome).toEqual({
+      type: "success",
+      result: {
+        backend: "codex",
+        sessionId: sessionId("codex", "thr"),
+        output: '{"answer":"thinking"}{"answer":"done"}',
+        structured: { answer: "done" },
+        usage: { input: 0, output: 0 }
+      }
+    });
+  });
+
   test("fails invalid structured output with raw output", async () => {
     const actual = await collectCodexJsonl(
       [

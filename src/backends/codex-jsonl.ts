@@ -135,6 +135,7 @@ export function createCodexJsonlConsumer<Output = unknown>(
 ): CodexJsonlConsumer {
   let threadId = "";
   let output = "";
+  let lastAgentText = "";
   let completed = false;
 
   return {
@@ -207,13 +208,17 @@ export function createCodexJsonlConsumer<Output = unknown>(
       if (line.type === "item.completed" && line.item?.type === "agent_message") {
         const text = line.item.text ?? "";
         output += text;
+        lastAgentText = text;
         await conversation.emit({ type: "assistant_text_delta", text });
         return;
       }
 
       if (line.type === "turn.completed") {
         await conversation.emit({ type: "assistant_turn_end" });
-        const structured = parseCodexStructuredOutput(options.schema, output);
+        // Codex emits one agent_message per step (progress updates + final answer).
+        // Only the last message is the structured result; using `output` (all steps
+        // concatenated) produces invalid JSON when the schema is set.
+        const structured = parseCodexStructuredOutput(options.schema, lastAgentText || output);
         if (structured.type === "failed") {
           completed = true;
           conversation.fail(structured.error);
