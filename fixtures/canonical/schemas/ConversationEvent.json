@@ -36,6 +36,23 @@
       "properties": {
         "type": {
           "type": "string",
+          "const": "assistant_thinking_delta"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
           "const": "assistant_tool_call"
         },
         "id": {
