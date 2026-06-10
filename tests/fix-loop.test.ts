@@ -49,7 +49,7 @@ describe("fixLoop", () => {
     expect(summary.iterations).toBe(0);
     expect(summary.converged).toBe(false);
     expect(summary.ignoredIssues).toHaveLength(1);
-    expect(summary.ignoredIssues[0]!.message).toBe("unfixable");
+    expect(summary.ignoredIssues[0]?.message).toBe("unfixable");
   });
 
   test("dirty, fix never clears - halts at maxIterations", async () => {
@@ -94,7 +94,7 @@ describe("fixLoop", () => {
       1,
     );
     expect(received).toHaveLength(1);
-    expect(received[0]!.message).toBe("fixable");
+    expect(received[0]?.message).toBe("fixable");
   });
 
   test("propagates evaluate error", async () => {

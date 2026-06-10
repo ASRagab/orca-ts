@@ -71,7 +71,7 @@ export function fakeBackend(outputs: readonly string[]): FakeLlmBackend {
       calls.push(request.prompt);
       const output = queue.shift();
       if (output === undefined) {
-        throw new Error(`fakeBackend: scripted outputs exhausted (${calls.length} calls made)`);
+        throw new Error(`fakeBackend: scripted outputs exhausted (${String(calls.length)} calls made)`);
       }
       const callIndex = calls.length;
       const conv = new StreamConversation<"codex">({ backend: "codex" });
@@ -80,7 +80,7 @@ export function fakeBackend(outputs: readonly string[]): FakeLlmBackend {
         await conv.emit({ type: "assistant_turn_end" });
         conv.succeed({
           backend: "codex",
-          sessionId: sessionId("codex", `fake-session-${callIndex}`),
+          sessionId: sessionId("codex", `fake-session-${String(callIndex)}`),
           output,
         });
       });

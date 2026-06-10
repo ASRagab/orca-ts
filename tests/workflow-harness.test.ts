@@ -29,7 +29,7 @@ describe("workflow test harness", () => {
     expect(fake.calls).toEqual(["prompt 1", "prompt 2"]);
   });
 
-  test("fakeBackend records prompts in calls array", async () => {
+  test("fakeBackend records prompts in calls array", () => {
     const fake = fakeBackend(["a", "b", "c"]);
     fake.autonomous({ prompt: "x" });
     fake.autonomous({ prompt: "y" });

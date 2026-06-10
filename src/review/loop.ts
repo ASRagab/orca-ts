@@ -18,7 +18,7 @@ export async function fixLoop<I extends ReviewIssue>(
   const events: string[] = [];
   let iterations = 0;
 
-  while (true) {
+  for (;;) {
     events.push("evaluate:started");
     const evalResult = await evaluate();
     if (evalResult.isErr()) return err(evalResult.error);

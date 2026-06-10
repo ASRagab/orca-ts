@@ -29,7 +29,7 @@ async function loadLogs(): Promise<WorkflowRunLog[]> {
 }
 
 function formatMs(ms: number): string {
-  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${String(ms)}ms`;
 }
 
 function printSummary(logs: WorkflowRunLog[]): void {
@@ -39,11 +39,11 @@ function printSummary(logs: WorkflowRunLog[]): void {
   const totalSkip = logs.reduce((n, l) => n + l.summary.skip, 0);
   const passRate = totalFiles > 0 ? ((totalPass / totalFiles) * 100).toFixed(1) : "n/a";
 
-  console.log(`\n=== Workflow Run Summary (${logs.length} run${logs.length !== 1 ? "s" : ""}) ===\n`);
-  console.log(`Files processed : ${totalFiles}`);
-  console.log(`Changed (pass)  : ${totalPass}`);
-  console.log(`Skipped/no-op   : ${totalSkip}`);
-  console.log(`Failures        : ${totalFail}`);
+  console.log(`\n=== Workflow Run Summary (${String(logs.length)} run${logs.length !== 1 ? "s" : ""}) ===\n`);
+  console.log(`Files processed : ${String(totalFiles)}`);
+  console.log(`Changed (pass)  : ${String(totalPass)}`);
+  console.log(`Skipped/no-op   : ${String(totalSkip)}`);
+  console.log(`Failures        : ${String(totalFail)}`);
   console.log(`Pass rate       : ${passRate}%`);
 
   // Per-backend breakdown
@@ -60,7 +60,7 @@ function printSummary(logs: WorkflowRunLog[]): void {
     console.log("\n--- Per-backend ---");
     for (const [backend, stats] of byBackend) {
       const files = stats.pass + stats.fail + stats.skip;
-      console.log(`  ${backend}: ${stats.runs} run(s), ${files} files, ${stats.pass} changed, ${stats.fail} failed`);
+      console.log(`  ${backend}: ${String(stats.runs)} run(s), ${String(files)} files, ${String(stats.pass)} changed, ${String(stats.fail)} failed`);
     }
   }
 
@@ -83,7 +83,7 @@ function printSummary(logs: WorkflowRunLog[]): void {
   if (allFailures.length > 0) {
     console.log("\n--- Failures ---");
     for (const f of allFailures) {
-      const tag = (f.error as { _tag?: string })?._tag ?? "unknown";
+      const tag = (f.error as { _tag?: string })._tag ?? "unknown";
       console.log(`  [${f.runId}] ${f.file}: ${tag} (${formatMs(f.durationMs)})`);
     }
   }

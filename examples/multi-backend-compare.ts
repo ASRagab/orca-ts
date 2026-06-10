@@ -30,11 +30,11 @@ await flow(process.argv.slice(2))(async () => {
     match: codexOutput === fakeOutput,
   };
 
-  const logPath = join(process.cwd(), ".orca", `backend-compare-${Date.now()}.json`);
+  const logPath = join(process.cwd(), ".orca", `backend-compare-${String(Date.now())}.json`);
   await fs().writeText(logPath, JSON.stringify(report, null, 2));
 
   console.log(`Comparison written to ${logPath}`);
-  console.log(`Outputs match: ${report.match}`);
+  console.log(`Outputs match: ${String(report.match)}`);
   if (!report.match) {
     console.log(`codex: ${codexOutput.slice(0, 120)}`);
     console.log(`fake:  ${fakeOutput.slice(0, 120)}`);
