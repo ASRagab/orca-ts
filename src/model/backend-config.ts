@@ -2,7 +2,7 @@ import type { z } from "zod";
 import type { BackendTag, LlmResult } from "./schemas.ts";
 import type { SessionId } from "./brand.ts";
 
-export type BackendApprovalPolicy = "auto" | "never" | "on-request";
+export type BackendApprovalPolicy = "never" | "on-request" | "on-failure" | "granular" | "untrusted";
 export type BackendSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
 export interface BackendRetryConfig {
