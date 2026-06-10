@@ -136,6 +136,26 @@ describe("OpenCode live backend constructor", () => {
     });
   });
 
+  test("fails the turn when the wall-clock cap fires despite continuous activity", async () => {
+    const backend = opencode({
+      startServer: () => Promise.resolve(fakeServer()),
+      connect: () => continuouslyActiveHttp(),
+      inactivityTimeoutMs: 60_000,
+      wallClockTimeoutMs: 50
+    });
+
+    const outcome = await backend.autonomous({ prompt: "run" }).awaitResult();
+
+    expect(outcome).toEqual({
+      type: "failed",
+      error: {
+        _tag: "BackendFailed",
+        backend: "opencode",
+        message: "opencode turn exceeded 50ms wall-clock limit"
+      }
+    });
+  });
+
   test("reports failed startup as a backend failure", async () => {
     const backend = opencode({
       startServer: () => Promise.reject(new Error("serve missing"))
@@ -335,6 +355,27 @@ function stallingHttp(): OpenCodeHttp {
           await new Promise<void>(() => {
             // never resolves: the stream stalls with no further events
           });
+        })()
+      );
+    }
+  };
+}
+
+function continuouslyActiveHttp(): OpenCodeHttp {
+  return {
+    postJson(path) {
+      if (path === "/session") {
+        return Promise.resolve(JSON.stringify({ id: "ses_test" }));
+      }
+      return Promise.resolve("");
+    },
+    openEvents() {
+      return Promise.resolve(
+        (async function* (): AsyncIterable<string> {
+          for (;;) {
+            yield 'data: {"type":"message.part.delta","properties":{"sessionID":"ses_test","field":"text","delta":"x"}}';
+            await new Promise<void>((resolve) => setTimeout(resolve, 5));
+          }
         })()
       );
     }

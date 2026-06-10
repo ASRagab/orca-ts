@@ -39,6 +39,10 @@ export interface OpenCodeBackendOptions {
    * streaming turn resets the timer on every event, so legitimate slow turns are
    * unaffected. */
   readonly inactivityTimeoutMs?: number;
+  /** Absolute per-turn wall-clock cap. Unlike the inactivity watchdog, this
+   * never resets — it fires regardless of SSE activity, guarding against agents
+   * that loop indefinitely while still emitting events. Defaults to 600s. */
+  readonly wallClockTimeoutMs?: number;
   /** Seam: start (or reuse) the serve process. Defaults to spawning `opencode serve`. */
   readonly startServer?: () => Promise<OpenCodeServerProcess>;
   /** Seam: build an HTTP/SSE client for a started server. Defaults to `fetch`. */
@@ -102,7 +106,16 @@ export async function runOpenCodeConversation<Output>(
 
     const consumer = createOpenCodeSseConsumer(conversation, serverSession);
     const inactivityMs = options.inactivityTimeoutMs ?? 120_000;
+    const wallClockMs = options.wallClockTimeoutMs ?? 600_000;
     const iterator = events[Symbol.asyncIterator]();
+
+    let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
+    const wallClock = new Promise<"wallclock">((resolve) => {
+      wallClockTimer = setTimeout(() => {
+        resolve("wallclock");
+      }, wallClockMs);
+    });
+
     // Deadline-based watchdog: only lines relevant to this session push the
     // deadline out, so foreign-session chatter can't mask a dead turn.
     let deadline = Date.now() + inactivityMs;
@@ -116,10 +129,23 @@ export async function runOpenCodeConversation<Output>(
           Math.max(deadline - Date.now(), 0)
         );
       });
-      const next = await Promise.race([iterator.next(), inactivity]);
+      const next = await Promise.race([iterator.next(), inactivity, wallClock]);
       clearTimeout(timer);
 
+      if (next === "wallclock") {
+        clearTimeout(wallClockTimer);
+        if (!conversation.signal.aborted) {
+          conversation.fail(
+            backendFailed(
+              "opencode",
+              `opencode turn exceeded ${String(wallClockMs)}ms wall-clock limit`
+            )
+          );
+        }
+        return;
+      }
       if (next === "stalled") {
+        clearTimeout(wallClockTimer);
         if (!conversation.signal.aborted) {
           conversation.fail(
             backendFailed(
@@ -134,10 +160,12 @@ export async function runOpenCodeConversation<Output>(
         break;
       }
       if (conversation.signal.aborted) {
+        clearTimeout(wallClockTimer);
         return;
       }
       const relevant = await consumer.consume(next.value);
       if (consumer.completed) {
+        clearTimeout(wallClockTimer);
         return;
       }
       if (relevant) {
@@ -145,6 +173,7 @@ export async function runOpenCodeConversation<Output>(
       }
     }
 
+    clearTimeout(wallClockTimer);
     if (!conversation.signal.aborted) {
       consumer.finish();
     }
