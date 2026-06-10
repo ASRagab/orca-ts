@@ -34,10 +34,10 @@ export type SubprocessSpawner = (
 
 /** The per-line consumer half a backend supplies: incremental `consume(line)`
  * plus a `finish()` that the helper calls after a clean (zero-exit) stream end.
- * `completed` lets the helper stop reading once the turn is settled — required
- * for persistent processes (pi rpc) that don't exit after a turn. */
+ * `signal` aborts once the turn is settled — required for persistent processes
+ * (pi rpc) that don't exit after a turn. */
 export interface SubprocessConsumer {
-  readonly completed?: boolean;
+  readonly signal: AbortSignal;
   consume(raw: string): Promise<void>;
   finish(): void;
 }
@@ -97,7 +97,7 @@ export async function runSubprocessConversation<B extends BackendTag>(
       return;
     }
     await consumer.consume(line);
-    if (consumer.completed) {
+    if (consumer.signal.aborted) {
       // Kill the child once the consumer has settled the conversation on a
       // terminal event (success, modeled failure, or early parse/tool error).
       // Safe because we only reach here after consuming that event — the agent's
@@ -110,7 +110,7 @@ export async function runSubprocessConversation<B extends BackendTag>(
 
   // The consumer already settled the conversation (success/failure); the
   // exit-code path below is only for a stream that ended without one.
-  if (consumer.completed) {
+  if (consumer.signal.aborted) {
     return;
   }
 

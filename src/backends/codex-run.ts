@@ -7,6 +7,7 @@ import {
   createCodexJsonlConsumer,
   type CodexExecArgs
 } from "./codex-jsonl.ts";
+import { composeBackendPrompt } from "./conversation-config.ts";
 import {
   errorMessage,
   runSubprocessConversation,
@@ -95,7 +96,7 @@ export async function runCodexConversation<Output>(
     }
 
     const args = codexExecJsonlArgs({
-      prompt: composePrompt(request.prompt, config),
+      prompt: composeBackendPrompt(request.prompt, config),
       ...(config.model === undefined ? {} : { model: config.model }),
       ...(config.approvalPolicy === undefined ? {} : { approvalPolicy: config.approvalPolicy }),
       ...(config.sandbox === undefined ? {} : { sandbox: config.sandbox }),
@@ -138,61 +139,32 @@ function resolveCodexConfig<Output>(
   request: AutonomousRequest<Output, "codex">,
   options: CodexBackendOptions
 ): ResolvedCodexConfig<Output> {
-  const config: ResolvedCodexConfig<Output> = {};
   const optionConfig = options.config;
   const requestConfig = request.config;
-
-  setConfigValue(config, "model", requestConfig?.model ?? optionConfig?.model ?? options.model);
-  setConfigValue(config, "systemPrompt", requestConfig?.systemPrompt ?? optionConfig?.systemPrompt);
-  setConfigValue(
-    config,
-    "approvalPolicy",
-    requestConfig?.approvalPolicy ?? optionConfig?.approvalPolicy ?? options.approvalPolicy
-  );
-  setConfigValue(config, "sandbox", requestConfig?.sandbox ?? optionConfig?.sandbox ?? options.sandbox);
-  setConfigValue(config, "readOnly", requestConfig?.readOnly ?? optionConfig?.readOnly ?? options.readOnly);
-  setConfigValue(
-    config,
-    "selfManagedGit",
-    requestConfig?.selfManagedGit ?? optionConfig?.selfManagedGit
-  );
-  setConfigValue(config, "retryAttempts", requestConfig?.retry?.attempts ?? optionConfig?.retry?.attempts);
-  setConfigValue(
-    config,
-    "schema",
+  const config: ResolvedCodexConfig<Output> = {};
+  const model = requestConfig?.model ?? optionConfig?.model ?? options.model;
+  if (model !== undefined) config.model = model;
+  const systemPrompt = requestConfig?.systemPrompt ?? optionConfig?.systemPrompt;
+  if (systemPrompt !== undefined) config.systemPrompt = systemPrompt;
+  const approvalPolicy =
+    requestConfig?.approvalPolicy ?? optionConfig?.approvalPolicy ?? options.approvalPolicy;
+  if (approvalPolicy !== undefined) config.approvalPolicy = approvalPolicy;
+  const sandbox = requestConfig?.sandbox ?? optionConfig?.sandbox ?? options.sandbox;
+  if (sandbox !== undefined) config.sandbox = sandbox;
+  const readOnly = requestConfig?.readOnly ?? optionConfig?.readOnly ?? options.readOnly;
+  if (readOnly !== undefined) config.readOnly = readOnly;
+  const selfManagedGit = requestConfig?.selfManagedGit ?? optionConfig?.selfManagedGit;
+  if (selfManagedGit !== undefined) config.selfManagedGit = selfManagedGit;
+  const retryAttempts = requestConfig?.retry?.attempts ?? optionConfig?.retry?.attempts;
+  if (retryAttempts !== undefined) config.retryAttempts = retryAttempts;
+  const schema =
     requestConfig?.structuredOutput?.schema ??
-      request.schema ??
-      (optionConfig?.structuredOutput?.schema as z.ZodType<Output> | undefined)
-  );
-  setConfigValue(
-    config,
-    "resumeSessionId",
-    requestConfig?.resumeSessionId === undefined ? undefined : String(requestConfig.resumeSessionId)
-  );
-  setConfigValue(config, "interactive", requestConfig?.interactive ?? optionConfig?.interactive);
-
+    request.schema ??
+    (optionConfig?.structuredOutput?.schema as z.ZodType<Output> | undefined);
+  if (schema !== undefined) config.schema = schema;
+  if (requestConfig?.resumeSessionId !== undefined)
+    config.resumeSessionId = String(requestConfig.resumeSessionId);
+  const interactive = requestConfig?.interactive ?? optionConfig?.interactive;
+  if (interactive !== undefined) config.interactive = interactive;
   return config;
-}
-
-function setConfigValue<Output, Key extends keyof ResolvedCodexConfig<Output>>(
-  config: ResolvedCodexConfig<Output>,
-  key: Key,
-  value: ResolvedCodexConfig<Output>[Key]
-): void {
-  if (value !== undefined) {
-    config[key] = value;
-  }
-}
-
-function composePrompt<Output>(prompt: string, config: ResolvedCodexConfig<Output>): string {
-  return [
-    config.systemPrompt ? `System instructions:\n${config.systemPrompt}` : "",
-    config.selfManagedGit === false
-      ? "Git policy: Orca is the parent runtime. Do not create commits, branches, pushes, or pull requests; leave repository mutation to the parent workflow."
-      : "",
-    config.retryAttempts === undefined ? "" : `Retry policy: maximum attempts ${String(config.retryAttempts)}.`,
-    prompt
-  ]
-    .filter((part) => part.length > 0)
-    .join("\n\n");
 }

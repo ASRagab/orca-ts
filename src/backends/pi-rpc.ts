@@ -156,7 +156,7 @@ export async function consumePiRpc(
 }
 
 export interface PiRpcConsumer {
-  readonly completed: boolean;
+  readonly signal: AbortSignal;
   consume(raw: string): Promise<void>;
   finish(): void;
 }
@@ -171,36 +171,36 @@ export function createPiRpcConsumer<Output = unknown>(
   options: PiRpcOptions<Output> = {}
 ): PiRpcConsumer {
   const state = newPiRpcState();
-  let completed = false;
+  const controller = new AbortController();
 
   return {
-    get completed() {
-      return completed;
+    get signal() {
+      return controller.signal;
     },
 
     async consume(raw: string): Promise<void> {
-      if (completed) {
+      if (controller.signal.aborted) {
         return;
       }
       let terminal: boolean;
       try {
         terminal = await applyPiRpcLine(raw, conversation, state, piSessionId, options);
       } catch (error) {
-        completed = true;
+        controller.abort();
         const message = error instanceof Error ? error.message : String(error);
         conversation.fail(backendFailed("pi", `invalid pi RPC: ${message}`));
         return;
       }
       if (terminal) {
-        completed = true;
+        controller.abort();
       }
     },
 
     finish(): void {
-      if (completed) {
+      if (controller.signal.aborted) {
         return;
       }
-      completed = true;
+      controller.abort();
       conversation.fail(backendFailed("pi", "pi stream ended before agent_end"));
     }
   };

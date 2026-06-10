@@ -80,7 +80,7 @@ export async function consumeClaudeStreamJson<Output = unknown>(
 }
 
 export interface ClaudeStreamConsumer {
-  readonly completed: boolean;
+  readonly signal: AbortSignal;
   consume(raw: string): Promise<void>;
   finish(): void;
 }
@@ -89,15 +89,15 @@ export function createClaudeStreamConsumer<Output = unknown>(
   conversation: StreamConversation<"claude">,
   options: ClaudeStreamOptions<Output> = {}
 ): ClaudeStreamConsumer {
-  let completed = false;
+  const controller = new AbortController();
 
   return {
-    get completed() {
-      return completed;
+    get signal() {
+      return controller.signal;
     },
 
     async consume(raw: string): Promise<void> {
-      if (completed || raw.trim() === "") {
+      if (controller.signal.aborted || raw.trim() === "") {
         return;
       }
 
@@ -105,7 +105,7 @@ export function createClaudeStreamConsumer<Output = unknown>(
       try {
         line = parseClaudeLine(raw);
       } catch (error) {
-        completed = true;
+        controller.abort();
         const message = error instanceof Error ? error.message : String(error);
         conversation.fail(backendFailed("claude", `invalid claude stream-json: ${message}`));
         return;
@@ -113,15 +113,15 @@ export function createClaudeStreamConsumer<Output = unknown>(
 
       await consumeClaudeLine(line, conversation, options);
       if (line.type === "result") {
-        completed = true;
+        controller.abort();
       }
     },
 
     finish(): void {
-      if (completed) {
+      if (controller.signal.aborted) {
         return;
       }
-      completed = true;
+      controller.abort();
       conversation.fail(
         backendFailed("claude", "claude exited cleanly but never sent a result message")
       );

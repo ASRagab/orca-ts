@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { z } from "zod";
+import { composeBackendPrompt } from "./conversation-config.ts";
 import { createPiRpcConsumer, piPromptCommand, piRpcArgs, type PiRpcOptions } from "./pi-rpc.ts";
 import {
   errorMessage,
@@ -83,7 +84,7 @@ export async function runPiConversation<Output>(
       ...(options.env === undefined ? {} : { env: options.env }),
       ...(options.spawnProcess === undefined ? {} : { spawnProcess: options.spawnProcess }),
       onStart: (process) => {
-        process.write?.(`${piPromptCommand(composePrompt(request.prompt, config))}\n`);
+        process.write?.(`${piPromptCommand(composeBackendPrompt(request.prompt, config))}\n`);
         // Pi rpc keeps reading stdin for the next command; leave it open. The
         // shared helper kills the process once `agent_end` settles the turn.
       },
@@ -100,52 +101,27 @@ function resolvePiConfig<Output>(
   request: AutonomousRequest<Output, "pi">,
   options: PiBackendOptions
 ): ResolvedPiConfig<Output> {
-  const config: ResolvedPiConfig<Output> = {};
   const optionConfig = options.config;
   const requestConfig = request.config;
-
-  setValue(config, "model", requestConfig?.model ?? optionConfig?.model);
-  setValue(config, "systemPrompt", requestConfig?.systemPrompt ?? optionConfig?.systemPrompt);
-  setValue(config, "readOnly", requestConfig?.readOnly ?? optionConfig?.readOnly);
-  setValue(config, "selfManagedGit", requestConfig?.selfManagedGit ?? optionConfig?.selfManagedGit);
-  setValue(config, "retryAttempts", requestConfig?.retry?.attempts ?? optionConfig?.retry?.attempts);
-  setValue(
-    config,
-    "schema",
+  const config: ResolvedPiConfig<Output> = {};
+  const model = requestConfig?.model ?? optionConfig?.model;
+  if (model !== undefined) config.model = model;
+  const systemPrompt = requestConfig?.systemPrompt ?? optionConfig?.systemPrompt;
+  if (systemPrompt !== undefined) config.systemPrompt = systemPrompt;
+  const readOnly = requestConfig?.readOnly ?? optionConfig?.readOnly;
+  if (readOnly !== undefined) config.readOnly = readOnly;
+  const selfManagedGit = requestConfig?.selfManagedGit ?? optionConfig?.selfManagedGit;
+  if (selfManagedGit !== undefined) config.selfManagedGit = selfManagedGit;
+  const retryAttempts = requestConfig?.retry?.attempts ?? optionConfig?.retry?.attempts;
+  if (retryAttempts !== undefined) config.retryAttempts = retryAttempts;
+  const schema =
     requestConfig?.structuredOutput?.schema ??
-      request.schema ??
-      (optionConfig?.structuredOutput?.schema as z.ZodType<Output> | undefined)
-  );
-  setValue(
-    config,
-    "resumeSessionId",
-    requestConfig?.resumeSessionId === undefined ? undefined : String(requestConfig.resumeSessionId)
-  );
-
+    request.schema ??
+    (optionConfig?.structuredOutput?.schema as z.ZodType<Output> | undefined);
+  if (schema !== undefined) config.schema = schema;
+  if (requestConfig?.resumeSessionId !== undefined)
+    config.resumeSessionId = String(requestConfig.resumeSessionId);
   return config;
-}
-
-function setValue<Output, Key extends keyof ResolvedPiConfig<Output>>(
-  config: ResolvedPiConfig<Output>,
-  key: Key,
-  value: ResolvedPiConfig<Output>[Key]
-): void {
-  if (value !== undefined) {
-    config[key] = value;
-  }
-}
-
-function composePrompt<Output>(prompt: string, config: ResolvedPiConfig<Output>): string {
-  return [
-    config.systemPrompt ? `System instructions:\n${config.systemPrompt}` : "",
-    config.selfManagedGit === false
-      ? "Git policy: Orca is the parent runtime. Do not create commits, branches, pushes, or pull requests; leave repository mutation to the parent workflow."
-      : "",
-    config.retryAttempts === undefined ? "" : `Retry policy: maximum attempts ${String(config.retryAttempts)}.`,
-    prompt
-  ]
-    .filter((part) => part.length > 0)
-    .join("\n\n");
 }
 
 export function pi(options: PiBackendOptions = {}): LlmBackend<"pi"> {

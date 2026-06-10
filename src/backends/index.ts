@@ -1,4 +1,5 @@
 export * from "./claude-run.ts";
+export * from "./conversation-config.ts";
 export * from "./claude-stream-json.ts";
 export * from "./codex.ts";
 export * from "./codex-jsonl.ts";

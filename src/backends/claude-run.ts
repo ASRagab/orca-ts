@@ -3,6 +3,7 @@ import {
   createClaudeStreamConsumer,
   type ClaudeStreamOptions
 } from "./claude-stream-json.ts";
+import { composeBackendPrompt } from "./conversation-config.ts";
 import {
   errorMessage,
   runSubprocessConversation,
@@ -84,7 +85,7 @@ export async function runClaudeConversation<Output>(
       ...(options.env === undefined ? {} : { env: options.env }),
       ...(options.spawnProcess === undefined ? {} : { spawnProcess: options.spawnProcess }),
       onStart: (process) => {
-        process.write?.(`${userTurnLine(composePrompt(request.prompt, config))}\n`);
+        process.write?.(`${userTurnLine(composeBackendPrompt(request.prompt, config))}\n`);
         process.endStdin?.();
       },
       createConsumer: () => createClaudeStreamConsumer(conversation, consumerOptions)
@@ -100,52 +101,27 @@ function resolveClaudeConfig<Output>(
   request: AutonomousRequest<Output, "claude">,
   options: ClaudeBackendOptions
 ): ResolvedClaudeConfig<Output> {
-  const config: ResolvedClaudeConfig<Output> = {};
   const optionConfig = options.config;
   const requestConfig = request.config;
-
-  setValue(config, "model", requestConfig?.model ?? optionConfig?.model);
-  setValue(config, "systemPrompt", requestConfig?.systemPrompt ?? optionConfig?.systemPrompt);
-  setValue(config, "readOnly", requestConfig?.readOnly ?? optionConfig?.readOnly);
-  setValue(config, "selfManagedGit", requestConfig?.selfManagedGit ?? optionConfig?.selfManagedGit);
-  setValue(config, "retryAttempts", requestConfig?.retry?.attempts ?? optionConfig?.retry?.attempts);
-  setValue(
-    config,
-    "schema",
+  const config: ResolvedClaudeConfig<Output> = {};
+  const model = requestConfig?.model ?? optionConfig?.model;
+  if (model !== undefined) config.model = model;
+  const systemPrompt = requestConfig?.systemPrompt ?? optionConfig?.systemPrompt;
+  if (systemPrompt !== undefined) config.systemPrompt = systemPrompt;
+  const readOnly = requestConfig?.readOnly ?? optionConfig?.readOnly;
+  if (readOnly !== undefined) config.readOnly = readOnly;
+  const selfManagedGit = requestConfig?.selfManagedGit ?? optionConfig?.selfManagedGit;
+  if (selfManagedGit !== undefined) config.selfManagedGit = selfManagedGit;
+  const retryAttempts = requestConfig?.retry?.attempts ?? optionConfig?.retry?.attempts;
+  if (retryAttempts !== undefined) config.retryAttempts = retryAttempts;
+  const schema =
     requestConfig?.structuredOutput?.schema ??
-      request.schema ??
-      (optionConfig?.structuredOutput?.schema as z.ZodType<Output> | undefined)
-  );
-  setValue(
-    config,
-    "resumeSessionId",
-    requestConfig?.resumeSessionId === undefined ? undefined : String(requestConfig.resumeSessionId)
-  );
-
+    request.schema ??
+    (optionConfig?.structuredOutput?.schema as z.ZodType<Output> | undefined);
+  if (schema !== undefined) config.schema = schema;
+  if (requestConfig?.resumeSessionId !== undefined)
+    config.resumeSessionId = String(requestConfig.resumeSessionId);
   return config;
-}
-
-function setValue<Output, Key extends keyof ResolvedClaudeConfig<Output>>(
-  config: ResolvedClaudeConfig<Output>,
-  key: Key,
-  value: ResolvedClaudeConfig<Output>[Key]
-): void {
-  if (value !== undefined) {
-    config[key] = value;
-  }
-}
-
-function composePrompt<Output>(prompt: string, config: ResolvedClaudeConfig<Output>): string {
-  return [
-    config.systemPrompt ? `System instructions:\n${config.systemPrompt}` : "",
-    config.selfManagedGit === false
-      ? "Git policy: Orca is the parent runtime. Do not create commits, branches, pushes, or pull requests; leave repository mutation to the parent workflow."
-      : "",
-    config.retryAttempts === undefined ? "" : `Retry policy: maximum attempts ${String(config.retryAttempts)}.`,
-    prompt
-  ]
-    .filter((part) => part.length > 0)
-    .join("\n\n");
 }
 
 export function claude(options: ClaudeBackendOptions = {}): LlmBackend<"claude"> {

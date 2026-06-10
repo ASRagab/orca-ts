@@ -124,7 +124,7 @@ export async function consumeCodexJsonl<Output = unknown>(
 }
 
 export interface CodexJsonlConsumer {
-  readonly completed: boolean;
+  readonly signal: AbortSignal;
   consume(raw: string): Promise<void>;
   finish(): void;
 }
@@ -136,15 +136,15 @@ export function createCodexJsonlConsumer<Output = unknown>(
   let threadId = "";
   let output = "";
   let lastAgentText = "";
-  let completed = false;
+  const controller = new AbortController();
 
   return {
-    get completed() {
-      return completed;
+    get signal() {
+      return controller.signal;
     },
 
     async consume(raw: string): Promise<void> {
-      if (completed || raw.trim() === "") {
+      if (controller.signal.aborted || raw.trim() === "") {
         return;
       }
 
@@ -152,7 +152,7 @@ export function createCodexJsonlConsumer<Output = unknown>(
       try {
         line = JSON.parse(raw) as CodexLine;
       } catch (error) {
-        completed = true;
+        controller.abort();
         const message = error instanceof Error ? error.message : String(error);
         conversation.fail(backendFailed("codex", `invalid codex JSONL: ${message}`));
         return;
@@ -173,7 +173,7 @@ export function createCodexJsonlConsumer<Output = unknown>(
             await conversation.emit({ type: "user_question", question });
             return;
           }
-          completed = true;
+          controller.abort();
           conversation.fail(
             unsupportedFeature(
               "codex ask_user",
@@ -199,7 +199,7 @@ export function createCodexJsonlConsumer<Output = unknown>(
           ...(line.item.error ? { isError: true } : {})
         });
         if (line.item.error) {
-          completed = true;
+          controller.abort();
           conversation.fail(backendFailed("codex", line.item.error));
         }
         return;
@@ -220,12 +220,12 @@ export function createCodexJsonlConsumer<Output = unknown>(
         // concatenated) produces invalid JSON when the schema is set.
         const structured = parseCodexStructuredOutput(options.schema, lastAgentText || output);
         if (structured.type === "failed") {
-          completed = true;
+          controller.abort();
           conversation.fail(structured.error);
           return;
         }
 
-        completed = true;
+        controller.abort();
         conversation.succeed({
           backend: "codex",
           sessionId: sessionId("codex", threadId),
@@ -237,10 +237,10 @@ export function createCodexJsonlConsumer<Output = unknown>(
     },
 
     finish(): void {
-      if (completed) {
+      if (controller.signal.aborted) {
         return;
       }
-      completed = true;
+      controller.abort();
       conversation.fail(backendFailed("codex", "codex stream ended before turn.completed"));
     }
   };
