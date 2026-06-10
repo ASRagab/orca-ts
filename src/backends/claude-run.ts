@@ -35,10 +35,6 @@ interface ResolvedClaudeConfig<Output> {
   resumeSessionId?: string;
 }
 
-/** Build the `claude` stream-json invocation. Mirrors Scala `ClaudeArgs.streamJson`:
- * `--print --input-format stream-json --output-format stream-json --verbose
- * --include-partial-messages`, plus model / session / permission-mode / inline
- * `--json-schema`. The opening user turn is written to stdin, not argv. */
 export function claudeStreamJsonArgs<Output>(config: ResolvedClaudeConfig<Output>): readonly string[] {
   return [
     "--print",
@@ -56,12 +52,9 @@ export function claudeStreamJsonArgs<Output>(config: ResolvedClaudeConfig<Output
 }
 
 function permissionModeArgs(readOnly: boolean | undefined): readonly string[] {
-  // readOnly → `plan` makes Edit/Write/Bash unavailable (hard guarantee); an
-  // autonomous acting turn needs writes, so default to bypassPermissions.
   return ["--permission-mode", readOnly ? "plan" : "bypassPermissions"];
 }
 
-/** Claude's stdin user-turn NDJSON shape (Scala `OutboundMessage.UserText`). */
 function userTurnLine(text: string): string {
   return JSON.stringify({
     type: "user",

@@ -17,9 +17,6 @@ interface ClaudeStreamLine {
   readonly subtype?: string;
   readonly session_id?: string;
   readonly result?: string;
-  /** Schema-enforced value when the session ran with `--json-schema` (a JSON
-   * subtree, already parsed). Preferred over `result` per Scala
-   * `structuredOutput.orElse(output)`. */
   readonly structured_output?: unknown;
   readonly is_error?: boolean;
   readonly event?: {
@@ -89,12 +86,6 @@ export interface ClaudeStreamConsumer {
   finish(): void;
 }
 
-/** Incremental, fault-tolerant consumer used by the live driver: tolerates
- * malformed JSON (→ backend failure rather than a throw), validates structured
- * output against a supplied schema, and fails cleanly if the stream ends before
- * claude sends its `result` message (mirrors Scala `cleanExitWithoutResult`). The
- * batch {@link consumeClaudeStreamJson} above is left untouched so Tier-1 parity
- * fixtures keep their exact behavior. */
 export function createClaudeStreamConsumer<Output = unknown>(
   conversation: StreamConversation<"claude">,
   options: ClaudeStreamOptions<Output> = {}
@@ -214,18 +205,13 @@ async function consumeResult<Output>(
   conversation: StreamConversation<"claude">,
   options: ClaudeStreamOptions<Output>
 ): Promise<void> {
-  // `--json-schema` runs put the validated value on `structured_output` (a JSON
-  // subtree), not `result`; prefer it and stringify for the textual `output`.
-  const hasStructuredField = line.structured_output !== undefined;
-  const output = hasStructuredField ? JSON.stringify(line.structured_output) : line.result ?? "";
+  const structuredOutput = line.structured_output;
+  const output =
+    structuredOutput === undefined ? line.result ?? "" : JSON.stringify(structuredOutput);
   const session = sessionId("claude", line.session_id ?? "");
 
   if (line.subtype === "success" && !line.is_error) {
-    const structured = parseClaudeStructuredOutput(
-      options.schema,
-      hasStructuredField ? line.structured_output : output,
-      hasStructuredField
-    );
+    const structured = parseClaudeStructuredOutput(options.schema, output, structuredOutput);
     if (structured.type === "failed") {
       conversation.fail(structured.error);
       return;
@@ -249,8 +235,8 @@ async function consumeResult<Output>(
 
 function parseClaudeStructuredOutput<Output>(
   schema: z.ZodType<Output> | undefined,
-  value: unknown,
-  alreadyParsed: boolean
+  output: unknown,
+  structuredOutput: unknown
 ):
   | { readonly type: "success"; readonly value?: Output }
   | { readonly type: "failed"; readonly error: RuntimeError } {
@@ -259,10 +245,10 @@ function parseClaudeStructuredOutput<Output>(
   }
 
   let raw: unknown;
-  if (alreadyParsed) {
-    raw = value;
+  if (structuredOutput !== undefined) {
+    raw = structuredOutput;
   } else {
-    const text = typeof value === "string" ? value : "";
+    const text = typeof output === "string" ? output : "";
     try {
       raw = JSON.parse(text) as unknown;
     } catch {
