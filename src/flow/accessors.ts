@@ -18,6 +18,10 @@ export function terminal() {
   return currentFlowContext().terminal;
 }
 
+export function command() {
+  return currentFlowContext().command;
+}
+
 export function llm() {
   return currentFlowContext().llm;
 }

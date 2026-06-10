@@ -1,0 +1,22 @@
+[
+  {
+    "type": "assistant_tool_call",
+    "id": "cmd_1",
+    "name": "command_execution",
+    "input": {
+      "command": "bun test"
+    }
+  },
+  {
+    "type": "tool_result",
+    "toolCallId": "cmd_1",
+    "output": "ok"
+  },
+  {
+    "type": "assistant_text_delta",
+    "text": "verified"
+  },
+  {
+    "type": "assistant_turn_end"
+  }
+]

@@ -30,7 +30,7 @@ describe("persistent plans", () => {
         { id: "1", description: "one" },
         { id: "2", description: "two" }
       ],
-      async () => ok(undefined)
+      () => Promise.resolve(ok(undefined))
     );
     expect(success._unsafeUnwrap()).toEqual({ completed: ["1", "2"] });
 
@@ -39,7 +39,8 @@ describe("persistent plans", () => {
         { id: "1", description: "one" },
         { id: "2", description: "two" }
       ],
-      async (task) => (task.id === "2" ? err({ _tag: "NothingToCommit" }) : ok(undefined))
+      (task) =>
+        Promise.resolve(task.id === "2" ? err({ _tag: "NothingToCommit" }) : ok(undefined))
     );
     expect(failure.isErr()).toBe(true);
   });

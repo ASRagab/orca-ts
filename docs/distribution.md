@@ -13,3 +13,5 @@ Current local measurement on this machine:
 - Cold `--help`: `real 0.10s`
 
 The npm package exposes the public TypeScript authoring API, declarations, and `bin.orca`.
+
+Live backend smoke checks are excluded from default CI and require explicit environment flags.

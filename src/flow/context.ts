@@ -1,8 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { unsupportedFeature } from "../model/index.ts";
 import { createFsTool, type FsTool } from "../tools/fs.ts";
 import { createGitTool, type GitTool } from "../tools/git.ts";
 import { createGitHubTool, type GitHubTool } from "../tools/github.ts";
+import { createCommandTool, type CommandTool } from "../tools/process.ts";
 import { createTerminalTool, type TerminalTool } from "../tools/terminal.ts";
 import type { LlmTool } from "../backends/index.ts";
 import {
@@ -11,6 +11,7 @@ import {
   recoverPlan,
   writePlan
 } from "../plan/index.ts";
+import { createReviewTool, type ReviewTool } from "../review/index.ts";
 
 export interface PlanTool {
   readonly defaultPath: typeof defaultPlanPath;
@@ -20,10 +21,6 @@ export interface PlanTool {
   interactive(): never;
 }
 
-export interface ReviewTool {
-  readonly reviewers: readonly string[];
-}
-
 export interface FlowContext {
   readonly args: readonly string[];
   readonly cwd: string;
@@ -31,6 +28,7 @@ export interface FlowContext {
   readonly git: GitTool;
   readonly gh: GitHubTool;
   readonly terminal: TerminalTool;
+  readonly command: CommandTool;
   readonly llm: LlmTool;
   readonly plan: PlanTool;
   readonly review: ReviewTool;
@@ -69,9 +67,10 @@ export function createDefaultFlowContext(
     git: overrides.git ?? createGitTool(cwd),
     gh: overrides.gh ?? createGitHubTool(cwd),
     terminal: overrides.terminal ?? createTerminalTool(),
+    command: overrides.command ?? createCommandTool(cwd),
     llm: overrides.llm ?? createDefaultLlmTool(),
     plan: overrides.plan ?? createDefaultPlanTool(),
-    review: overrides.review ?? { reviewers: [] }
+    review: overrides.review ?? createReviewTool()
   };
 }
 
@@ -90,10 +89,7 @@ function createDefaultPlanTool(): PlanTool {
     recover: recoverPlan,
     implementTaskLoop,
     interactive() {
-      throw unsupportedFeature(
-        "Plan.interactive",
-        "Interactive planning is intentionally unsupported in v1"
-      );
+      throw new Error("Plan.interactive is intentionally unsupported in v1");
     }
   };
 }

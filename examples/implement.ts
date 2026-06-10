@@ -1,4 +1,4 @@
-import { claude, flow, llm, z } from "../src/index.ts";
+import { codex, flow, llm, z } from "../src/index.ts";
 
 const ImplementationResult = z.object({
   summary: z.string(),
@@ -6,7 +6,7 @@ const ImplementationResult = z.object({
 });
 
 await flow(process.argv.slice(2))(async () => {
-  const conversation = llm().autonomous(claude(), {
+  const conversation = llm().autonomous(codex(), {
     prompt: "Implement the requested change and report changed files.",
     schema: ImplementationResult
   });

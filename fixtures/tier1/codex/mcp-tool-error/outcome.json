@@ -1,0 +1,8 @@
+{
+  "type": "failed",
+  "error": {
+    "_tag": "BackendFailed",
+    "backend": "codex",
+    "message": "search failed"
+  }
+}

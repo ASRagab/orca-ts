@@ -33,13 +33,52 @@
     "adr": "0006",
     "title": "Drive Claude Code via stream-json instead of TTY handoff",
     "disposition": "ported",
-    "acceptance": "Claude Tier 1 fixtures map inbound messages to normalized events."
+    "acceptance": "Claude Tier 1 fixtures map inbound messages to normalized events; the live `claude()` driver spawns claude stream-json over the shared subprocess helper and returns branded results.",
+    "selfHostingParity": [
+      {
+        "capability": "live autonomous driver",
+        "status": "revived",
+        "acceptance": "Claude fake-process tests cover ordered events, branded result, model/resume/permission args, stdin user-turn delivery, structured output (valid + invalid), stream-ended-before-result, and cancellation."
+      },
+      {
+        "capability": "interactive ask_user bridge",
+        "status": "cut",
+        "acceptance": "Autonomous-only (`canAskUser=false`); the MCP ask-user bridge and `--mcp-config` wiring are intentionally not ported per ADR 0012."
+      }
+    ]
   },
   {
     "adr": "0007",
     "title": "Drive Codex via `codex exec --json` stdio JSONL",
     "disposition": "ported",
-    "acceptance": "Codex Tier 1 fixtures map JSONL events to normalized events and synthesized results."
+    "acceptance": "Codex Tier 1 fixtures map JSONL events to normalized events and synthesized results.",
+    "selfHostingParity": [
+      {
+        "capability": "backend config",
+        "status": "revived",
+        "acceptance": "Codex option-mapping tests cover model, approval policy, read-only mode, self-managed git prompts, retry metadata, and structured output schema flags."
+      },
+      {
+        "capability": "sessions/resume",
+        "status": "revived",
+        "acceptance": "Codex session tests prove fresh thread capture, branded TypeScript session handles, and explicit unsupported resume failures for mismatched backends."
+      },
+      {
+        "capability": "structured output",
+        "status": "revived",
+        "acceptance": "Codex structured-output tests pass JSON Schema, parse valid JSON, and return typed validation errors with raw output on invalid data."
+      },
+      {
+        "capability": "normalized tool events",
+        "status": "revived",
+        "acceptance": "Codex parser fixtures preserve stable tool-call ids, tool names, raw inputs, result content, and error status."
+      },
+      {
+        "capability": "full host-side child tool mediation",
+        "status": "intentionally different",
+        "acceptance": "TypeScript mirrors Scala by observing backend CLI tool events and enforcing worktree/verification boundaries instead of replacing Bash/Edit/Read execution with an Orca-owned router."
+      }
+    ]
   },
   {
     "adr": "0008",
@@ -68,20 +107,61 @@
   {
     "adr": "0012",
     "title": "MCP host bridge for mid-session user input",
-    "disposition": "cut",
-    "acceptance": "Reserved event variants exist, canAskUser is false, and unsupported requests fail explicitly."
+    "disposition": "deferred",
+    "acceptance": "Autonomous flows still reject human interaction, while explicit interactive Codex sessions use an Orca-owned ask_user MCP bridge.",
+    "selfHostingParity": [
+      {
+        "capability": "ask_user",
+        "status": "revived",
+        "acceptance": "Interactive ask_user tests cover question emission, response routing, cancellation cleanup, and autonomous rejection."
+      },
+      {
+        "capability": "approval events",
+        "status": "deferred",
+        "acceptance": "Codex approval remains spawn-policy based until JSONL exposes approval request events; the matrix records the limitation."
+      },
+      {
+        "capability": "non-Codex interactive bridges",
+        "status": "deferred",
+        "acceptance": "The MCP ask_user bridge is backend-neutral at the API boundary but Codex-backed first in live execution; other live adapters remain explicit unsupported paths."
+      }
+    ]
   },
   {
     "adr": "0013",
     "title": "Persistent plans as the default for multi-task flows",
     "disposition": "ported",
-    "acceptance": "Plan path, recovery, and implement-loop Tier 2 golden tests pass."
+    "acceptance": "Plan path, recovery, and implement-loop Tier 2 golden tests pass.",
+    "selfHostingParity": [
+      {
+        "capability": "persistent task planning",
+        "status": "revived",
+        "acceptance": "Plan tests persist prompts, task state, and recovery metadata without assuming a domain-specific task source."
+      },
+      {
+        "capability": "parent-owned git boundaries",
+        "status": "revived",
+        "acceptance": "Workflow tests detect unexpected child commits unless self-managed git is explicitly enabled."
+      }
+    ]
   },
   {
     "adr": "0014",
     "title": "OpenCode server driver",
     "disposition": "ported",
-    "acceptance": "OpenCode Tier 1 fixtures and lifecycle tests pass."
+    "acceptance": "OpenCode Tier 1 fixtures and lifecycle tests pass; the live `opencode()` driver runs turns through a shared serve+SSE manager and returns branded results.",
+    "selfHostingParity": [
+      {
+        "capability": "live autonomous driver",
+        "status": "revived",
+        "acceptance": "OpenCode fake-transport tests cover branded result, server reuse across conversations with teardown on shutdown, structured result via SSE, cancellation keeping the server alive, and failed startup."
+      },
+      {
+        "capability": "serve lifecycle teardown",
+        "status": "intentionally different",
+        "acceptance": "orca-ts has no global Ox-scope hook, so the shared server is torn down via a caller-invoked `opencode().shutdown()` rather than `releaseAfterScope`."
+      }
+    ]
   },
   {
     "adr": "0015",

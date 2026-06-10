@@ -3,7 +3,15 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { codex, type BackendTag, type Conversation } from "../../src/index.ts";
+import {
+  claude,
+  codex,
+  opencode,
+  pi,
+  type BackendTag,
+  type Conversation,
+  type LlmBackend
+} from "../../src/index.ts";
 
 const runSmoke = process.env.ORCA_REAL_BACKEND_SMOKE === "1";
 const smokeTest = runSmoke ? test : test.skip;
@@ -11,7 +19,12 @@ const smokeTest = runSmoke ? test : test.skip;
 describe("real backend smoke", () => {
   smokeTest("runs one gated autonomous flow in a disposable git repository", async () => {
     const backendTag = realBackendTag();
+    if (!commandExists(CLI_COMMAND[backendTag])) {
+      // Gate enabled but this backend's CLI is absent — skip rather than fail.
+      return;
+    }
     const repo = await mkdtemp(join(tmpdir(), "orca-real-backend-"));
+    const { backend, shutdown } = makeBackend(backendTag, repo);
     try {
       run("git", ["init"], repo);
       run("git", ["config", "user.email", "orca-smoke@example.invalid"], repo);
@@ -20,7 +33,7 @@ describe("real backend smoke", () => {
       run("git", ["add", "package.json"], repo);
       run("git", ["commit", "-m", "init"], repo);
 
-      const conversation = codex({ cwd: repo }).autonomous({ prompt: smokePrompt });
+      const conversation = backend.autonomous({ prompt: smokePrompt });
 
       expect(conversation.canAskUser).toBe(false);
       const events = drainEvents(conversation);
@@ -34,6 +47,7 @@ describe("real backend smoke", () => {
       }
       expect((await events).length).toBeGreaterThan(0);
     } finally {
+      await shutdown?.();
       await rm(repo, { recursive: true, force: true });
     }
   }, 130_000);
@@ -45,12 +59,43 @@ const smokePrompt = [
   "Do not ask the user any questions."
 ].join(" ");
 
-function realBackendTag(): "codex" {
+type SmokeBackend = "codex" | "claude" | "opencode" | "pi";
+
+const CLI_COMMAND: Record<SmokeBackend, string> = {
+  codex: "codex",
+  claude: "claude",
+  opencode: "opencode",
+  pi: "pi"
+};
+
+function realBackendTag(): SmokeBackend {
   const tag = process.env.ORCA_REAL_BACKEND ?? "codex";
-  if (tag !== "codex") {
-    throw new Error(`Only ORCA_REAL_BACKEND=codex is implemented for the live smoke; got ${tag}`);
+  if (tag !== "codex" && tag !== "claude" && tag !== "opencode" && tag !== "pi") {
+    throw new Error(`ORCA_REAL_BACKEND must be one of codex|claude|opencode|pi; got ${tag}`);
   }
   return tag;
+}
+
+function makeBackend(
+  tag: SmokeBackend,
+  repo: string
+): { backend: LlmBackend; shutdown?: () => Promise<void> } {
+  switch (tag) {
+    case "codex":
+      return { backend: codex({ cwd: repo }) };
+    case "claude":
+      return { backend: claude({ cwd: repo }) };
+    case "opencode": {
+      const backend = opencode({ cwd: repo });
+      return { backend, shutdown: () => backend.shutdown() };
+    }
+    case "pi":
+      return { backend: pi({ cwd: repo }) };
+  }
+}
+
+function commandExists(command: string): boolean {
+  return spawnSync("which", [command], { encoding: "utf8" }).status === 0;
 }
 
 function run(command: string, args: readonly string[], cwd: string): void {

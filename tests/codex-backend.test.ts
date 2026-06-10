@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { codex, type CodexProcess } from "../src/index.ts";
+import { readFileSync } from "node:fs";
+import { codex, gemini, sessionId, z, type CodexProcess } from "../src/index.ts";
 
 describe("Codex live backend constructor", () => {
   test("starts codex exec JSONL and returns normalized conversation output", async () => {
@@ -34,12 +35,12 @@ describe("Codex live backend constructor", () => {
     ]);
     expect(outcome).toEqual({
       type: "success",
-      result: {
-        backend: "codex",
-        sessionId: "codex-live",
-        output: "done",
-        usage: { input: 1, output: 2, reasoning: 3 }
-      }
+        result: {
+          backend: "codex",
+        sessionId: sessionId("codex", "codex-live"),
+          output: "done",
+          usage: { input: 1, output: 2, reasoning: 3 }
+        }
     });
   });
 
@@ -115,6 +116,272 @@ describe("Codex live backend constructor", () => {
 
     expect(killed).toBe(true);
     expect(await conversation.awaitResult()).toEqual({ type: "cancelled", reason: "stop" });
+  });
+
+  test("maps backend config to codex args and prompt composition", async () => {
+    let args: readonly string[] = [];
+    const backend = codex({
+      command: "codex-test",
+      config: {
+        model: "gpt-5",
+        approvalPolicy: "never",
+        readOnly: true,
+        selfManagedGit: false,
+        systemPrompt: "Prefer small diffs.",
+        retry: { attempts: 2 }
+      },
+      spawnProcess: (_command, actualArgs) => {
+        args = actualArgs;
+        return fakeProcess([
+          { type: "thread.started", thread_id: "codex-config" },
+          { type: "item.completed", item: { id: "msg", type: "agent_message", text: "done" } },
+          { type: "turn.completed" }
+        ]);
+      }
+    });
+
+    await backend.autonomous({ prompt: "implement task" }).awaitResult();
+
+    expect(args.slice(0, 8)).toEqual([
+      "exec",
+      "--json",
+      "--model",
+      "gpt-5",
+      "-c",
+      "approval_policy=\"never\"",
+      "--sandbox",
+      "read-only"
+    ]);
+    const prompt = args.at(-1);
+    expect(prompt).toContain("Prefer small diffs.");
+    expect(prompt).toContain("Do not create commits");
+    expect(prompt).toContain("maximum attempts 2");
+    expect(prompt).toContain("implement task");
+  });
+
+  test("resumes Codex sessions with branded session handles", async () => {
+    let args: readonly string[] = [];
+    const backend = codex({
+      spawnProcess: (_command, actualArgs) => {
+        args = actualArgs;
+        return fakeProcess([
+          { type: "thread.started", thread_id: "codex-next" },
+          { type: "item.completed", item: { id: "msg", type: "agent_message", text: "next" } },
+          { type: "turn.completed" }
+        ]);
+      }
+    });
+
+    const outcome = await backend
+      .autonomous({
+        prompt: "continue",
+        config: { resumeSessionId: sessionId("codex", "codex-prev") }
+      })
+      .awaitResult();
+
+    expect(args).toEqual(["exec", "resume", "--json", "codex-prev", "continue"]);
+    expect(outcome.type).toBe("success");
+    if (outcome.type === "success") {
+      expect(String(outcome.result.sessionId)).toBe("codex-next");
+    }
+  });
+
+  test("passes output schema files to Codex and returns structured values", async () => {
+    let schemaText = "";
+    let args: readonly string[] = [];
+    const backend = codex({
+      spawnProcess: (_command, actualArgs) => {
+        args = actualArgs;
+        const schemaPath = actualArgs[actualArgs.indexOf("--output-schema") + 1];
+        if (schemaPath === undefined) {
+          throw new Error("missing output schema path");
+        }
+        schemaText = readFileSync(schemaPath, "utf8");
+        return fakeProcess([
+          { type: "thread.started", thread_id: "codex-structured" },
+          {
+            type: "item.completed",
+            item: { id: "msg", type: "agent_message", text: "{\"answer\":\"yes\"}" }
+          },
+          { type: "turn.completed" }
+        ]);
+      }
+    });
+
+    const outcome = await backend
+      .autonomous({ prompt: "answer as JSON", schema: z.object({ answer: z.string() }) })
+      .awaitResult();
+
+    expect(args).toContain("--output-schema");
+    expect(schemaText).toContain("\"answer\"");
+    expect(outcome).toEqual({
+      type: "success",
+      result: {
+        backend: "codex",
+        sessionId: sessionId("codex", "codex-structured"),
+        output: "{\"answer\":\"yes\"}",
+        structured: { answer: "yes" },
+        usage: { input: 0, output: 0 }
+      }
+    });
+  });
+
+  test("returns explicit unsupported structured-output and resume paths", async () => {
+    const structured = await gemini()
+      .autonomous({ prompt: "json", schema: z.object({ answer: z.string() }) })
+      .awaitResult();
+    expect(structured).toEqual({
+      type: "failed",
+      error: {
+        _tag: "UnsupportedFeature",
+        feature: "gemini structured output",
+        reason: "gemini backend does not support live structured output"
+      }
+    });
+
+    const resume = await gemini()
+      .autonomous({
+        prompt: "continue",
+        config: { resumeSessionId: sessionId("gemini", "gemini-prev") }
+      })
+      .awaitResult();
+    expect(resume).toEqual({
+      type: "failed",
+      error: {
+        _tag: "UnsupportedFeature",
+        feature: "gemini resume",
+        reason: "gemini backend does not support session resume"
+      }
+    });
+  });
+
+  test("surfaces interactive ask_user as a question; the answer arrives on item.completed", async () => {
+    // The answer is routed by the Orca MCP HTTP bridge (responder), not the
+    // consumer; Codex re-emits it on the matching `item.completed`. So the
+    // consumer must emit the question for display and turn that completion into
+    // the tool_result — without invoking the responder a second time.
+    let args: readonly string[] = [];
+    let closeBridge!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      closeBridge = resolve;
+    });
+    const backend = codex({
+      askUser: ({ question }) => `answer:${question}`,
+      createAskUserServer: ({ responder }) => ({
+        url: "http://127.0.0.1:12345",
+        ask: async (request) => await responder(request),
+        close: () => {
+          closeBridge();
+          return Promise.resolve();
+        }
+      }),
+      spawnProcess: (_command, actualArgs) => {
+        args = actualArgs;
+        return fakeProcess([
+          { type: "thread.started", thread_id: "codex-interactive" },
+          {
+            type: "item.started",
+            item: {
+              id: "ask_1",
+              type: "mcp_tool_call",
+              server: "orca",
+              tool: "ask_user",
+              arguments: { question: "Continue?" }
+            }
+          },
+          {
+            type: "item.completed",
+            item: {
+              id: "ask_1",
+              type: "mcp_tool_call",
+              server: "orca",
+              tool: "ask_user",
+              result: { content: [{ text: "answer:Continue?" }] }
+            }
+          },
+          { type: "item.completed", item: { id: "msg", type: "agent_message", text: "done" } },
+          { type: "turn.completed" }
+        ]);
+      }
+    });
+
+    const conversation = backend.autonomous({ prompt: "run", config: { interactive: true } });
+    const events = drainEvents(conversation.events());
+    const outcome = await conversation.awaitResult();
+
+    expect(conversation.canAskUser).toBe(true);
+    expect(args).toContain("mcp_servers.orca.url=\"http://127.0.0.1:12345\"");
+    expect(await events).toEqual([
+      { type: "user_question", question: "Continue?" },
+      { type: "tool_result", toolCallId: "ask_1", output: "answer:Continue?" },
+      { type: "assistant_text_delta", text: "done" },
+      { type: "assistant_turn_end" }
+    ]);
+    expect(outcome.type).toBe("success");
+    await closed;
+  });
+
+  test("cleans up ask_user bridge on startup failure", async () => {
+    let closed = false;
+    const backend = codex({
+      askUser: () => "yes",
+      createAskUserServer: ({ responder }) => ({
+        url: "http://127.0.0.1:12345",
+        ask: async (request) => await responder(request),
+        close: () => {
+          closed = true;
+          return Promise.resolve();
+        }
+      }),
+      spawnProcess: () => {
+        throw new Error("boom");
+      }
+    });
+
+    const outcome = await backend
+      .autonomous({ prompt: "run", config: { interactive: true } })
+      .awaitResult();
+
+    expect(outcome).toEqual({
+      type: "failed",
+      error: { _tag: "BackendFailed", backend: "codex", message: "boom" }
+    });
+    expect(closed).toBe(true);
+  });
+
+  test("cleans up ask_user bridge on cancellation", async () => {
+    let releaseStdout!: () => void;
+    const stdoutBlocked = new Promise<void>((resolve) => {
+      releaseStdout = resolve;
+    });
+    let closeBridge!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      closeBridge = resolve;
+    });
+    const backend = codex({
+      askUser: () => "yes",
+      createAskUserServer: ({ responder }) => ({
+        url: "http://127.0.0.1:12345",
+        ask: async (request) => await responder(request),
+        close: () => {
+          closeBridge();
+          return Promise.resolve();
+        }
+      }),
+      spawnProcess: () => ({
+        stdout: blockedStream(stdoutBlocked),
+        stderr: lineStream([]),
+        exit: stdoutBlocked.then(() => null),
+        kill: () => {
+          releaseStdout();
+        }
+      })
+    });
+
+    const conversation = backend.autonomous({ prompt: "run", config: { interactive: true } });
+    await Promise.resolve();
+    await conversation.cancel("stop");
+    await closed;
   });
 });
 

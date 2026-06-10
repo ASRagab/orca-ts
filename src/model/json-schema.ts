@@ -1,11 +1,14 @@
 import { z } from "zod";
 import { CanonicalSchemas } from "./schemas.ts";
 
+export function jsonSchemaFromZod(schema: z.ZodType): unknown {
+  return z.toJSONSchema(schema, { target: "draft-7" });
+}
+
 export function canonicalJsonSchemas(): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(CanonicalSchemas).map(([name, schema]) => [
-      name,
-      z.toJSONSchema(schema, { target: "draft-7" })
-    ])
-  );
+  const schemas: Record<string, unknown> = {};
+  for (const [name, schema] of Object.entries(CanonicalSchemas)) {
+    schemas[name] = jsonSchemaFromZod(schema);
+  }
+  return schemas;
 }

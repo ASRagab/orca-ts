@@ -1,21 +1,21 @@
 import { err, ok, type Result } from "neverthrow";
 import {
+  type BackendResult,
   type BackendTag,
   type ConversationEvent,
-  type LlmResult,
   type RuntimeError,
   unsupportedFeature
 } from "../model/index.ts";
 import { BoundedAsyncQueue } from "./queue.ts";
 
 export type Outcome<B extends BackendTag = BackendTag> =
-  | { readonly type: "success"; readonly result: LlmResult & { readonly backend: B } }
+  | { readonly type: "success"; readonly result: BackendResult<B> }
   | { readonly type: "cancelled"; readonly reason?: string }
   | { readonly type: "failed"; readonly error: RuntimeError };
 
 export interface Conversation<B extends BackendTag = BackendTag> {
   readonly backend: B;
-  readonly canAskUser: false;
+  readonly canAskUser: boolean;
   readonly signal: AbortSignal;
   events(): AsyncIterable<ConversationEvent>;
   awaitResult(): Promise<Outcome<B>>;
@@ -25,11 +25,12 @@ export interface Conversation<B extends BackendTag = BackendTag> {
 export interface StreamConversationOptions<B extends BackendTag> {
   readonly backend: B;
   readonly capacity?: number;
+  readonly canAskUser?: boolean;
   readonly onCancel?: (reason?: string) => Promise<void> | void;
 }
 
 export class StreamConversation<B extends BackendTag> implements Conversation<B> {
-  readonly canAskUser = false;
+  readonly canAskUser: boolean;
   readonly signal: AbortSignal;
 
   private readonly queue: BoundedAsyncQueue<ConversationEvent>;
@@ -41,6 +42,7 @@ export class StreamConversation<B extends BackendTag> implements Conversation<B>
   constructor(private readonly options: StreamConversationOptions<B>) {
     this.queue = new BoundedAsyncQueue(options.capacity ?? 32);
     this.signal = this.abortController.signal;
+    this.canAskUser = options.canAskUser ?? false;
     this.outcome = new Promise((resolve) => {
       this.settle = resolve;
     });
@@ -59,11 +61,16 @@ export class StreamConversation<B extends BackendTag> implements Conversation<B>
   }
 
   async emit(event: ConversationEvent): Promise<Result<void, RuntimeError>> {
-    if (event.type === "user_question" || event.type === "approve_tool") {
-      const error = unsupportedFeature(
-        event.type,
-        "Human interaction events are reserved but unsupported in v1"
-      );
+    let unsupportedReason: string | undefined;
+
+    if (event.type === "user_question" && !this.canAskUser) {
+      unsupportedReason = "Human interaction events require an explicit interactive conversation";
+    } else if (event.type === "approve_tool") {
+      unsupportedReason = "Live approval events are unsupported for autonomous execution";
+    }
+
+    if (unsupportedReason !== undefined) {
+      const error = unsupportedFeature(event.type, unsupportedReason);
       this.fail(error);
       return err(error);
     }
@@ -72,7 +79,7 @@ export class StreamConversation<B extends BackendTag> implements Conversation<B>
     return ok(undefined);
   }
 
-  succeed(result: LlmResult & { readonly backend: B }): void {
+  succeed(result: BackendResult<B>): void {
     this.complete({ type: "success", result });
   }
 

@@ -7,3 +7,7 @@ Tier 1 backend fixtures belong under `fixtures/tier1/<backend>` and compare scri
 Tier 2 flow fixtures belong under `fixtures/tier2` and compare user-visible behavior: commits, persisted plan files, terminal output, and runtime events.
 
 The Scala repository is a local oracle for fixture creation only. CI runs TypeScript checks without the JVM.
+
+Runtime parity is tracked in `fixtures/adr/matrix.json`. Revived Scala control surfaces are backend config, sessions/resume, structured output, interactive `ask_user`, read-only mode, self-managed git, and normalized tool/result events.
+
+Live backend smoke tests are opt-in and gated by environment variables.

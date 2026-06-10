@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"thr-command"}
+{"type":"item.started","item":{"id":"cmd_1","type":"command_execution","command":"bun test","status":"in_progress"}}
+{"type":"item.completed","item":{"id":"cmd_1","type":"command_execution","command":"bun test","output":"ok","status":"completed"}}
+{"type":"item.completed","item":{"id":"msg","type":"agent_message","text":"verified"}}
+{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":2}}

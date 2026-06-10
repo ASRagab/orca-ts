@@ -96,7 +96,7 @@ await flow(process.argv.slice(2))(async () => {
 });
 ```
 
-The root export also re-exports `conversation`, `model`, `plan`, `review`, `runner`, `testing`, `tools`, and `z` from Zod. Common flow helpers include `flow`, `currentFlowContext`, `createDefaultFlowContext`, `flowContext`, `fs`, `git`, `gh`, `terminal`, `llm`, `plan`, and `review`.
+The root export also re-exports `conversation`, `model`, `plan`, `review`, `runner`, `testing`, `tools`, and `z` from Zod. Common flow helpers include `flow`, `currentFlowContext`, `createDefaultFlowContext`, `flowContext`, `fs`, `git`, `gh`, `terminal`, `command`, `llm`, `plan`, and `review`.
 
 ## Backends
 
@@ -106,7 +106,7 @@ The live v1 autonomous backend is `codex()`. It starts `codex exec --json`, so t
 
 The exported `claude()`, `opencode()`, `pi()`, and `gemini()` constructors are currently unsupported placeholders. Parser and transport fixtures exist for Claude stream JSON, OpenCode SSE, Pi RPC, and Gemini JSONL, but those live process adapters are not enabled in v1.
 
-All v1 conversations report `canAskUser: false`. Human questions, tool approval prompts, interactive planning, and Codex `ask_user` bridging are reserved model shapes, not live features.
+Autonomous conversations reject human questions and live approval prompts. Explicit interactive Codex conversations can emit `user_question` events through the Orca-owned `ask_user` bridge; approval events remain a reserved compatibility seam.
 
 Run the gated live smoke only in an environment configured for Codex:
 
@@ -137,11 +137,11 @@ Examples live under `examples/`:
 - `examples/issue-pr-bugfix.ts`
 - `examples/runnable/01-simple/index.ts`
 
-Treat these as authoring references for the v1 API surface. Several examples currently call `claude()`, which is an unsupported placeholder in this port; switch experiments to `codex()` when you need the live backend path.
+Treat these as authoring references for the supported API surface. Structured examples use `codex()` because live non-Codex process adapters remain unsupported placeholders in this port.
 
 ## Scope Cuts
 
-This phase does not publish the npm package, enable live non-Codex transports, implement human-in-the-loop interactions, or implement structured schema output for the live Codex backend.
+This phase does not publish the npm package, enable live non-Codex process adapters, run live backend smoke checks in default CI, or implement live approval-event routing for Codex JSONL streams.
 
 ## Documentation
 

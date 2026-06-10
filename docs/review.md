@@ -5,3 +5,5 @@ Reviewer prompts are copied verbatim from the Scala oracle and tested for byte p
 The canonical reviewer order is `code-functionality`, `test`, `readability`, `code-structure`, `simplicity`, `performance`, `security`, `scala-fp`.
 
 The default minimal reviewer set is `code-functionality`, `readability`, and `test`.
+
+Flow authors use the review module through `review().run(...)`. The module owns prompt loading, reviewer selection, review-loop events, fixable issue filtering, and fix execution order behind the flow review seam.

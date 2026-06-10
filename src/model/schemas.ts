@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+const TokenCountSchema = z.number().int().nonnegative();
+const ExitCodeSchema = z.number().int().nullable();
+
 export const BackendTagSchema = z.enum([
   "claude",
   "codex",
@@ -9,9 +12,9 @@ export const BackendTagSchema = z.enum([
 ]);
 
 export const UsageSchema = z.object({
-  input: z.number().int().nonnegative(),
-  output: z.number().int().nonnegative(),
-  reasoning: z.number().int().nonnegative().optional()
+  input: TokenCountSchema,
+  output: TokenCountSchema,
+  reasoning: TokenCountSchema.optional()
 });
 
 export const AssistantTextDeltaSchema = z.object({
@@ -21,6 +24,11 @@ export const AssistantTextDeltaSchema = z.object({
 
 export const AssistantTurnEndSchema = z.object({
   type: z.literal("assistant_turn_end")
+});
+
+export const AssistantThinkingDeltaSchema = z.object({
+  type: z.literal("assistant_thinking_delta"),
+  text: z.string()
 });
 
 export const AssistantToolCallSchema = z.object({
@@ -63,6 +71,7 @@ export const ApproveToolSchema = z.object({
 export const ConversationEventSchema = z.discriminatedUnion("type", [
   AssistantTextDeltaSchema,
   AssistantTurnEndSchema,
+  AssistantThinkingDeltaSchema,
   AssistantToolCallSchema,
   ToolResultSchema,
   ConversationErrorSchema,
@@ -135,7 +144,7 @@ export const PushRejectedErrorSchema = z.object({
 export const CommandFailedErrorSchema = z.object({
   _tag: z.literal("CommandFailed"),
   command: z.string(),
-  exitCode: z.number().int().nullable(),
+  exitCode: ExitCodeSchema,
   stdout: z.string(),
   stderr: z.string()
 });
@@ -162,7 +171,7 @@ export const TypecheckFailedErrorSchema = z.object({
   _tag: z.literal("TypecheckFailed"),
   stdout: z.string(),
   stderr: z.string(),
-  exitCode: z.number().int().nullable()
+  exitCode: ExitCodeSchema
 });
 
 export const FileSystemErrorSchema = z.object({

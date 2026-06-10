@@ -9,21 +9,21 @@ describe("typecheck pre-flight", () => {
   });
 
   test("returns success when tsc succeeds", async () => {
-    const runner: CommandRunner = async () =>
-      ok({ stdout: "ok", stderr: "", exitCode: 0 });
+    const runner: CommandRunner = () =>
+      Promise.resolve(ok({ stdout: "ok", stderr: "", exitCode: 0 }));
     const result = await runTypecheck({ cwd: process.cwd(), runner });
     expect(result._unsafeUnwrap()).toEqual({ skipped: false, stdout: "ok", stderr: "" });
   });
 
   test("maps command failure to TypecheckFailed", async () => {
-    const runner: CommandRunner = async () =>
-      err({
+    const runner: CommandRunner = () =>
+      Promise.resolve(err({
         _tag: "CommandFailed",
         command: "tsc --noEmit",
         exitCode: 2,
         stdout: "",
         stderr: "bad"
-      });
+      }));
     const result = await runTypecheck({ cwd: process.cwd(), runner });
     expect(result.isErr()).toBe(true);
     if (result.isErr()) {

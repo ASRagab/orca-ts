@@ -1,5 +1,9 @@
-import { backendFailed, sessionId, unsupportedFeature, type ConversationEvent, type Usage } from "../model/index.ts";
-import { StreamConversation, type Outcome } from "../conversation/index.ts";
+import { backendFailed, sessionId, unsupportedFeature, type Usage } from "../model/index.ts";
+import {
+  collectConversation,
+  StreamConversation,
+  type ConversationCapture
+} from "../conversation/index.ts";
 
 interface GeminiLine {
   readonly type?: string;
@@ -18,10 +22,7 @@ interface GeminiLine {
   };
 }
 
-export interface GeminiParseResult {
-  readonly events: readonly ConversationEvent[];
-  readonly outcome: Outcome<"gemini">;
-}
+export type GeminiParseResult = ConversationCapture<"gemini">;
 
 export interface GeminiStreamJsonArgs {
   readonly model?: string;
@@ -41,16 +42,11 @@ export function geminiSettingsWritesForV1(): readonly string[] {
   return [];
 }
 
-export async function collectGeminiJsonl(lines: readonly string[]): Promise<GeminiParseResult> {
-  const conversation = new StreamConversation({ backend: "gemini" });
-  await consumeGeminiJsonl(lines, conversation);
-
-  const events: ConversationEvent[] = [];
-  for await (const event of conversation.events()) {
-    events.push(event);
-  }
-
-  return { events, outcome: await conversation.awaitResult() };
+export function collectGeminiJsonl(lines: readonly string[]): Promise<GeminiParseResult> {
+  return collectConversation({
+    backend: "gemini",
+    consume: (conversation) => consumeGeminiJsonl(lines, conversation)
+  });
 }
 
 export async function consumeGeminiJsonl(

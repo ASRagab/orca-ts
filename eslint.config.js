@@ -3,8 +3,20 @@ import boundaries from "eslint-plugin-boundaries";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
+  {
+    ignores: [
+      "dist/**",
+      "node_modules/**",
+      "openspec/**",
+      "fixtures/**"
+    ]
+  },
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
+  {
+    files: ["**/*.js", "**/*.mjs", "**/*.cjs"],
+    extends: [tseslint.configs.disableTypeChecked]
+  },
   {
     files: ["**/*.ts"],
     languageOptions: {
@@ -60,13 +72,5 @@ export default tseslint.config(
         }
       ]
     }
-  },
-  {
-    ignores: [
-      "dist/**",
-      "node_modules/**",
-      "openspec/**",
-      "fixtures/**"
-    ]
   }
 );

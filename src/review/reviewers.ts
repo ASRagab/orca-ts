@@ -1,5 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** Reviewer prompt markdown ships alongside this module, so resolve the default
+ * directory relative to the package — not `process.cwd()`, which is the caller's
+ * project when the review tool runs inside another repo. */
+const defaultReviewersDir = fileURLToPath(new URL("./prompts/reviewers", import.meta.url));
 
 export const ReviewerIds = [
   "code-functionality",
@@ -23,7 +29,7 @@ export interface ReviewerPrompt {
 }
 
 export async function loadReviewerPrompts(
-  root = join(process.cwd(), "src", "review", "prompts", "reviewers")
+  root = defaultReviewersDir
 ): Promise<ReviewerPrompt[]> {
   return await Promise.all(
     ReviewerIds.map(async (id) => {
@@ -59,19 +65,28 @@ export function parseReviewerPrompt(id: ReviewerId, content: string): ReviewerPr
 
   const frontmatter = content.slice(4, end);
   const prompt = content.slice(end + 5).replace(/^\n/, "");
-  const metadata = Object.fromEntries(
-    frontmatter
-      .split("\n")
-      .map((line) => line.match(/^([^:]+):\s*(.*)$/))
-      .filter((match): match is RegExpMatchArray => match !== null)
-      .map((match) => [match[1], match[2]])
-  );
+  const metadata: {
+    name?: string;
+    description?: string;
+    files?: string;
+  } = {};
+  for (const line of frontmatter.split("\n")) {
+    const match = line.match(/^([^:]+):\s*(.*)$/);
+    if (!match) {
+      continue;
+    }
+    const key = match[1];
+    const value = match[2] ?? "";
+    if (key === "name" || key === "description" || key === "files") {
+      metadata[key] = value;
+    }
+  }
 
   return {
     id,
-    name: metadata.name,
-    description: metadata.description,
-    files: metadata.files,
+    ...(metadata.name === undefined ? {} : { name: metadata.name }),
+    ...(metadata.description === undefined ? {} : { description: metadata.description }),
+    ...(metadata.files === undefined ? {} : { files: metadata.files }),
     prompt
   };
 }

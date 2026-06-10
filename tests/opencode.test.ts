@@ -31,14 +31,15 @@ describe("OpenCode server lifecycle", () => {
     let starts = 0;
     const signals: string[] = [];
     const manager = createOpenCodeServerManager({
-      async start() {
+      start() {
         starts += 1;
-        return {
+        return Promise.resolve({
           url: "http://127.0.0.1:1234",
-          async stop(signal) {
+          stop(signal) {
             signals.push(signal ?? "");
+            return Promise.resolve();
           }
-        };
+        });
       }
     });
 
@@ -52,11 +53,18 @@ describe("OpenCode server lifecycle", () => {
 
   test("surfaces failed startup", async () => {
     const manager = createOpenCodeServerManager({
-      async start() {
-        throw new Error("boom");
+      start() {
+        return Promise.reject(new Error("boom"));
       }
     });
 
-    await expect(manager.get()).rejects.toThrow("boom");
+    let thrown: unknown;
+    try {
+      await manager.get();
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe("boom");
   });
 });

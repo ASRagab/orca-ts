@@ -2,13 +2,58 @@
 
 The v1 contract is backend-neutral: every backend maps native transport messages into the shared read-only `Conversation` interface.
 
-Supported target backends are Claude, OpenCode, Codex, Gemini, and Pi. Backend implementations are delivered slice-by-slice behind the same SPI.
+Supported target backends are Claude, OpenCode, Codex, Gemini, and Pi. Backend implementations are delivered slice-by-slice behind the same SPI. Codex, Claude, OpenCode, and Pi ship live autonomous drivers (`codex()`, `claude()`, `opencode()`, `pi()`); Gemini remains a parse-only stub and `gemini()` returns an unsupported-backend error pending its driver.
 
-Human interaction is not implemented in v1. `UserQuestion` and `ApproveTool` remain reserved model variants, and every backend reports `canAskUser: false`.
+Codex, Claude, and Pi are subprocess-stream backends: they share one `runSubprocessConversation` helper (`subprocess-run.ts`) that owns process spawn, stdout line-splitting, stderr capture, non-zero-exit failure, and cancellation. Each supplies only its command/args builder and a per-line consumer. OpenCode is the exception — a long-lived `opencode serve` process driven over HTTP/SSE through a shared server manager.
+
+Backend fixture collection uses the shared conversation harness so adapters keep protocol parsing local while event capture and final outcome collection stay in one module.
+
+Autonomous human interaction is rejected. `UserQuestion` and `ApproveTool` remain explicit model variants; interactive support is only available when a backend starts an interactive session with an Orca-owned bridge.
 
 ## Codex
 
 The Codex backend starts `codex exec --json` and maps JSONL events into the shared `Conversation` contract. Configure the local Codex CLI and credentials before running live integration checks.
+
+The Codex child run lifecycle is internal to the backend adapter: config resolution, prompt composition, temporary schema files, the interactive `ask_user` bridge, process execution, stream consumption, stderr handling, cancellation, and cleanup are owned together.
+
+Codex parity status:
+
+- Backend config: model, approval policy, read-only mode, retry metadata, system prompt, self-managed git policy, and structured output are represented in the shared config model.
+- Sessions/resume: TypeScript-facing session handles are backend-branded; Codex thread ids are captured from JSONL and can be requested on subsequent calls.
+- Structured output: Zod schemas are converted to JSON Schema for supported live calls and validated again on return.
+- `ask_user`: autonomous conversations reject `ask_user`; explicit interactive conversations use an Orca-owned MCP bridge.
+- Approval events: Codex approval remains spawn-policy/config based until JSONL exposes approval request events.
+- Tool events: Codex tool-call and tool-result events preserve call id, tool name, raw input, output content, and error status when the JSONL stream exposes them.
+
+## Claude
+
+The Claude backend spawns `claude --print --input-format stream-json --output-format stream-json --verbose --include-partial-messages` and feeds its stream-json read path into the shared conversation stream over `runSubprocessConversation`. The opening user turn is written to stdin as a `{"type":"user",...}` NDJSON frame, then stdin closes. Parity notes:
+
+- Backend config: model (`--model`), read-only (`--permission-mode plan`; otherwise `bypassPermissions` for autonomous acting), system prompt / git policy / retry composed into the opening turn.
+- Structured output: schema inlined via `--json-schema`; the final result is validated against the Zod schema and returns a typed validation error (with raw output) on mismatch.
+- Sessions/resume: `--resume <id>` when a branded session handle is supplied; fresh runs let Claude mint the id, captured from the `result` message.
+- Cancellation: `SIGTERM` to the child; the conversation completes cancelled.
+- `ask_user`: autonomous only (`canAskUser=false`); the MCP ask-user bridge is intentionally not ported.
+
+## OpenCode
+
+The OpenCode backend drives a shared `opencode serve` process over HTTP/SSE (`opencode-run.ts`). The server is started lazily and reused across conversations through `createOpenCodeServerManager`; `opencode().shutdown()` stops it (orca-ts has no global scope hook, so the backend owner drives teardown). Each turn opens the `GET /event` SSE stream first, then starts the turn with `POST /session/{id}/prompt_async`, and reads to a terminal `session.idle`/`session.error`. Parity notes:
+
+- Backend config travels in the message body: model (`{providerID, modelID}`), system prompt, per-tool gate (autonomous disables `question`; read-only disables `write`/`edit`/`bash`/`patch`).
+- Structured output: schema sent as `format: {type: "json_schema", schema}`; the server-enforced `structured` payload is surfaced on the result.
+- Cancellation: aborts the SSE stream and completes cancelled; the shared server stays alive for later conversations.
+- The HTTP/SSE transport is injectable (`startServer`/`connect`) so unit tests use a fake and the `fetch`-backed default is exercised only under the integration smoke.
+
+## Pi
+
+The Pi backend spawns `pi --mode rpc --session-dir <dir>` (one dir per session id; `--continue` on resume) and feeds the rpc JSONL read path into the shared conversation stream. The prompt is sent as a stdin `{"type":"prompt",...}` command; the process is killed once `agent_end` settles the turn (pi rpc stays open for the next command otherwise). Parity notes:
+
+- Backend config: model (`--model`); system prompt / git policy / retry composed into the prompt.
+- Structured output: Pi has no native schema flag, so the final text is validated post-hoc against the Zod schema (typed validation error on mismatch).
+- Cancellation: `SIGTERM` to the child; the conversation completes cancelled.
+- `ask_user`: autonomous only; `PiAskUserExtension` is intentionally not ported.
+
+## Live backend smoke
 
 The live backend smoke is gated so default tests and `bun run verify` stay deterministic:
 
@@ -16,4 +61,4 @@ The live backend smoke is gated so default tests and `bun run verify` stay deter
 ORCA_REAL_BACKEND_SMOKE=1 ORCA_REAL_BACKEND=codex bun test tests/integration/real-backend-smoke.test.ts
 ```
 
-The smoke creates a disposable git repository, runs one short autonomous conversation, and fails when the gate is enabled but the backend command or credentials are unavailable.
+`ORCA_REAL_BACKEND` accepts `codex` (default), `claude`, `opencode`, or `pi`. The smoke creates a disposable git repository, runs one short autonomous conversation, and asserts a successful branded result. It skips when the selected backend's CLI is absent from `PATH`; with the gate disabled the test is skipped entirely.

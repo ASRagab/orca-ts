@@ -1,6 +1,6 @@
 ## Why
 
-The existing Scala `orca` implementation proves the workflow model, but its contributor pool, runtime distribution, and ecosystem fit are narrower than the intended audience. A TypeScript port preserves the "script-like with types" thesis while making the tool easier to author, ship, and dogfood in TypeScript-heavy agent workflows.
+The existing Scala `orca` implementation proves the workflow model, but its contributor pool, runtime distribution, and ecosystem fit are narrower than the intended audience. A TypeScript port preserves the "script-like with types" thesis while making the tool easier to author and ship for TypeScript-heavy agent workflows.
 
 ## What Changes
 
