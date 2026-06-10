@@ -40,23 +40,20 @@ export function createAskUserMcpServer(options: AskUserMcpServerOptions): AskUse
         readonly id?: string | number;
         readonly method?: string;
         readonly params?: {
-          readonly name?: string;
           readonly arguments?: { readonly question?: string };
         };
         readonly question?: string;
       };
+      const id = body.id ?? null;
 
-      // JSON-RPC notifications carry no id and expect no response body.
       if (body.method?.startsWith("notifications/")) {
         return new Response(null, { status: 202 });
       }
 
-      // MCP handshake: a client (Codex) must `initialize` then `tools/list`
-      // before it can `tools/call`. These must NOT invoke the human responder.
       if (body.method === "initialize") {
         return Response.json({
           jsonrpc: "2.0",
-          id: body.id ?? null,
+          id,
           result: {
             protocolVersion: "2024-11-05",
             capabilities: { tools: {} },
@@ -68,7 +65,7 @@ export function createAskUserMcpServer(options: AskUserMcpServerOptions): AskUse
       if (body.method === "tools/list") {
         return Response.json({
           jsonrpc: "2.0",
-          id: body.id ?? null,
+          id,
           result: { tools: [ASK_USER_TOOL] }
         });
       }
@@ -78,22 +75,19 @@ export function createAskUserMcpServer(options: AskUserMcpServerOptions): AskUse
         const answer = await options.responder({ question, rawInput: body });
         return Response.json({
           jsonrpc: "2.0",
-          id: body.id ?? null,
+          id,
           result: { content: [{ type: "text", text: answer }] }
         });
       }
 
-      // Any other JSON-RPC method is unsupported — surface a method-not-found
-      // error rather than silently invoking the responder.
       if (body.method !== undefined) {
         return Response.json({
           jsonrpc: "2.0",
-          id: body.id ?? null,
+          id,
           error: { code: -32601, message: `Method not found: ${body.method}` }
         });
       }
 
-      // Non-JSON-RPC fallback (a bare `{question}` body) — direct answer.
       const answer = await options.responder({ question: body.question ?? "", rawInput: body });
       return Response.json({ answer });
     }

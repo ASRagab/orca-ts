@@ -34,12 +34,14 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
     }
 
     this.closed = true;
-    for (const resolve of this.pushWaiters.splice(0)) {
+    for (const resolve of this.pushWaiters) {
       resolve();
     }
-    for (const taker of this.takers.splice(0)) {
+    this.pushWaiters.length = 0;
+    for (const taker of this.takers) {
       taker({ value: undefined, done: true });
     }
+    this.takers.length = 0;
   }
 
   [Symbol.asyncIterator](): AsyncIterator<T> {

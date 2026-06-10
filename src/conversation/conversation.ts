@@ -30,18 +30,18 @@ export interface StreamConversationOptions<B extends BackendTag> {
 }
 
 export class StreamConversation<B extends BackendTag> implements Conversation<B> {
+  private readonly abortController = new AbortController();
+
   readonly canAskUser: boolean;
-  readonly signal: AbortSignal;
+  readonly signal = this.abortController.signal;
 
   private readonly queue: BoundedAsyncQueue<ConversationEvent>;
-  private readonly abortController = new AbortController();
   private readonly outcome: Promise<Outcome<B>>;
   private settle!: (outcome: Outcome<B>) => void;
   private settled = false;
 
   constructor(private readonly options: StreamConversationOptions<B>) {
     this.queue = new BoundedAsyncQueue(options.capacity ?? 32);
-    this.signal = this.abortController.signal;
     this.canAskUser = options.canAskUser ?? false;
     this.outcome = new Promise((resolve) => {
       this.settle = resolve;
