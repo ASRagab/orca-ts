@@ -24,9 +24,10 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
       continue;
     }
     if (arg === "--backend" || arg?.startsWith("--backend=")) {
-      const value = arg === "--backend" ? argv[index + 1] : arg.slice("--backend=".length);
+      const separateValue = arg === "--backend";
+      const value = separateValue ? argv[index + 1] : arg.slice("--backend=".length);
       backend = BackendTagSchema.parse(value);
-      if (arg === "--backend") {
+      if (separateValue) {
         index += 1;
       }
       continue;
