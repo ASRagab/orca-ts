@@ -49,7 +49,7 @@ The system SHALL manage the OpenCode server lifecycle lazily, consume HTTP/SSE e
 - **THEN** the conversation returns the normalized structured result
 
 ### Requirement: Codex, Gemini, and Pi backends are supported
-The system SHALL support Codex exec JSONL, Gemini stream-json JSONL, and Pi RPC transports by mapping their native message tables into the same conversation event model.
+The system SHALL support Codex exec JSONL, Gemini stream-json JSONL, and Pi RPC transports by mapping their native message tables into the same conversation event model. Subprocess-based backends (Codex, Pi) drive a `SubprocessConsumer` that signals completion via an `AbortSignal`. The consumer's `signal` property SHALL be an `AbortSignal` that becomes aborted when the consumer has settled the conversation on a terminal event. The subprocess read loop SHALL treat `consumer.signal.aborted` as the stop condition, kill the child process, and break — identical semantics to the prior `completed` poll flag but expressed as `AbortSignal` for consistency with `conversation.signal`.
 
 #### Scenario: Codex JSONL stream completes
 - **WHEN** Codex emits thread, item, and turn completion messages
@@ -62,6 +62,22 @@ The system SHALL support Codex exec JSONL, Gemini stream-json JSONL, and Pi RPC 
 #### Scenario: Pi RPC stream completes
 - **WHEN** Pi emits RPC conversation messages
 - **THEN** the runtime emits normalized events and returns an `LlmResult` branded for Pi
+
+#### Scenario: Codex JSONL stream completes (AbortSignal)
+- **WHEN** the Codex backend processes a JSONL stream to a terminal `turn.completed` event
+- **THEN** `consumer.signal` becomes aborted
+- **THEN** the subprocess read loop kills the child process and stops consuming lines
+- **THEN** the conversation result is available via `awaitResult()`
+
+#### Scenario: Gemini JSONL stream completes (AbortSignal)
+- **WHEN** the Gemini backend processes a JSONL stream to a terminal event
+- **THEN** `consumer.signal` becomes aborted
+- **THEN** the subprocess read loop stops
+
+#### Scenario: Pi RPC stream completes (AbortSignal)
+- **WHEN** the Pi backend receives a terminal RPC response
+- **THEN** `consumer.signal` becomes aborted
+- **THEN** the subprocess read loop kills the persistent Pi process and stops
 
 ### Requirement: Human interaction seams are reserved but unimplemented
 The event model SHALL include reserved `UserQuestion` and `ApproveTool` variants, but v1 backends MUST NOT implement MCP ask-user bridges, live human approval prompts, or backend settings mutation for those features.
