@@ -20,12 +20,8 @@ export interface ConversationHarnessOptions<B extends BackendTag> {
 export async function collectConversation<B extends BackendTag>(
   options: ConversationHarnessOptions<B>
 ): Promise<ConversationCapture<B>> {
-  const { backend, capacity, canAskUser, consume } = options;
-  const conversation = new StreamConversation({
-    backend,
-    ...(capacity === undefined ? {} : { capacity }),
-    ...(canAskUser === undefined ? {} : { canAskUser })
-  });
+  const { backend, consume, ...conversationOptions } = options;
+  const conversation = new StreamConversation({ backend, ...conversationOptions });
 
   try {
     await consume(conversation);

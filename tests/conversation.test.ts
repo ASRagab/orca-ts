@@ -34,6 +34,32 @@ describe("StreamConversation", () => {
     });
   });
 
+  test("emit never blocks when no consumer iterates: oldest events are evicted", async () => {
+    const conversation = new StreamConversation({ backend: "claude", capacity: 2 });
+    for (let index = 0; index < 5; index += 1) {
+      await conversation.emit({ type: "assistant_text_delta", text: String(index) });
+    }
+    conversation.succeed({
+      backend: "claude",
+      sessionId: sessionId("claude", "s1"),
+      output: "01234"
+    });
+
+    const events: unknown[] = [];
+    for await (const event of conversation.events()) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "assistant_text_delta", text: "3" },
+      { type: "assistant_text_delta", text: "4" }
+    ]);
+    expect(await conversation.awaitResult()).toEqual({
+      type: "success",
+      result: { backend: "claude", sessionId: sessionId("claude", "s1"), output: "01234" }
+    });
+  });
+
   test("cancels with AbortController signal", async () => {
     let cancelled = "";
     const conversation = new StreamConversation({

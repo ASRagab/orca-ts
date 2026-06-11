@@ -39,6 +39,10 @@ export interface OpenCodeBackendOptions {
    * streaming turn resets the timer on every event, so legitimate slow turns are
    * unaffected. */
   readonly inactivityTimeoutMs?: number;
+  /** Absolute per-turn wall-clock cap. Unlike the inactivity watchdog, this
+   * never resets — it fires regardless of SSE activity, guarding against agents
+   * that loop indefinitely while still emitting events. Defaults to 600s. */
+  readonly wallClockTimeoutMs?: number;
   /** Seam: start (or reuse) the serve process. Defaults to spawning `opencode serve`. */
   readonly startServer?: () => Promise<OpenCodeServerProcess>;
   /** Seam: build an HTTP/SSE client for a started server. Defaults to `fetch`. */
@@ -78,7 +82,18 @@ export async function runOpenCodeConversation<Output>(
   }
   let abortServerTurn: (() => void) | undefined;
 
-  try {
+  const wallClockMs = options.wallClockTimeoutMs ?? 600_000;
+  let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
+  // The cap races the WHOLE turn — startup POSTs and the consume path included,
+  // not just the SSE read race below: a hang anywhere (server never answering,
+  // or a blocked `emit` parking the loop between race iterations) must trip it.
+  const wallClock = new Promise<"wallclock">((resolve) => {
+    wallClockTimer = setTimeout(() => {
+      resolve("wallclock");
+    }, wallClockMs);
+  });
+
+  const turn = async (): Promise<void> => {
     const server = await manager.get();
     const http = connect(server);
 
@@ -103,6 +118,7 @@ export async function runOpenCodeConversation<Output>(
     const consumer = createOpenCodeSseConsumer(conversation, serverSession);
     const inactivityMs = options.inactivityTimeoutMs ?? 120_000;
     const iterator = events[Symbol.asyncIterator]();
+
     // Deadline-based watchdog: only lines relevant to this session push the
     // deadline out, so foreign-session chatter can't mask a dead turn.
     let deadline = Date.now() + inactivityMs;
@@ -148,11 +164,24 @@ export async function runOpenCodeConversation<Output>(
     if (!conversation.signal.aborted) {
       consumer.finish();
     }
+  };
+
+  try {
+    const winner = await Promise.race([turn().then(() => "done" as const), wallClock]);
+    if (winner === "wallclock" && !conversation.signal.aborted) {
+      conversation.fail(
+        backendFailed(
+          "opencode",
+          `opencode turn exceeded ${String(wallClockMs)}ms wall-clock limit`
+        )
+      );
+    }
   } catch (error) {
     if (!conversation.signal.aborted) {
       conversation.fail(backendFailed("opencode", errorMessage(error)));
     }
   } finally {
+    clearTimeout(wallClockTimer);
     conversation.signal.removeEventListener("abort", forwardAbort);
     if (abortServerTurn) {
       conversation.signal.removeEventListener("abort", abortServerTurn);

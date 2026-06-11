@@ -3,7 +3,7 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { flow } from "../src/index.ts";
+import { flow, type LlmBackend } from "../src/index.ts";
 import {
   cleanupFile,
   type CleanupAgentResult,
@@ -29,7 +29,7 @@ type AskAgentFn = (
 function makeSelected(): SelectedBackend {
   return {
     tag: "codex",
-    backend: { tag: "codex", autonomous: () => { throw new Error("not used"); } } as any
+    backend: { tag: "codex", autonomous: () => { throw new Error("not used"); } } as LlmBackend
   };
 }
 
@@ -54,9 +54,9 @@ describe("cleanupFile revert-on-failure", () => {
   });
 
   test("restores edited file and returns skipped when askAgent throws after editing", async () => {
-    const mockAskAgent: AskAgentFn = async (_selected, args) => {
+    const mockAskAgent: AskAgentFn = (_selected, args) => {
       writeFileSync(args.filePath, SENTINEL);
-      throw new Error("mock agent failure");
+      return Promise.reject(new Error("mock agent failure"));
     };
 
     const runInFlow = flow<FileCleanupOutcome>([], { cwd: tmpDir });
@@ -70,14 +70,12 @@ describe("cleanupFile revert-on-failure", () => {
     expect(gitStatus).toBe("");
 
     expect(result.skippedFiles.length).toBe(1);
-    expect(result.skippedFiles[0]!.reason).toContain("mock agent failure");
+    expect(result.skippedFiles[0]?.reason).toContain("mock agent failure");
     expect(result.changedFiles.length).toBe(0);
   });
 
   test("returns skipped when askAgent throws without editing the file", async () => {
-    const mockAskAgent: AskAgentFn = async () => {
-      throw new Error("agent never started");
-    };
+    const mockAskAgent: AskAgentFn = () => Promise.reject(new Error("agent never started"));
 
     const runInFlow = flow<FileCleanupOutcome>([], { cwd: tmpDir });
     const result = await runInFlow(() =>

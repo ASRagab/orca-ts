@@ -10,4 +10,5 @@ bin/
 # Local dogfooding/scratch artifacts.
 CONTEXT.md
 .claude/handoffs/
+.claude/plans/
 tests/ai-slop-cleanup-workflow.test.ts
