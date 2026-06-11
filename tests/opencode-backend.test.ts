@@ -156,6 +156,62 @@ describe("OpenCode live backend constructor", () => {
     });
   });
 
+  // Regression: the live hang. A result-only caller (`awaitResult()` without
+  // iterating `events()`) must not deadlock once the agent emits more events
+  // than the conversation queue holds — the queue evicts instead of blocking.
+  test("completes a turn whose event volume exceeds the queue capacity when only the result is awaited", async () => {
+    const flood = Array.from(
+      { length: 600 },
+      () =>
+        'data: {"type":"message.part.delta","properties":{"sessionID":"ses_test","field":"text","delta":"x"}}'
+    );
+    const backend = opencode({
+      startServer: () => Promise.resolve(fakeServer()),
+      connect: () =>
+        fakeHttp([
+          ...flood,
+          'data: {"type":"message.updated","properties":{"info":{"role":"assistant","sessionID":"ses_test"}}}',
+          'data: {"type":"session.idle","properties":{"sessionID":"ses_test"}}'
+        ])
+    });
+
+    const outcome = await backend.autonomous({ prompt: "run" }).awaitResult();
+
+    expect(outcome).toEqual({
+      type: "success",
+      result: {
+        backend: "opencode",
+        sessionId: sessionId("opencode", "ses_test"),
+        output: "x".repeat(600)
+      }
+    });
+  });
+
+  test("fails the turn when the server hangs before the event stream opens", async () => {
+    const backend = opencode({
+      startServer: () => Promise.resolve(fakeServer()),
+      connect: () => ({
+        postJson: () => Promise.resolve(""),
+        openEvents: () =>
+          new Promise<AsyncIterable<string>>(() => {
+            // never resolves: the server accepts the request but sends nothing
+          })
+      }),
+      wallClockTimeoutMs: 50
+    });
+
+    const outcome = await backend.autonomous({ prompt: "run" }).awaitResult();
+
+    expect(outcome).toEqual({
+      type: "failed",
+      error: {
+        _tag: "BackendFailed",
+        backend: "opencode",
+        message: "opencode turn exceeded 50ms wall-clock limit"
+      }
+    });
+  });
+
   test("reports failed startup as a backend failure", async () => {
     const backend = opencode({
       startServer: () => Promise.reject(new Error("serve missing"))

@@ -82,7 +82,18 @@ export async function runOpenCodeConversation<Output>(
   }
   let abortServerTurn: (() => void) | undefined;
 
-  try {
+  const wallClockMs = options.wallClockTimeoutMs ?? 600_000;
+  let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
+  // The cap races the WHOLE turn — startup POSTs and the consume path included,
+  // not just the SSE read race below: a hang anywhere (server never answering,
+  // or a blocked `emit` parking the loop between race iterations) must trip it.
+  const wallClock = new Promise<"wallclock">((resolve) => {
+    wallClockTimer = setTimeout(() => {
+      resolve("wallclock");
+    }, wallClockMs);
+  });
+
+  const turn = async (): Promise<void> => {
     const server = await manager.get();
     const http = connect(server);
 
@@ -106,15 +117,7 @@ export async function runOpenCodeConversation<Output>(
 
     const consumer = createOpenCodeSseConsumer(conversation, serverSession);
     const inactivityMs = options.inactivityTimeoutMs ?? 120_000;
-    const wallClockMs = options.wallClockTimeoutMs ?? 600_000;
     const iterator = events[Symbol.asyncIterator]();
-
-    let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
-    const wallClock = new Promise<"wallclock">((resolve) => {
-      wallClockTimer = setTimeout(() => {
-        resolve("wallclock");
-      }, wallClockMs);
-    });
 
     // Deadline-based watchdog: only lines relevant to this session push the
     // deadline out, so foreign-session chatter can't mask a dead turn.
@@ -129,23 +132,10 @@ export async function runOpenCodeConversation<Output>(
           Math.max(deadline - Date.now(), 0)
         );
       });
-      const next = await Promise.race([iterator.next(), inactivity, wallClock]);
+      const next = await Promise.race([iterator.next(), inactivity]);
       clearTimeout(timer);
 
-      if (next === "wallclock") {
-        clearTimeout(wallClockTimer);
-        if (!conversation.signal.aborted) {
-          conversation.fail(
-            backendFailed(
-              "opencode",
-              `opencode turn exceeded ${String(wallClockMs)}ms wall-clock limit`
-            )
-          );
-        }
-        return;
-      }
       if (next === "stalled") {
-        clearTimeout(wallClockTimer);
         if (!conversation.signal.aborted) {
           conversation.fail(
             backendFailed(
@@ -160,12 +150,10 @@ export async function runOpenCodeConversation<Output>(
         break;
       }
       if (conversation.signal.aborted) {
-        clearTimeout(wallClockTimer);
         return;
       }
       const relevant = await consumer.consume(next.value);
       if (consumer.completed) {
-        clearTimeout(wallClockTimer);
         return;
       }
       if (relevant) {
@@ -173,15 +161,27 @@ export async function runOpenCodeConversation<Output>(
       }
     }
 
-    clearTimeout(wallClockTimer);
     if (!conversation.signal.aborted) {
       consumer.finish();
+    }
+  };
+
+  try {
+    const winner = await Promise.race([turn().then(() => "done" as const), wallClock]);
+    if (winner === "wallclock" && !conversation.signal.aborted) {
+      conversation.fail(
+        backendFailed(
+          "opencode",
+          `opencode turn exceeded ${String(wallClockMs)}ms wall-clock limit`
+        )
+      );
     }
   } catch (error) {
     if (!conversation.signal.aborted) {
       conversation.fail(backendFailed("opencode", errorMessage(error)));
     }
   } finally {
+    clearTimeout(wallClockTimer);
     conversation.signal.removeEventListener("abort", forwardAbort);
     if (abortServerTurn) {
       conversation.signal.removeEventListener("abort", abortServerTurn);

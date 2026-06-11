@@ -15,6 +15,13 @@ export class BoundedAsyncQueue<T> implements AsyncIterable<T> {
     this.ensureOpen();
 
     while (this.items.length >= this.capacity) {
+      // Result-only callers never iterate, so a full queue would park the
+      // producer (and the backend turn loop behind it) forever: without a
+      // consumer, evict the oldest event instead of blocking.
+      if (!this.iteratorStarted) {
+        this.items.shift();
+        break;
+      }
       await new Promise<void>((resolve) => this.pushWaiters.push(resolve));
       this.ensureOpen();
     }
