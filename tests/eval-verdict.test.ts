@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { WorkflowMonitor } from "../src/index.ts";
+import { z } from "zod";
 import {
+  CleanupAgentResultSchema,
   makeStallDetector,
   validationSignature,
   type CommandRunSummary
@@ -80,5 +82,39 @@ describe("WorkflowMonitor verdict counting", () => {
     expect(summary.fail).toBe(2);
     expect(summary.skip).toBe(1);
     expect(summary.preconditionSkip).toBe(1);
+  });
+});
+
+describe("CleanupAgentResultSchema tolerance", () => {
+  const base = { path: "a.ts", changed: true, smellsRemoved: ["x"] };
+
+  test("normalizes capitalized risk and array validationHint (pi-style output)", () => {
+    const parsed = CleanupAgentResultSchema.safeParse({
+      ...base,
+      validationHint: ["bun run typecheck", "bun run lint"],
+      risk: "Low"
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.risk).toBe("low");
+      expect(parsed.data.validationHint).toBe("bun run typecheck; bun run lint");
+    }
+  });
+
+  test("still rejects an out-of-enum risk", () => {
+    const parsed = CleanupAgentResultSchema.safeParse({
+      ...base,
+      validationHint: "ok",
+      risk: "banana"
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  test("native backends still receive the strict inner JSON schema", () => {
+    const js = z.toJSONSchema(CleanupAgentResultSchema, { target: "draft-7" }) as {
+      properties: Record<string, unknown>;
+    };
+    expect(js.properties.risk).toEqual({ type: "string", enum: ["low", "medium", "high"] });
+    expect(js.properties.validationHint).toEqual({ type: "string" });
   });
 });

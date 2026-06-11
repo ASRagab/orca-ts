@@ -31,12 +31,26 @@ export const PullRequestTitle = "Clean up AI-slop patterns in source and tests";
 export const PullRequestBodyPath = ".orca/ai-slop-cleanup-pr.md";
 export const DefaultCleanupBranch = "ai-slop-cleanup";
 
+// Backends without native schema enforcement (e.g. pi) emit reasonable but
+// off-shape values — capitalized risk, an array of hint commands. Preprocess
+// normalizes those before validation; with z.toJSONSchema's default output
+// view, native backends still receive the strict inner enum/string schema.
+const RiskSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.toLowerCase() : value),
+  z.enum(["low", "medium", "high"])
+);
+
+const ValidationHintSchema = z.preprocess(
+  (value) => (Array.isArray(value) ? value.join("; ") : value),
+  z.string()
+);
+
 export const CleanupAgentResultSchema = z.object({
   path: z.string(),
   changed: z.boolean(),
   smellsRemoved: z.array(z.string()),
-  validationHint: z.string(),
-  risk: z.enum(["low", "medium", "high"])
+  validationHint: ValidationHintSchema,
+  risk: RiskSchema
 });
 
 export type CleanupAgentResult = z.infer<typeof CleanupAgentResultSchema>;
