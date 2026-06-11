@@ -23,13 +23,13 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
       help = true;
       continue;
     }
-    if (arg === "--backend" || arg?.startsWith("--backend=")) {
-      const separateValue = arg === "--backend";
-      const value = separateValue ? argv[index + 1] : arg.slice("--backend=".length);
-      backend = BackendTagSchema.parse(value);
-      if (separateValue) {
-        index += 1;
-      }
+    if (arg === "--backend") {
+      backend = BackendTagSchema.parse(argv[index + 1]);
+      index += 1;
+      continue;
+    }
+    if (arg?.startsWith("--backend=")) {
+      backend = BackendTagSchema.parse(arg.slice("--backend=".length));
       continue;
     }
     if (!arg?.startsWith("-") && !script) {
