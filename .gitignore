@@ -3,6 +3,7 @@ dist/
 *.tsbuildinfo
 .DS_Store
 .orca/
+.pi/
 .*.bun-build
 
 bin/

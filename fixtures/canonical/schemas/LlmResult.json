@@ -8,8 +8,7 @@
         "claude",
         "codex",
         "opencode",
-        "pi",
-        "gemini"
+        "pi"
       ]
     },
     "sessionId": {

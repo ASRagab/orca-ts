@@ -1,8 +1,10 @@
 import { basename, join } from "node:path";
+import { ok } from "neverthrow";
 import {
   claude,
   codex,
   command,
+  fixLoop,
   flow,
   fs,
   gh,
@@ -12,20 +14,43 @@ import {
   pi,
   z,
   type BackendTag,
+  type FixLoopStop,
   type LlmBackend,
+  type OutcomeVerdict,
+  type RegressedReason,
   WorkflowMonitor,
 } from "../src/index.ts";
+
+/** High seatbelt on repair iterations — not the binding stop (convergence and
+ * the no-progress signature are). */
+const RepairCeiling = 10;
+/** Wall-clock backstop for the whole per-file repair loop. */
+const RepairWallClockMs = 10 * 60_000;
 
 export const PullRequestTitle = "Clean up AI-slop patterns in source and tests";
 export const PullRequestBodyPath = ".orca/ai-slop-cleanup-pr.md";
 export const DefaultCleanupBranch = "ai-slop-cleanup";
 
+// Backends without native schema enforcement (e.g. pi) emit reasonable but
+// off-shape values — capitalized risk, an array of hint commands. Preprocess
+// normalizes those before validation; with z.toJSONSchema's default output
+// view, native backends still receive the strict inner enum/string schema.
+const RiskSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.toLowerCase() : value),
+  z.enum(["low", "medium", "high"])
+);
+
+const ValidationHintSchema = z.preprocess(
+  (value) => (Array.isArray(value) ? value.join("; ") : value),
+  z.string()
+);
+
 export const CleanupAgentResultSchema = z.object({
   path: z.string(),
   changed: z.boolean(),
   smellsRemoved: z.array(z.string()),
-  validationHint: z.string(),
-  risk: z.enum(["low", "medium", "high"])
+  validationHint: ValidationHintSchema,
+  risk: RiskSchema
 });
 
 export type CleanupAgentResult = z.infer<typeof CleanupAgentResultSchema>;
@@ -47,6 +72,9 @@ export interface WorkflowArgs {
   readonly branch: string;
   readonly publish: boolean;
   readonly monitor: boolean;
+  /** Eval sink: forces monitoring on and skips commit/PR/aggregate-verify so the
+   * run yields only a verdict log (the runner discards the worktree). */
+  readonly evalMode: boolean;
   readonly startGroup?: CleanupGroup;
   readonly maxFiles?: number;
 }
@@ -91,9 +119,24 @@ type DiffGuardResult =
     };
 
 export interface FileCleanupOutcome {
+  readonly verdict: OutcomeVerdict;
   readonly changedFiles: readonly ChangedFileSummary[];
   readonly skippedFiles: readonly SkippedFileSummary[];
   readonly validation: readonly CommandRunSummary[];
+  /** Repair iterations to reach green: 0 for `clean`, K for `repaired`. */
+  readonly iterations?: number;
+  /** Set only when `verdict === "regressed"`. */
+  readonly regressedReason?: RegressedReason;
+  /** Total agent tokens spent on this file (initial edit + repairs). */
+  readonly tokens?: number;
+}
+
+/** A failed-validation signature carried through the repair loop. `message` is
+ * the normalized failed-command + failure-line set used for no-progress
+ * detection; all validation failures are treated as fixable (we always retry). */
+interface ValidationIssue {
+  readonly message: string;
+  readonly fixable: true;
 }
 
 export function parseWorkflowArgs(argv: readonly string[]): WorkflowArgs {
@@ -105,6 +148,7 @@ export function parseWorkflowArgs(argv: readonly string[]): WorkflowArgs {
     branch: readFlag(argv, "--branch") ?? DefaultCleanupBranch,
     publish: !argv.includes("--no-publish"),
     monitor: argv.includes("--monitor"),
+    evalMode: argv.includes("--eval"),
     ...(startGroup ? { startGroup } : {}),
     ...(maxFiles === undefined ? {} : { maxFiles })
   };
@@ -440,13 +484,14 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 async function runCleanupWorkflow(args: WorkflowArgs): Promise<void> {
   const selected = selectBackend();
   console.log(`Cleanup backend: ${selected.tag}${selected.model ? ` (${selected.model})` : ""}`);
-  const monitor = args.monitor ? new WorkflowMonitor(selected.tag) : undefined;
+  // Eval mode always records a verdict log — it is the run's only deliverable.
+  const monitor = args.monitor || args.evalMode ? new WorkflowMonitor(selected.tag) : undefined;
   try {
     await runCleanupWithBackend(args, selected, monitor);
   } finally {
     await selected.shutdown?.();
     if (monitor) {
-      const logDir = join(process.cwd(), ".orca", "monitoring");
+      const logDir = process.env.ORCA_MONITOR_DIR ?? join(process.cwd(), ".orca", "monitoring");
       await monitor.writeLog(logDir);
       console.log(`Monitor log written to ${logDir}/${monitor.runId}.json`);
     }
@@ -508,16 +553,20 @@ async function runCleanupWithBackend(
       const outcome = await cleanupFile(file, trackedFiles, acceptedPaths, selected);
       const durationMs = Date.now() - startedAt;
       const elapsedSeconds = (durationMs / 1000).toFixed(1);
-      const verdict =
-        outcome.changedFiles.length > 0 ? "changed" : outcome.skippedFiles.length > 0 ? "skipped" : "no-op";
       const skipReason = outcome.skippedFiles[0]?.reason;
-      console.log(`  ${file}: ${verdict} in ${elapsedSeconds}s${skipReason ? ` (${skipReason})` : ""}`);
+      const detail = outcome.verdict === "regressed" && outcome.regressedReason
+        ? `${outcome.verdict}:${outcome.regressedReason}`
+        : outcome.verdict;
+      console.log(`  ${file}: ${detail} in ${elapsedSeconds}s${skipReason ? ` (${skipReason})` : ""}`);
       monitor?.recordOutcome({
         file,
-        verdict,
+        verdict: outcome.verdict,
         durationMs,
         smellsRemoved: outcome.changedFiles.flatMap((f) => f.smellsRemoved),
         ...(skipReason ? { reason: skipReason } : {}),
+        ...(outcome.iterations === undefined ? {} : { iterations: outcome.iterations }),
+        ...(outcome.regressedReason === undefined ? {} : { regressedReason: outcome.regressedReason }),
+        ...(outcome.tokens === undefined ? {} : { tokens: outcome.tokens }),
       });
       validation.push(...outcome.validation);
       skippedFiles.push(...outcome.skippedFiles);
@@ -536,6 +585,13 @@ async function runCleanupWithBackend(
     if (args.maxFiles !== undefined && processed >= args.maxFiles) {
       break;
     }
+  }
+
+  if (args.evalMode) {
+    // Eval sink: per-file verdicts are recorded; skip the aggregate verify, the
+    // PR, and the publish gate. The runner discards this worktree.
+    console.log(`Eval run complete: ${String(changedFiles.length)} changed, ${String(skippedFiles.length)} skipped.`);
+    return;
   }
 
   const finalValidation = await runCommandPlan([{ cmd: "bun", args: ["run", "verify"] }]);
@@ -580,23 +636,22 @@ export async function cleanupFile(
   const validationPlan = planValidationCommands(filePath, trackedFiles);
   const fileBaseline = await runCommandPlan(targetedTestCommands(validationPlan));
   if (!fileBaseline.passed) {
-    return {
-      changedFiles: [],
-      skippedFiles: [
-        {
-          path: normalizePath(filePath),
-          reason: `Targeted baseline failed: ${
-            firstFailure(fileBaseline.runs)?.command ?? "unknown"
-          }`
-        }
-      ],
-      validation: fileBaseline.runs
-    };
+    return skipped(
+      filePath,
+      `Targeted baseline failed: ${firstFailure(fileBaseline.runs)?.command ?? "unknown"}`,
+      "precondition-skip",
+      { validation: fileBaseline.runs }
+    );
   }
 
   const allowedExtras = allowedExtraFilesFor(filePath, trackedFiles).filter(
     (path) => !acceptedPaths.has(path)
   );
+
+  let tokens = 0;
+  const onUsage = (used: number): void => {
+    tokens += used;
+  };
 
   let agentResult: CleanupAgentResult;
   try {
@@ -605,112 +660,155 @@ export async function cleanupFile(
       trackedFiles,
       baselineDiff,
       validationPlan,
-      allowedExtras
+      allowedExtras,
+      onUsage
     });
   } catch (error) {
-    const afterStatus = parseStatusPaths(await statusShort());
-    const attemptPaths = [
-      ...newChangedPaths(beforeStatus, afterStatus),
-      ...(await modifiedPreexistingPaths(beforeDiffs, afterStatus))
-    ];
-    await restoreAttempt(attemptPaths);
-    return skipped(filePath, errorMessage(error));
+    await restoreAttempt(await attemptPathsSince(beforeStatus, beforeDiffs));
+    // A crashed initial edit is a backend-quality failure, not a neutral skip.
+    return skipped(filePath, errorMessage(error), "regressed", { tokens });
   }
 
+  const attempt = await attemptPathsSince(beforeStatus, beforeDiffs);
+  const guard = evaluateDiffGuard(filePath, attempt, allowedExtras);
+
+  if (agentResult.path !== normalizePath(filePath)) {
+    await restoreAttempt(attempt);
+    return skipped(filePath, `Structured result path mismatch: ${agentResult.path}`, "guard-reject", { tokens });
+  }
+
+  if (!agentResult.changed && attempt.length === 0) {
+    return declined(tokens);
+  }
+
+  if (!guard.accepted) {
+    await restoreAttempt(attempt);
+    return skipped(filePath, guard.reason, "guard-reject", { tokens });
+  }
+
+  // Convergence-guarded repair: re-run the gate and let the agent iterate until
+  // green or a guard fires (no-progress signature / wall-clock / ceiling).
+  // Depth is NOT capped by a stingy count — we burn tokens to converge.
+  const stalled = makeStallDetector();
+  let lastValidation: readonly CommandRunSummary[] = [];
+
+  const loop = await fixLoop<ValidationIssue>(
+    async () => {
+      const result = await runCommandPlan(validationPlan);
+      lastValidation = result.runs;
+      return ok(result.passed ? [] : [validationIssue(result.runs)]);
+    },
+    async () => {
+      const beforeRepair = parseStatusPaths(await statusShort());
+      try {
+        await _askAgent(selected, {
+          filePath,
+          trackedFiles,
+          baselineDiff: await diffForPath(filePath),
+          validationPlan,
+          allowedExtras,
+          repairFailure: lastValidation,
+          onUsage
+        });
+      } catch {
+        // A crashed repair makes no progress: revert this round and let the
+        // no-progress guard settle the verdict on the next evaluation.
+        await restoreAttempt(newChangedPaths(beforeRepair, parseStatusPaths(await statusShort())));
+        return ok(undefined);
+      }
+      // Keep the repair in scope: undo any out-of-scope edits it introduced.
+      if (!evaluateDiffGuard(filePath, await attemptPathsSince(beforeStatus, beforeDiffs), allowedExtras).accepted) {
+        await restoreAttempt(newChangedPaths(beforeRepair, parseStatusPaths(await statusShort())));
+      }
+      return ok(undefined);
+    },
+    { maxIterations: RepairCeiling, wallClockMs: RepairWallClockMs, stalled }
+  );
+
+  const finalPaths = await attemptPathsSince(beforeStatus, beforeDiffs);
+
+  if (loop.isErr()) {
+    await restoreAttempt(finalPaths);
+    return skipped(filePath, errorMessage(loop.error), "regressed", { validation: lastValidation, tokens });
+  }
+
+  const summary = loop.value;
+  if (summary.converged) {
+    const finalGuard = evaluateDiffGuard(filePath, finalPaths, allowedExtras);
+    if (!finalGuard.accepted) {
+      await restoreAttempt(finalPaths);
+      return skipped(filePath, finalGuard.reason, "guard-reject", { tokens });
+    }
+    const verdict = summary.iterations === 0 ? "clean" : "repaired";
+    return changed(finalGuard.changedFiles, agentResult, lastValidation, verdict, summary.iterations, tokens);
+  }
+
+  await restoreAttempt(finalPaths);
+  return skipped(
+    filePath,
+    `Could not converge: ${firstFailure(lastValidation)?.command ?? "unknown"}`,
+    "regressed",
+    { validation: lastValidation, regressedReason: regressedReasonFor(summary.stop), tokens }
+  );
+}
+
+/** Unique set of paths the agent touched since the pre-attempt snapshot —
+ * newly-changed paths plus pre-existing dirty files whose diff changed. */
+async function attemptPathsSince(
+  beforeStatus: readonly string[],
+  beforeDiffs: ReadonlyMap<string, string>
+): Promise<readonly string[]> {
   const afterStatus = parseStatusPaths(await statusShort());
-  const attemptPaths = [
+  return [
     ...new Set([
       ...newChangedPaths(beforeStatus, afterStatus),
       ...(await modifiedPreexistingPaths(beforeDiffs, afterStatus))
     ])
   ];
-  const guard = evaluateDiffGuard(filePath, attemptPaths, allowedExtras);
+}
 
-  if (agentResult.path !== normalizePath(filePath)) {
-    await restoreAttempt(attemptPaths);
-    return skipped(filePath, `Structured result path mismatch: ${agentResult.path}`);
+/** Normalized failure signature for no-progress detection: the set of failed
+ * commands plus failure lines with volatile bits (numbers, paths) stripped. */
+export function validationSignature(runs: readonly CommandRunSummary[]): string {
+  const parts = new Set<string>();
+  for (const run of runs) {
+    if (run.status !== "failed") continue;
+    parts.add(`cmd:${run.command}`);
+    for (const line of `${run.stdout}\n${run.stderr}`.split("\n")) {
+      if (/\b(fail|error|expected)\b/i.test(line) || /[✗✘]/.test(line)) {
+        parts.add(line.replace(/\d+/g, "#").replace(/\/[^\s:]+/g, "/PATH").replace(/\s+/g, " ").trim());
+      }
+    }
   }
+  return [...parts].sort().join("\n");
+}
 
-  if (!agentResult.changed && attemptPaths.length === 0) {
-    return { changedFiles: [], skippedFiles: [], validation: [] };
-  }
+function validationIssue(runs: readonly CommandRunSummary[]): ValidationIssue {
+  return { message: validationSignature(runs), fixable: true };
+}
 
-  if (!guard.accepted) {
-    await restoreAttempt(attemptPaths);
-    return skipped(filePath, guard.reason);
-  }
-
-  const validation = await runCommandPlan(validationPlan);
-  if (validation.passed) {
-    return changed(filePath, guard.changedFiles, agentResult, validation.runs);
-  }
-
-  const repaired = await repairValidationFailure(selected, {
-    filePath,
-    trackedFiles,
-    baselineStatus: beforeStatus,
-    validationPlan,
-    allowedExtras,
-    failedValidation: validation.runs
-  });
-
-  if (repaired.changedFiles.length > 0 || repaired.skippedFiles.length > 0) {
-    return {
-      changedFiles: repaired.changedFiles,
-      skippedFiles: repaired.skippedFiles,
-      validation: [...validation.runs, ...repaired.validation]
-    };
-  }
-
-  return {
-    changedFiles: [],
-    skippedFiles: [],
-    validation: validation.runs
+/** Stateful no-progress detector: returns true when the current round's
+ * signature was already seen — catching both an immediate repeat (stuck) and an
+ * A→B→A cycle (oscillation). */
+export function makeStallDetector(): (issues: readonly ValidationIssue[]) => boolean {
+  const seen = new Set<string>();
+  return (issues) => {
+    const signature = issues.map((issue) => issue.message).join("\n");
+    if (seen.has(signature)) return true;
+    seen.add(signature);
+    return false;
   };
 }
 
-async function repairValidationFailure(selected: SelectedBackend, args: {
-  readonly filePath: string;
-  readonly trackedFiles: readonly string[];
-  readonly baselineStatus: readonly string[];
-  readonly validationPlan: readonly CommandSpec[];
-  readonly allowedExtras: readonly string[];
-  readonly failedValidation: readonly CommandRunSummary[];
-}): Promise<FileCleanupOutcome> {
-  let repairResult: CleanupAgentResult;
-  try {
-    repairResult = await askAgentForCleanup(selected, {
-      filePath: args.filePath,
-      trackedFiles: args.trackedFiles,
-      baselineDiff: await diffForPath(args.filePath),
-      validationPlan: args.validationPlan,
-      allowedExtras: args.allowedExtras,
-      repairFailure: args.failedValidation
-    });
-  } catch (error) {
-    const currentPaths = newChangedPaths(args.baselineStatus, parseStatusPaths(await statusShort()));
-    await restoreAttempt(currentPaths);
-    return skipped(args.filePath, `Repair failed: ${errorMessage(error)}`);
+function regressedReasonFor(stop: FixLoopStop): RegressedReason {
+  switch (stop) {
+    case "timeout":
+      return "timeout";
+    case "ceiling":
+      return "ceiling";
+    default:
+      return "stuck";
   }
-
-  const afterRepairStatus = parseStatusPaths(await statusShort());
-  const repairedPaths = newChangedPaths(args.baselineStatus, afterRepairStatus);
-  const repairGuard = evaluateDiffGuard(args.filePath, repairedPaths, args.allowedExtras);
-  if (!repairGuard.accepted) {
-    await restoreAttempt(repairedPaths);
-    return skipped(args.filePath, `Repair touched invalid files: ${repairGuard.reason}`);
-  }
-
-  const validation = await runCommandPlan(args.validationPlan);
-  if (!validation.passed) {
-    await restoreAttempt(repairedPaths);
-    return skipped(
-      args.filePath,
-      `Validation failed after repair: ${firstFailure(validation.runs)?.command ?? "unknown"}`
-    );
-  }
-
-  return changed(args.filePath, repairGuard.changedFiles, repairResult, validation.runs);
 }
 
 async function askAgentForCleanup(
@@ -722,6 +820,8 @@ async function askAgentForCleanup(
     readonly validationPlan: readonly CommandSpec[];
     readonly allowedExtras: readonly string[];
     readonly repairFailure?: readonly CommandRunSummary[];
+    /** Reports agent token spend (input + output) for convergence-cost scoring. */
+    readonly onUsage?: (tokens: number) => void;
   }
 ): Promise<CleanupAgentResult> {
   const conversation = llm().autonomous(selected.backend, {
@@ -737,6 +837,11 @@ async function askAgentForCleanup(
 
   if (outcome.type !== "success") {
     throw new Error(`${selected.tag} cleanup failed for ${args.filePath}: ${JSON.stringify(outcome)}`);
+  }
+
+  const usage = outcome.result.usage;
+  if (usage !== undefined) {
+    args.onUsage?.(usage.input + usage.output);
   }
 
   const candidate = outcome.result.structured ?? extractJsonObject(outcome.result.output);
@@ -1023,12 +1128,17 @@ async function createPullRequest(base: string): Promise<void> {
 }
 
 function changed(
-  filePath: string,
   changedPaths: readonly string[],
   agentResult: CleanupAgentResult,
-  validation: readonly CommandRunSummary[]
+  validation: readonly CommandRunSummary[],
+  verdict: "clean" | "repaired",
+  iterations: number,
+  tokens: number
 ): FileCleanupOutcome {
   return {
+    verdict,
+    iterations,
+    tokens,
     changedFiles: changedPaths.map((path) => ({
       path,
       group: groupForFile(path),
@@ -1040,11 +1150,36 @@ function changed(
   };
 }
 
-function skipped(filePath: string, reason: string): FileCleanupOutcome {
+/** Build a skip/revert outcome with an explicit verdict. Defaults to `declined`
+ * but callers pass `precondition-skip`, `guard-reject`, or `regressed`. */
+function skipped(
+  filePath: string,
+  reason: string,
+  verdict: Exclude<OutcomeVerdict, "clean" | "repaired" | "declined"> = "guard-reject",
+  extra: {
+    readonly validation?: readonly CommandRunSummary[];
+    readonly regressedReason?: RegressedReason;
+    readonly tokens?: number;
+  } = {}
+): FileCleanupOutcome {
   return {
+    verdict,
     changedFiles: [],
     skippedFiles: [{ path: normalizePath(filePath), reason }],
-    validation: []
+    validation: extra.validation ?? [],
+    ...(extra.regressedReason === undefined ? {} : { regressedReason: extra.regressedReason }),
+    ...(extra.tokens === undefined ? {} : { tokens: extra.tokens })
+  };
+}
+
+/** Neutral no-op: the agent made no edits and there was nothing to clean. */
+function declined(tokens: number): FileCleanupOutcome {
+  return {
+    verdict: "declined",
+    changedFiles: [],
+    skippedFiles: [],
+    validation: [],
+    ...(tokens === 0 ? {} : { tokens })
   };
 }
 
@@ -1112,7 +1247,7 @@ export function selectBackend(): SelectedBackend {
       return { ...withModel(backend), shutdown: () => backend.shutdown() };
     }
     default:
-      throw new Error(`ai-slop-cleanup does not support backend: ${tag}`);
+      throw new Error(`ai-slop-cleanup does not support backend: ${String(tag)}`);
   }
 }
 

@@ -36,8 +36,6 @@ export function unsupportedBackend<B extends BackendTag>(tag: B): LlmBackend<B> 
   };
 }
 
-export const gemini = () => unsupportedBackend("gemini");
-
 export function fakeResult<B extends BackendTag>(
   backend: B,
   output: string

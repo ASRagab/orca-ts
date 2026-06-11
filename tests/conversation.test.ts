@@ -77,7 +77,7 @@ describe("StreamConversation", () => {
   });
 
   test("fails reserved user interaction events", async () => {
-    const conversation = new StreamConversation({ backend: "gemini" });
+    const conversation = new StreamConversation({ backend: "codex" });
     const emitted = await conversation.emit({ type: "user_question", question: "Need input?" });
 
     expect(emitted.isErr()).toBe(true);

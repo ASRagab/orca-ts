@@ -7,8 +7,7 @@ export const BackendTagSchema = z.enum([
   "claude",
   "codex",
   "opencode",
-  "pi",
-  "gemini"
+  "pi"
 ]);
 
 export const UsageSchema = z.object({
