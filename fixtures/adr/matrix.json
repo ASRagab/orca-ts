@@ -166,7 +166,7 @@
   {
     "adr": "0015",
     "title": "Drive Gemini CLI via `gemini --output-format stream-json` stdio JSONL",
-    "disposition": "ported",
-    "acceptance": "Gemini Tier 1 fixtures pass without settings mutation for ask-user wiring."
+    "disposition": "cut",
+    "acceptance": "Cut: the Gemini CLI is deprecated by Google in favor of the Antigravity CLI (`agy`), and Gemini never shipped a live streaming consumer. Removed from the BackendTag enum and backend surface; future Google support is a new `agy` backend tag (out of scope for this change)."
   }
 ]

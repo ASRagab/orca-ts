@@ -4,12 +4,9 @@ import { join } from "node:path";
 import { z } from "zod";
 import {
   collectCodexJsonl,
-  collectGeminiJsonl,
   collectPiRpc,
   StreamConversation,
   codexExecJsonlArgs,
-  geminiSettingsWritesForV1,
-  geminiStreamJsonArgs,
   piPromptCommand,
   piRpcArgs,
   sessionId
@@ -146,43 +143,6 @@ describe("Codex JSONL Tier 1 fixtures", () => {
   });
 });
 
-describe("Gemini JSONL Tier 1 fixtures", () => {
-  test("maps scripted JSONL streams to canonical events and outcomes", async () => {
-    await assertJsonlFixtures("gemini", async (lines) => await collectGeminiJsonl(lines));
-  });
-
-  test("does not mutate settings for v1 ask_user wiring", () => {
-    expect(geminiSettingsWritesForV1()).toEqual([]);
-  });
-
-  test("builds Gemini stream-json args without settings mutation", () => {
-    expect(geminiStreamJsonArgs({ model: "gemini-2.5-pro", approvalMode: "auto" })).toEqual([
-      "--output-format",
-      "stream-json",
-      "--model",
-      "gemini-2.5-pro",
-      "--approval-mode",
-      "auto"
-    ]);
-  });
-
-  test("fails ask_user tool-use attempts explicitly", async () => {
-    const actual = await collectGeminiJsonl([
-      '{"type":"init","session_id":"g"}',
-      '{"type":"tool_use","tool_name":"orca__ask_user","tool_id":"ask","parameters":{"question":"Continue?"}}'
-    ]);
-
-    expect(actual.outcome).toEqual({
-      type: "failed",
-      error: {
-        _tag: "UnsupportedFeature",
-        feature: "gemini ask_user",
-        reason: "Gemini ask_user MCP bridge is unsupported in v1"
-      }
-    });
-  });
-});
-
 describe("Pi RPC Tier 1 fixtures", () => {
   test("maps scripted RPC streams to canonical events and outcomes", async () => {
     await assertJsonlFixtures("pi", async (lines, dir) => {
@@ -208,7 +168,7 @@ describe("Pi RPC Tier 1 fixtures", () => {
 });
 
 async function assertJsonlFixtures(
-  backend: "codex" | "gemini" | "pi",
+  backend: "codex" | "pi",
   collect: (
     lines: readonly string[],
     dir: string

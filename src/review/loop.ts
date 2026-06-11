@@ -3,18 +3,46 @@ import type { RuntimeError } from "../model/index.ts";
 import type { ReviewerId, ReviewerPrompt } from "./reviewers.ts";
 import { loadReviewerPrompts, selectReviewers } from "./reviewers.ts";
 
-export interface FixLoopSummary {
+/** Why the loop stopped. `converged` is the only success; the rest are
+ * non-convergence reasons that map onto a `regressed` verdict. */
+export type FixLoopStop = "converged" | "unfixable" | "stuck" | "timeout" | "ceiling";
+
+export interface FixLoopSummary<I extends { readonly fixable: boolean } = ReviewIssue> {
   readonly iterations: number;
-  readonly ignoredIssues: readonly ReviewIssue[];
+  readonly ignoredIssues: readonly I[];
   readonly converged: boolean;
+  readonly stop: FixLoopStop;
   readonly events: readonly string[];
 }
 
-export async function fixLoop<I extends ReviewIssue>(
+export interface FixLoopOptions<I extends { readonly fixable: boolean }> {
+  /** High sanity ceiling on fix iterations — a seatbelt, not the policy. */
+  readonly maxIterations?: number;
+  /** Wall-clock backstop in ms across the whole loop. */
+  readonly wallClockMs?: number;
+  /** Stateful no-progress detector, owned by the caller. Called with the
+   * current round's issues before each fix; returning `true` stops the loop as
+   * `stuck`. The caller tracks signature history so it can catch both an
+   * immediate repeat and an A→B→A cycle. */
+  readonly stalled?: (issues: readonly I[]) => boolean;
+  /** Injectable clock for deterministic tests. */
+  readonly now?: () => number;
+}
+
+/** Iterate `evaluate → fix` until the issues clear (converged) or a guard
+ * fires. Depth is NOT bounded by a stingy count: `maxIterations` is a high
+ * seatbelt and the binding stops are convergence, the no-progress signature,
+ * and the wall-clock backstop. The third argument accepts a bare iteration
+ * count for backward compatibility or a full {@link FixLoopOptions}. */
+export async function fixLoop<I extends { readonly fixable: boolean }>(
   evaluate: () => Promise<Result<readonly I[], RuntimeError>>,
   fix: (issues: readonly I[]) => Promise<Result<void, RuntimeError>>,
-  maxIterations = 10,
-): Promise<Result<FixLoopSummary, RuntimeError>> {
+  options: number | FixLoopOptions<I> = {},
+): Promise<Result<FixLoopSummary<I>, RuntimeError>> {
+  const opts = typeof options === "number" ? { maxIterations: options } : options;
+  const maxIterations = opts.maxIterations ?? 10;
+  const now = opts.now ?? Date.now;
+  const startedAt = now();
   const events: string[] = [];
   let iterations = 0;
 
@@ -26,16 +54,25 @@ export async function fixLoop<I extends ReviewIssue>(
 
     const issues = evalResult.value;
     if (issues.length === 0) {
-      return ok({ iterations, ignoredIssues: [], converged: true, events });
+      return ok({ iterations, ignoredIssues: [], converged: true, stop: "converged", events });
     }
 
     const fixable = issues.filter((i) => i.fixable);
     if (fixable.length === 0) {
-      return ok({ iterations, ignoredIssues: [...issues], converged: false, events });
+      return ok({ iterations, ignoredIssues: [...issues], converged: false, stop: "unfixable", events });
+    }
+
+    if (opts.stalled?.(issues)) {
+      events.push("no-progress");
+      return ok({ iterations, ignoredIssues: [...issues], converged: false, stop: "stuck", events });
     }
 
     if (iterations >= maxIterations) {
-      return ok({ iterations, ignoredIssues: [...issues], converged: false, events });
+      return ok({ iterations, ignoredIssues: [...issues], converged: false, stop: "ceiling", events });
+    }
+
+    if (opts.wallClockMs !== undefined && now() - startedAt >= opts.wallClockMs) {
+      return ok({ iterations, ignoredIssues: [...issues], converged: false, stop: "timeout", events });
     }
 
     events.push("fix:started");
