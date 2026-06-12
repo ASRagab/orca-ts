@@ -80,16 +80,12 @@ The system SHALL manage the OpenCode server lifecycle lazily, consume HTTP/SSE e
 - **WHEN** a caller cancels an active OpenCode conversation
 - **THEN** the driver issues a best-effort abort request for the session to the server before tearing down the stream
 
-### Requirement: Codex, Gemini, and Pi backends are supported
-The system SHALL support Codex exec JSONL, Gemini stream-json JSONL, and Pi RPC transports by mapping their native message tables into the same conversation event model. Subprocess-based backends (Codex, Pi) drive a `SubprocessConsumer` that signals completion via an `AbortSignal`. The consumer's `signal` property SHALL be an `AbortSignal` that becomes aborted when the consumer has settled the conversation on a terminal event. The subprocess read loop SHALL treat `consumer.signal.aborted` as the stop condition, kill the child process, and break — identical semantics to the prior `completed` poll flag but expressed as `AbortSignal` for consistency with `conversation.signal`.
+### Requirement: Codex and Pi backends are supported
+The system SHALL support Codex exec JSONL and Pi RPC transports by mapping their native message tables into the same conversation event model. Subprocess-based backends (Codex, Pi) drive a `SubprocessConsumer` that signals completion via an `AbortSignal`. The consumer's `signal` property SHALL be an `AbortSignal` that becomes aborted when the consumer has settled the conversation on a terminal event. The subprocess read loop SHALL treat `consumer.signal.aborted` as the stop condition, kill the child process, and break — identical semantics to the prior `completed` poll flag but expressed as `AbortSignal` for consistency with `conversation.signal`.
 
 #### Scenario: Codex JSONL stream completes
 - **WHEN** Codex emits thread, item, and turn completion messages
 - **THEN** the runtime emits normalized events and synthesizes the expected final result
-
-#### Scenario: Gemini JSONL stream completes
-- **WHEN** Gemini emits init, message, tool-use, tool-result, and result messages
-- **THEN** the runtime emits normalized events and returns the expected final result without mutating settings for ask-user wiring
 
 #### Scenario: Pi RPC stream completes
 - **WHEN** Pi emits RPC conversation messages
@@ -100,11 +96,6 @@ The system SHALL support Codex exec JSONL, Gemini stream-json JSONL, and Pi RPC 
 - **THEN** `consumer.signal` becomes aborted
 - **THEN** the subprocess read loop kills the child process and stops consuming lines
 - **THEN** the conversation result is available via `awaitResult()`
-
-#### Scenario: Gemini JSONL stream completes (AbortSignal)
-- **WHEN** the Gemini backend processes a JSONL stream to a terminal event
-- **THEN** `consumer.signal` becomes aborted
-- **THEN** the subprocess read loop stops
 
 #### Scenario: Pi RPC stream completes (AbortSignal)
 - **WHEN** the Pi backend receives a terminal RPC response

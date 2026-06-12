@@ -19,6 +19,7 @@ describe("fixLoop", () => {
       iterations: 0,
       ignoredIssues: [],
       converged: true,
+      stop: "converged",
       events: ["evaluate:started", "evaluate:completed"],
     });
     expect(evalCount).toBe(1);
@@ -127,6 +128,41 @@ describe("fixLoop", () => {
     const summary = result._unsafeUnwrap();
     expect(summary.iterations).toBe(0);
     expect(summary.converged).toBe(false);
+    expect(summary.stop).toBe("ceiling");
     expect(fixCount).toBe(0);
+  });
+
+  test("stalled detector stops the loop as stuck", async () => {
+    let fixCount = 0;
+    const result = await fixLoop(
+      () => Promise.resolve(ok([issue("persistent")])),
+      () => { fixCount++; return Promise.resolve(ok(undefined)); },
+      { maxIterations: 10, stalled: () => true },
+    );
+    const summary = result._unsafeUnwrap();
+    expect(summary.converged).toBe(false);
+    expect(summary.stop).toBe("stuck");
+    expect(summary.events).toContain("no-progress");
+    expect(fixCount).toBe(0);
+  });
+
+  test("wall-clock backstop stops the loop as timeout", async () => {
+    let clock = 0;
+    const result = await fixLoop(
+      () => Promise.resolve(ok([issue("slow")])),
+      () => { clock += 100; return Promise.resolve(ok(undefined)); },
+      { maxIterations: 100, wallClockMs: 250, now: () => clock },
+    );
+    const summary = result._unsafeUnwrap();
+    expect(summary.converged).toBe(false);
+    expect(summary.stop).toBe("timeout");
+  });
+
+  test("unfixable issues report stop=unfixable", async () => {
+    const result = await fixLoop(
+      () => Promise.resolve(ok([issue("unfixable", false)])),
+      () => Promise.resolve(ok(undefined)),
+    );
+    expect(result._unsafeUnwrap().stop).toBe("unfixable");
   });
 });

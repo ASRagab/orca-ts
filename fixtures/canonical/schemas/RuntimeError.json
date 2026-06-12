@@ -145,8 +145,7 @@
             "claude",
             "codex",
             "opencode",
-            "pi",
-            "gemini"
+            "pi"
           ]
         },
         "message": {

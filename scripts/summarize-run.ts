@@ -1,8 +1,14 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { WorkflowRunLog, OutcomeLog, FailureLog, StageLog } from "../src/index.ts";
+import type {
+  WorkflowRunLog,
+  OutcomeLog,
+  FailureLog,
+  StageLog,
+  RegressedReason
+} from "../src/index.ts";
 
-const monitoringDir = join(process.cwd(), ".orca", "monitoring");
+const monitoringDir = process.env.ORCA_MONITOR_DIR ?? join(process.cwd(), ".orca", "monitoring");
 
 async function loadLogs(): Promise<WorkflowRunLog[]> {
   let entries: string[];
@@ -10,7 +16,7 @@ async function loadLogs(): Promise<WorkflowRunLog[]> {
     entries = await readdir(monitoringDir);
   } catch {
     console.error(`No monitoring directory found at ${monitoringDir}`);
-    console.error("Run with --monitor to generate logs.");
+    console.error("Run with --monitor (or --eval) to generate logs.");
     process.exit(1);
   }
 
@@ -32,9 +38,112 @@ function formatMs(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${String(ms)}ms`;
 }
 
+/** One row of the cross-backend convergence-cost matrix. `precondition-skip`
+ * files are excluded from the `tokensPerFile` / `wallMsPerFile` denominators —
+ * they were not the backend's work. A backend that was never run simply does
+ * not appear (absent, not a failure). */
+export interface BackendMatrixRow {
+  readonly backend: string;
+  readonly runs: number;
+  readonly clean: number;
+  readonly repaired: number;
+  readonly repairedAvgIterations: number;
+  readonly regressedStuck: number;
+  readonly regressedTimeout: number;
+  readonly regressedCeiling: number;
+  readonly guardReject: number;
+  readonly declined: number;
+  readonly preconditionSkip: number;
+  readonly tokensPerFile: number;
+  readonly wallMsPerFile: number;
+}
+
+export function buildBackendMatrix(logs: readonly WorkflowRunLog[]): BackendMatrixRow[] {
+  interface Acc {
+    backend: string;
+    runs: number;
+    clean: number;
+    repaired: number;
+    repairIterTotal: number;
+    regressed: Record<RegressedReason, number>;
+    guardReject: number;
+    declined: number;
+    preconditionSkip: number;
+    scored: number;
+    tokenTotal: number;
+    wallTotal: number;
+  }
+
+  const byBackend = new Map<string, Acc>();
+  for (const log of logs) {
+    const acc = byBackend.get(log.backend) ?? {
+      backend: log.backend,
+      runs: 0,
+      clean: 0,
+      repaired: 0,
+      repairIterTotal: 0,
+      regressed: { stuck: 0, timeout: 0, ceiling: 0 },
+      guardReject: 0,
+      declined: 0,
+      preconditionSkip: 0,
+      scored: 0,
+      tokenTotal: 0,
+      wallTotal: 0
+    };
+    acc.runs += 1;
+    for (const outcome of log.outcomes) {
+      switch (outcome.verdict) {
+        case "clean":
+          acc.clean += 1;
+          break;
+        case "repaired":
+          acc.repaired += 1;
+          acc.repairIterTotal += outcome.iterations ?? 0;
+          break;
+        case "regressed":
+          acc.regressed[outcome.regressedReason ?? "stuck"] += 1;
+          break;
+        case "guard-reject":
+          acc.guardReject += 1;
+          break;
+        case "declined":
+          acc.declined += 1;
+          break;
+        case "precondition-skip":
+          acc.preconditionSkip += 1;
+          break;
+      }
+      if (outcome.verdict !== "precondition-skip") {
+        acc.scored += 1;
+        acc.tokenTotal += outcome.tokens ?? 0;
+        acc.wallTotal += outcome.durationMs;
+      }
+    }
+    byBackend.set(log.backend, acc);
+  }
+
+  return [...byBackend.values()]
+    .map((acc) => ({
+      backend: acc.backend,
+      runs: acc.runs,
+      clean: acc.clean,
+      repaired: acc.repaired,
+      repairedAvgIterations: acc.repaired === 0 ? 0 : acc.repairIterTotal / acc.repaired,
+      regressedStuck: acc.regressed.stuck,
+      regressedTimeout: acc.regressed.timeout,
+      regressedCeiling: acc.regressed.ceiling,
+      guardReject: acc.guardReject,
+      declined: acc.declined,
+      preconditionSkip: acc.preconditionSkip,
+      tokensPerFile: acc.scored === 0 ? 0 : acc.tokenTotal / acc.scored,
+      wallMsPerFile: acc.scored === 0 ? 0 : acc.wallTotal / acc.scored
+    }))
+    .sort((a, b) => a.backend.localeCompare(b.backend));
+}
+
 export function summarizeLogs(logs: readonly WorkflowRunLog[]): string {
   const lines: string[] = [];
-  const totalFiles = logs.reduce((n, log) => n + log.outcomes.length, 0);
+  const scored = logs.reduce((n, log) => n + log.summary.pass + log.summary.fail + log.summary.skip, 0);
   const totalPass = logs.reduce((n, log) => n + log.summary.pass, 0);
   const totalFail = logs.reduce((n, log) => n + log.summary.fail, 0);
   const totalSkip = logs.reduce((n, log) => n + log.summary.skip, 0);
@@ -43,22 +152,21 @@ export function summarizeLogs(logs: readonly WorkflowRunLog[]): string {
     (n, log) => n + log.outcomes.reduce((sum, outcome) => sum + (outcome.tokens ?? 0), 0),
     0
   );
-  const denominator = totalPass + totalFail + totalSkip;
-  const passRate = denominator > 0 ? ((totalPass / denominator) * 100).toFixed(1) : "n/a";
+  const passRate = scored > 0 ? ((totalPass / scored) * 100).toFixed(1) : "n/a";
 
   lines.push(`=== Workflow Run Summary (${String(logs.length)} run${logs.length !== 1 ? "s" : ""}) ===`);
   lines.push("");
-  lines.push(`Files processed     : ${String(totalFiles)}`);
-  lines.push(`Changed/repaired    : ${String(totalPass)}`);
-  lines.push(`Skipped/no-op       : ${String(totalSkip)}`);
-  lines.push(`Precondition skips  : ${String(totalPreconditionSkip)}`);
-  lines.push(`Failures            : ${String(totalFail)}`);
-  lines.push(`Pass rate           : ${passRate}%`);
+  lines.push(`Scored files       : ${String(scored)} (excludes ${String(totalPreconditionSkip)} precondition-skip)`);
+  lines.push(`Safe (clean+repair): ${String(totalPass)}`);
+  lines.push(`Declined           : ${String(totalSkip)}`);
+  lines.push(`Regressed/rejected : ${String(totalFail)}`);
+  lines.push(`Safe-improve rate  : ${passRate}%`);
   if (totalTokens > 0) {
-    lines.push(`Tokens              : ${String(totalTokens)}`);
+    lines.push(`Tokens             : ${String(totalTokens)}`);
   }
 
   appendBackendSummary(lines, logs);
+  appendBackendMatrix(lines, logs);
   appendSlowestStages(lines, logs);
   appendSlowestFiles(lines, logs);
   appendRepairSummary(lines, logs);
@@ -91,9 +199,7 @@ function appendBackendSummary(lines: string[], logs: readonly WorkflowRunLog[]):
     byBackend.set(log.backend, stats);
   }
 
-  if (byBackend.size === 0) {
-    return;
-  }
+  if (byBackend.size === 0) return;
 
   lines.push("", "--- Per-backend ---");
   for (const [backend, stats] of byBackend) {
@@ -105,13 +211,25 @@ function appendBackendSummary(lines: string[], logs: readonly WorkflowRunLog[]):
   }
 }
 
+function appendBackendMatrix(lines: string[], logs: readonly WorkflowRunLog[]): void {
+  const rows = buildBackendMatrix(logs);
+  if (rows.length === 0) return;
+
+  lines.push("", "--- Cross-backend convergence-cost matrix ---");
+  lines.push("backend        clean repaired(avgIt) regressed(stuck/to/ceil) declined  tok/file  wall/file");
+  for (const row of rows) {
+    const regressed = `${String(row.regressedStuck)}/${String(row.regressedTimeout)}/${String(row.regressedCeiling)}`;
+    lines.push(
+      `${row.backend.padEnd(14)} ${String(row.clean).padStart(5)} ${`${String(row.repaired)}(${row.repairedAvgIterations.toFixed(1)})`.padStart(15)} ${regressed.padStart(24)} ${String(row.declined).padStart(8)} ${String(Math.round(row.tokensPerFile)).padStart(9)} ${formatMs(row.wallMsPerFile).padStart(10)}`
+    );
+  }
+}
+
 function appendSlowestStages(lines: string[], logs: readonly WorkflowRunLog[]): void {
   const allStages: (StageLog & { runId: string })[] = logs.flatMap((log) =>
     log.stages.map((stage) => ({ ...stage, runId: log.runId.slice(0, 8) }))
   );
-  if (allStages.length === 0) {
-    return;
-  }
+  if (allStages.length === 0) return;
 
   lines.push("", "--- Slowest stages ---");
   for (const stage of allStages.sort((a, b) => b.durationMs - a.durationMs).slice(0, 5)) {
@@ -123,9 +241,7 @@ function appendSlowestFiles(lines: string[], logs: readonly WorkflowRunLog[]): v
   const allOutcomes: (OutcomeLog & { runId: string })[] = logs.flatMap((log) =>
     log.outcomes.map((outcome) => ({ ...outcome, runId: log.runId.slice(0, 8) }))
   );
-  if (allOutcomes.length === 0) {
-    return;
-  }
+  if (allOutcomes.length === 0) return;
 
   lines.push("", "--- Slowest files ---");
   for (const outcome of allOutcomes.sort((a, b) => b.durationMs - a.durationMs).slice(0, 5)) {
@@ -140,9 +256,7 @@ function appendSlowestFiles(lines: string[], logs: readonly WorkflowRunLog[]): v
 
 function appendRepairSummary(lines: string[], logs: readonly WorkflowRunLog[]): void {
   const repaired = logs.flatMap((log) => log.outcomes).filter((outcome) => (outcome.iterations ?? 0) > 0);
-  if (repaired.length === 0) {
-    return;
-  }
+  if (repaired.length === 0) return;
 
   const iterations = repaired.reduce((sum, outcome) => sum + (outcome.iterations ?? 0), 0);
   lines.push("", "--- Repairs ---");
@@ -152,9 +266,7 @@ function appendRepairSummary(lines: string[], logs: readonly WorkflowRunLog[]): 
 
 function appendUsageSummary(lines: string[], logs: readonly WorkflowRunLog[]): void {
   const outcomes = logs.flatMap((log) => log.outcomes).filter((outcome) => outcome.usage !== undefined);
-  if (outcomes.length === 0) {
-    return;
-  }
+  if (outcomes.length === 0) return;
 
   const input = outcomes.reduce((sum, outcome) => sum + (outcome.usage?.input ?? 0), 0);
   const output = outcomes.reduce((sum, outcome) => sum + (outcome.usage?.output ?? 0), 0);
@@ -171,9 +283,7 @@ function appendFailures(lines: string[], logs: readonly WorkflowRunLog[]): void 
   const allFailures: (FailureLog & { runId: string })[] = logs.flatMap((log) =>
     log.failures.map((failure) => ({ ...failure, runId: log.runId.slice(0, 8) }))
   );
-  if (allFailures.length === 0) {
-    return;
-  }
+  if (allFailures.length === 0) return;
 
   lines.push("", "--- Failures ---");
   for (const failure of allFailures) {
@@ -194,5 +304,5 @@ function describeError(error: unknown): string {
 
 if (import.meta.main) {
   const logs = await loadLogs();
-  console.log(summarizeLogs(logs));
+  process.stdout.write(summarizeLogs(logs));
 }

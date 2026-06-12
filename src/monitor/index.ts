@@ -4,14 +4,20 @@ import { randomUUID } from "node:crypto";
 import type { Usage } from "../model/index.ts";
 
 export type StageStatus = "completed" | "failed";
+/** Discriminated cleanup verdict. `clean`/`repaired` are safe improvements
+ * (pass); `regressed`/`guard-reject` are reverted changes (fail); `declined`
+ * is a neutral no-op; `precondition-skip` is excluded from the backend's
+ * denominator because the file's gate was already red before the agent ran. */
 export type OutcomeVerdict =
-  | "changed"
+  | "clean"
   | "repaired"
   | "regressed"
   | "guard-reject"
-  | "skipped"
-  | "no-op"
+  | "declined"
   | "precondition-skip";
+
+/** Why a `regressed` change could not be made to pass the gate. */
+export type RegressedReason = "stuck" | "timeout" | "ceiling";
 
 export interface StageLog {
   readonly name: string;
@@ -37,7 +43,11 @@ export interface OutcomeLog {
   readonly changedPaths?: readonly string[];
   readonly validation?: readonly CommandLog[];
   readonly reason?: string;
+  /** Repair iterations to reach green: 0 for `clean`, K for `repaired`. */
   readonly iterations?: number;
+  /** Set only when `verdict === "regressed"`. */
+  readonly regressedReason?: RegressedReason;
+  /** Total agent tokens spent on this file (initial edit + repairs). */
   readonly tokens?: number;
   readonly usage?: Usage;
 }
@@ -50,9 +60,14 @@ export interface FailureLog {
 }
 
 export interface WorkflowRunSummary {
+  /** Safe improvements: `clean` + `repaired`. */
   readonly pass: number;
+  /** Reverted changes (`regressed` + `guard-reject`) plus thrown failures. */
   readonly fail: number;
+  /** Neutral no-ops: `declined`. */
   readonly skip: number;
+  /** Files whose gate was already red before the agent — excluded from the
+   * pass-rate denominator (`pass + fail + skip`). */
   readonly preconditionSkip: number;
   readonly durationMs: number;
 }
@@ -109,9 +124,9 @@ export class WorkflowMonitor {
   toJson(): WorkflowRunLog {
     const count = (verdict: OutcomeVerdict): number =>
       this.#outcomes.filter((outcome) => outcome.verdict === verdict).length;
-    const pass = count("changed") + count("repaired");
+    const pass = count("clean") + count("repaired");
     const fail = count("regressed") + count("guard-reject") + this.#failures.length;
-    const skip = count("skipped") + count("no-op");
+    const skip = count("declined");
     const preconditionSkip = count("precondition-skip");
     return {
       runId: this.#runId,

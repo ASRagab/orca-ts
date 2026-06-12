@@ -100,15 +100,15 @@ The root export also re-exports `conversation`, `model`, `plan`, `review`, `runn
 
 ## Backends
 
-Backend tags are `claude`, `codex`, `opencode`, `pi`, and `gemini`.
+Backend tags are `claude`, `codex`, `opencode`, and `pi`.
 
-Live autonomous drivers are available for `codex()`, `claude()`, `opencode()`, and `pi()`. `gemini()` remains a parse-only unsupported stub until its live driver lands.
+Live v1 autonomous backends are `codex()`, `claude()`, `opencode()`, and `pi()`. Each drives its respective CLI (or managed server for OpenCode), so that CLI must be installed and authenticated before live backend checks can pass.
 
 All live backends share the same `Conversation` contract, but their transports differ:
 
 - `codex()`, `claude()`, and `pi()` run through the shared subprocess watchdog path.
 - `opencode()` runs through a shared `opencode serve` manager over HTTP/SSE.
-- `gemini()` currently returns an explicit unsupported-backend error for live autonomous calls.
+- Gemini is cut: its CLI is being deprecated by Google in favor of the Antigravity CLI (`agy`), and it never shipped a live streaming driver. Future Google support will be a new `agy` backend tag, not a revived Gemini backend.
 
 Autonomous conversations reject human questions and live approval prompts. Explicit interactive Codex conversations can emit `user_question` events through the Orca-owned `ask_user` bridge; approval events remain a reserved compatibility seam.
 
@@ -131,7 +131,7 @@ The workflow checks out the repository, installs Bun, installs dependencies with
 bun run verify
 ```
 
-The default CI workflow intentionally does not set `ORCA_REAL_BACKEND_SMOKE` and does not require Codex, Claude, OpenCode, Pi, or Gemini credentials.
+The default CI workflow intentionally does not set `ORCA_REAL_BACKEND_SMOKE` and does not require Codex, Claude, OpenCode, or Pi credentials.
 
 ## Examples
 

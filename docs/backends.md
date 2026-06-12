@@ -2,7 +2,7 @@
 
 The v1 contract is backend-neutral: every backend maps native transport messages into the shared read-only `Conversation` interface.
 
-Supported target backends are Claude, OpenCode, Codex, Gemini, and Pi. Backend implementations are delivered slice-by-slice behind the same SPI. Codex, Claude, OpenCode, and Pi ship live autonomous drivers (`codex()`, `claude()`, `opencode()`, `pi()`); Gemini remains a parse-only stub and `gemini()` returns an unsupported-backend error pending its driver.
+Supported target backends are Claude, OpenCode, Codex, and Pi, each shipping a live autonomous driver (`claude()`, `opencode()`, `codex()`, `pi()`) behind the same SPI. Gemini is cut: its CLI is being deprecated by Google in favor of the Antigravity CLI (`agy`), and it never shipped a live streaming driver. Future Google support will be a new `agy` backend tag, not a revived Gemini backend.
 
 Codex, Claude, and Pi are subprocess-stream backends: they share one `runSubprocessConversation` helper (`subprocess-run.ts`) that owns process spawn, stdout line-splitting, stderr capture, non-zero-exit failure, cancellation, a 120s inactivity watchdog, and a 600s wall-clock cap by default. Each supplies only its command/args builder and a per-line consumer. OpenCode is the exception — a long-lived `opencode serve` process driven over HTTP/SSE through a shared server manager, with its own 120s inactivity watchdog, 600s wall-clock cap, 30s startup timeout, and abortable POSTs.
 

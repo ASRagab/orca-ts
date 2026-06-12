@@ -1,0 +1,26 @@
+## Why
+
+orca-ts has deterministic validation (Tier 1 stream→event fixtures, Tier 2 fake-agent flow goldens) and one gated, read-only real-backend smoke — but nothing proves an orca flow drives a *real* agent to produce a *correct*, gate-passing change, reproducibly and comparably across backends. The `ai-slop-cleanup` dogfood already enforces an objective oracle per file (the targeted gate must stay green or the change is reverted) and already writes per-run JSON to `.orca/monitoring/` that `scripts/summarize-run.ts` aggregates with a per-backend breakdown. So the real-agent eval loop mostly exists as a side effect of the dogfood; the gaps are measurement granularity, repair depth, and run comparability — not enforcement. This change formalizes a Tier-3 real-agent eval loop on the dogfood-self target, which also answers "which backends are functional and what are the gaps" with measured data instead of code-reading.
+
+## What Changes
+
+- **Verdict taxonomy (measurement).** Replace the coarse cleanup verdict `changed | skipped | no-op` with a discriminated set returned by `cleanupFile` at the branch it actually takes: `clean`, `repaired` (carries iteration count `K`), `regressed` (carries reason `stuck | timeout | ceiling`; change reverted), `guard-reject`, `declined`, and `precondition-skip` (targeted baseline already red before the agent — excluded from the backend's denominator). The monitor records the verdict verbatim instead of inferring it from `changedFiles.length`/`skippedFiles.length`, and records per-file repair iterations, tokens, and wall-clock. Pass-rate then means *safe-improvement rate*.
+- **Uncap repair depth; consolidate onto `fixLoop`.** Remove `cleanupFile`'s bespoke one-shot `repairValidationFailure` and route repair through the existing `fixLoop` primitive. Depth is no longer bounded by a stingy count: it is bounded by convergence guards — converged-green (success), a no-progress signature (`stuck`), a wall-clock backstop (`timeout`), and a high sanity ceiling (`ceiling`, not the binding constraint). Burning tokens to converge is intended. **BREAKING** for the cleanup outcome contract (the revert trigger now also fires on repair non-convergence, not only agent-throw).
+- **Eval mode: worktree-per-backend off a pinned base (comparability).** A new outer eval-runner runs each of `{codex, claude, opencode, pi}` in an isolated `git worktree` checked out at a fixed tagged base SHA, with a throwaway sink (no commit, no PR — keep only the verdict log), then removes the worktree. Requires lifting the hardcoded monitor log dir to an `ORCA_MONITOR_DIR` override so all run logs aggregate in one place. `summarize-run` emits a cross-backend matrix with convergence-cost columns (clean / repaired-avg-iters / regressed-by-reason / declined / tokens-per-file / wall-per-file). The base-SHA tag is the reproducibility anchor — any machine checks it out and reruns to get a comparable matrix.
+- **gemini: cut, not deferred.** Remove the live "Gemini JSONL stream completes" requirement; gemini ships as an `unsupportedBackend` stub and its parser never implemented a streaming consumer. The gemini CLI is being deprecated by Google in favor of the Antigravity CLI (`agy`). The cut and its rationale are recorded in the ADR matrix. `agy` as a future additive `BackendTag` is noted but **out of scope** here.
+
+## Capabilities
+
+### New Capabilities
+- `real-agent-eval`: Tier-3 real-agent eval loop — worktree-per-backend off a pinned base SHA, objective gate oracle, the verdict taxonomy and convergence-guarded repair-depth contract, and the cross-backend convergence-cost matrix produced by the eval-runner + `summarize-run`.
+
+### Modified Capabilities
+- `cleanup-revert-on-failure`: the revert trigger extends from agent-throw to repair non-convergence; `cleanupFile` returns a discriminated verdict and routes repair through `fixLoop` rather than a one-shot.
+- `parity-harness`: Tier-3 real-agent eval is recognized as a tier alongside Tier 1 (stream→event) and Tier 2 (fake-agent flow), with its own gating expectations.
+- `conversation-backends`: the live Gemini backend requirement is removed (gemini cut); Codex, Claude, OpenCode, and Pi remain the supported live backends.
+
+## Impact
+
+- **Code:** `src/monitor/index.ts` (verdict type, recorded fields, pass/fail counting), `workflows/ai-slop-cleanup.ts` (`cleanupFile` verdict return + `fixLoop` wiring, remove `repairValidationFailure`, `ORCA_MONITOR_DIR` for log dir at line 449, eval sink), `src/review/loop.ts` (no-progress signature + reason-carrying stop result), `scripts/summarize-run.ts` (matrix columns), a new eval-runner script, `scripts/validate-adr-matrix.ts` inputs (gemini cut).
+- **Behavior:** cleanup runs may now spend many repair iterations on a single file (by design); a per-file run is bounded by convergence guards, not a fixed attempt count. Removing the count cap introduces an oscillation failure mode (fix X breaks Y, fix Y breaks X), mitigated by the no-progress signature.
+- **Non-goals:** generalizing the loop to arbitrary external repos (dogfood-self only; repo-coupling seams documented but unchanged), implementing `agy`, and any semantic/LLM-judge oracle (objective gate-passing is the only oracle added).
