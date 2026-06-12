@@ -4,6 +4,7 @@ import {
   opencode,
   sessionId,
   z,
+  type Conversation,
   type OpenCodeHttp,
   type OpenCodeServerProcess
 } from "../src/index.ts";
@@ -54,7 +55,7 @@ describe("OpenCode live backend constructor", () => {
     });
 
     await backend.autonomous({ prompt: "do it" }).awaitResult();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await delay(0);
     expect(captured?.aborted).toBe(true);
   });
 
@@ -192,10 +193,7 @@ describe("OpenCode live backend constructor", () => {
       startServer: () => Promise.resolve(fakeServer()),
       connect: () => ({
         postJson: () => Promise.resolve(""),
-        openEvents: () =>
-          new Promise<AsyncIterable<string>>(() => {
-            // never resolves: the server accepts the request but sends nothing
-          })
+        openEvents: () => never<AsyncIterable<string>>()
       }),
       wallClockTimeoutMs: 50
     });
@@ -222,10 +220,65 @@ describe("OpenCode live backend constructor", () => {
       error: { _tag: "BackendFailed", backend: "opencode", message: "serve missing" }
     });
   });
+  test("fails the turn when startServer never resolves", async () => {
+    const backend = opencode({
+      startServer: () => never<OpenCodeServerProcess>(),
+      wallClockTimeoutMs: 40
+    });
+
+    expect(await backend.autonomous({ prompt: "run" }).awaitResult()).toEqual({
+      type: "failed",
+      error: {
+        _tag: "BackendFailed",
+        backend: "opencode",
+        message: "opencode turn exceeded 40ms wall-clock limit"
+      }
+    });
+  });
+
+  test("aborts a pending prompt POST when the wall-clock cap fires", async () => {
+    let promptSignal: AbortSignal | undefined;
+    const promptAborted = Promise.withResolvers<undefined>();
+    const backend = opencode({
+      startServer: () => Promise.resolve(fakeServer()),
+      connect: () => ({
+        postJson(path, _body, signal) {
+          if (path === "/session") {
+            return Promise.resolve(JSON.stringify({ id: "ses_test" }));
+          }
+          if (path.endsWith("/prompt_async")) {
+            promptSignal = signal;
+            if (signal?.aborted) {
+              promptAborted.resolve(undefined);
+            } else {
+              signal?.addEventListener("abort", () => {
+                promptAborted.resolve(undefined);
+              }, { once: true });
+            }
+            return never<string>();
+          }
+          return Promise.resolve("");
+        },
+        openEvents: () => Promise.resolve(lineStream([]))
+      }),
+      wallClockTimeoutMs: 40
+    });
+
+    expect(await backend.autonomous({ prompt: "run" }).awaitResult()).toEqual({
+      type: "failed",
+      error: {
+        _tag: "BackendFailed",
+        backend: "opencode",
+        message: "opencode turn exceeded 40ms wall-clock limit"
+      }
+    });
+    await promptAborted.promise;
+    expect(promptSignal?.aborted).toBe(true);
+  });
 });
 
 describe("OpenCode driver parity with the Scala oracle", () => {
-  function run(sse: readonly string[]): ReturnType<ReturnType<typeof opencode>["autonomous"]> {
+  function run(sse: readonly string[]): Conversation<"opencode"> {
     const backend = opencode({
       startServer: () => Promise.resolve(fakeServer()),
       connect: () => fakeHttp(sse)
@@ -408,9 +461,7 @@ function stallingHttp(): OpenCodeHttp {
         (async function* (): AsyncIterable<string> {
           yield 'data: {"type":"message.part.delta","properties":{"field":"text","delta":"working"}}';
           yield 'data: {"type":"message.updated","properties":{"info":{"sessionID":"ses_x"}}}';
-          await new Promise<void>(() => {
-            // never resolves: the stream stalls with no further events
-          });
+          await never<undefined>();
         })()
       );
     }
@@ -430,7 +481,7 @@ function continuouslyActiveHttp(): OpenCodeHttp {
         (async function* (): AsyncIterable<string> {
           for (;;) {
             yield 'data: {"type":"message.part.delta","properties":{"sessionID":"ses_test","field":"text","delta":"x"}}';
-            await new Promise<void>((resolve) => setTimeout(resolve, 5));
+            await delay(5);
           }
         })()
       );
@@ -450,19 +501,7 @@ function blockedHttp(posts: Array<{ path: string; body: string }> = []): OpenCod
     openEvents(signal) {
       return Promise.resolve(
         (async function* (): AsyncIterable<string> {
-          await new Promise<void>((resolve) => {
-            if (signal.aborted) {
-              resolve();
-              return;
-            }
-            signal.addEventListener(
-              "abort",
-              () => {
-                resolve();
-              },
-              { once: true }
-            );
-          });
+          await waitForAbort(signal);
           yield* [];
         })()
       );
@@ -475,4 +514,28 @@ async function* lineStream(lines: readonly string[]): AsyncIterable<string> {
     await Promise.resolve();
     yield line;
   }
+}
+
+function delay(ms: number): Promise<undefined> {
+  const gate = Promise.withResolvers<undefined>();
+  setTimeout(() => {
+    gate.resolve(undefined);
+  }, ms);
+  return gate.promise;
+}
+
+function never<T>(): Promise<T> {
+  return Promise.withResolvers<T>().promise;
+}
+
+function waitForAbort(signal: AbortSignal): Promise<undefined> {
+  const gate = Promise.withResolvers<undefined>();
+  if (signal.aborted) {
+    gate.resolve(undefined);
+  } else {
+    signal.addEventListener("abort", () => {
+      gate.resolve(undefined);
+    }, { once: true });
+  }
+  return gate.promise;
 }

@@ -4,7 +4,7 @@ The v1 contract is backend-neutral: every backend maps native transport messages
 
 Supported target backends are Claude, OpenCode, Codex, and Pi, each shipping a live autonomous driver (`claude()`, `opencode()`, `codex()`, `pi()`) behind the same SPI. Gemini is cut: its CLI is being deprecated by Google in favor of the Antigravity CLI (`agy`), and it never shipped a live streaming driver. Future Google support will be a new `agy` backend tag, not a revived Gemini backend.
 
-Codex, Claude, and Pi are subprocess-stream backends: they share one `runSubprocessConversation` helper (`subprocess-run.ts`) that owns process spawn, stdout line-splitting, stderr capture, non-zero-exit failure, and cancellation. Each supplies only its command/args builder and a per-line consumer. OpenCode is the exception — a long-lived `opencode serve` process driven over HTTP/SSE through a shared server manager.
+Codex, Claude, and Pi are subprocess-stream backends: they share one `runSubprocessConversation` helper (`subprocess-run.ts`) that owns process spawn, stdout line-splitting, stderr capture, non-zero-exit failure, cancellation, a 120s inactivity watchdog, and a 600s wall-clock cap by default. Each supplies only its command/args builder and a per-line consumer. OpenCode is the exception — a long-lived `opencode serve` process driven over HTTP/SSE through a shared server manager, with its own 120s inactivity watchdog, 600s wall-clock cap, 30s startup timeout, and abortable POSTs.
 
 Backend fixture collection uses the shared conversation harness so adapters keep protocol parsing local while event capture and final outcome collection stay in one module.
 
@@ -62,3 +62,14 @@ ORCA_REAL_BACKEND_SMOKE=1 ORCA_REAL_BACKEND=codex bun test tests/integration/rea
 ```
 
 `ORCA_REAL_BACKEND` accepts `codex` (default), `claude`, `opencode`, or `pi`. The smoke creates a disposable git repository, runs one short autonomous conversation, and asserts a successful branded result. It skips when the selected backend's CLI is absent from `PATH`; with the gate disabled the test is skipped entirely.
+
+## Monitoring and current dogfood baseline
+
+`workflows/ai-slop-cleanup.ts --monitor` writes `.orca/monitoring/<runId>.json` with stage timing, per-file outcomes, validation command durations, repair counts, failure categories, changed paths, and backend usage/tokens when emitted. `bun run scripts/summarize-run.ts` summarizes those logs by backend, stage, file, repairs, failures, and usage.
+
+Observed on 2026-06-12 using clean disposable repositories with `--no-publish --monitor --max-files=1` against `src/conversation/ask-user.ts`:
+
+- Codex dogfood: total run `143.2s`, agent turn `128.8s`, per-file validation `4.2s`, final verify `4.7s`, usage `584,019` tokens.
+- OpenCode dogfood: total run `68.6s`, agent turn `54.7s`, per-file validation `3.4s`, final verify `4.5s`, usage `55,497` tokens.
+
+The measured bottleneck is backend/agent latency, not the conservative per-file validation gate. Validation de-duplication remains a follow-up experiment; current evidence does not justify relaxing typecheck/lint coverage yet.

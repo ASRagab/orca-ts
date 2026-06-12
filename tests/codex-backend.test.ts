@@ -92,20 +92,102 @@ describe("Codex live backend constructor", () => {
     });
   });
 
-  test("cancels the child process", async () => {
+  test("fails and kills a silent subprocess on inactivity timeout", async () => {
     let killed = false;
-    let releaseStdout!: () => void;
-    const stdoutBlocked = new Promise<void>((resolve) => {
-      releaseStdout = resolve;
-    });
+    const exit = Promise.withResolvers<number | null>();
     const backend = codex({
+      inactivityTimeoutMs: 20,
+      wallClockTimeoutMs: 1_000,
       spawnProcess: () => ({
-        stdout: blockedStream(stdoutBlocked),
+        stdout: neverStream(),
         stderr: lineStream([]),
-        exit: stdoutBlocked.then(() => null),
+        exit: exit.promise,
         kill: () => {
           killed = true;
-          releaseStdout();
+          exit.resolve(null);
+        }
+      })
+    });
+
+    const outcome = await backend.autonomous({ prompt: "run" }).awaitResult();
+
+    expect(killed).toBe(true);
+    expect(outcome).toEqual({
+      type: "failed",
+      error: {
+        _tag: "BackendFailed",
+        backend: "codex",
+        message: "codex emitted no stdout for 20ms; treating the turn as stalled"
+      }
+    });
+  });
+
+  test("fails and kills a continuously active subprocess on wall-clock timeout", async () => {
+    let killed = false;
+    const exit = Promise.withResolvers<number | null>();
+    const backend = codex({
+      inactivityTimeoutMs: 1_000,
+      wallClockTimeoutMs: 30,
+      spawnProcess: () => ({
+        stdout: continuousThreadStream(() => killed),
+        stderr: lineStream([]),
+        exit: exit.promise,
+        kill: () => {
+          killed = true;
+          exit.resolve(null);
+        }
+      })
+    });
+
+    const outcome = await backend.autonomous({ prompt: "run" }).awaitResult();
+
+    expect(killed).toBe(true);
+    expect(outcome).toEqual({
+      type: "failed",
+      error: {
+        _tag: "BackendFailed",
+        backend: "codex",
+        message: "codex turn exceeded 30ms wall-clock limit"
+      }
+    });
+  });
+
+  test("does not overwrite a normal terminal result with timeout handling", async () => {
+    const backend = codex({
+      inactivityTimeoutMs: 1_000,
+      wallClockTimeoutMs: 1_000,
+      spawnProcess: () =>
+        fakeProcess([
+          { type: "thread.started", thread_id: "codex-timeout-ok" },
+          { type: "item.completed", item: { id: "msg", type: "agent_message", text: "done" } },
+          { type: "turn.completed" }
+        ])
+    });
+
+    const outcome = await backend.autonomous({ prompt: "run" }).awaitResult();
+
+    expect(outcome).toEqual({
+      type: "success",
+      result: {
+        backend: "codex",
+        sessionId: sessionId("codex", "codex-timeout-ok"),
+        output: "done",
+        usage: { input: 0, output: 0 }
+      }
+    });
+  });
+
+  test("cancels the child process", async () => {
+    let killed = false;
+    const stdoutBlocked = Promise.withResolvers<undefined>();
+    const backend = codex({
+      spawnProcess: () => ({
+        stdout: blockedStream(stdoutBlocked.promise),
+        stderr: lineStream([]),
+        exit: stdoutBlocked.promise.then(() => null),
+        kill: () => {
+          killed = true;
+          stdoutBlocked.resolve(undefined);
         }
       })
     });
@@ -321,30 +403,24 @@ describe("Codex live backend constructor", () => {
   });
 
   test("cleans up ask_user bridge on cancellation", async () => {
-    let releaseStdout!: () => void;
-    const stdoutBlocked = new Promise<void>((resolve) => {
-      releaseStdout = resolve;
-    });
-    let closeBridge!: () => void;
-    const closed = new Promise<void>((resolve) => {
-      closeBridge = resolve;
-    });
+    const stdoutBlocked = Promise.withResolvers<undefined>();
+    const closed = Promise.withResolvers<undefined>();
     const backend = codex({
       askUser: () => "yes",
       createAskUserServer: ({ responder }) => ({
         url: "http://127.0.0.1:12345",
         ask: async (request) => await responder(request),
         close: () => {
-          closeBridge();
+          closed.resolve(undefined);
           return Promise.resolve();
         }
       }),
       spawnProcess: () => ({
-        stdout: blockedStream(stdoutBlocked),
+        stdout: blockedStream(stdoutBlocked.promise),
         stderr: lineStream([]),
-        exit: stdoutBlocked.then(() => null),
+        exit: stdoutBlocked.promise.then(() => null),
         kill: () => {
-          releaseStdout();
+          stdoutBlocked.resolve(undefined);
         }
       })
     });
@@ -352,7 +428,7 @@ describe("Codex live backend constructor", () => {
     const conversation = backend.autonomous({ prompt: "run", config: { interactive: true } });
     await Promise.resolve();
     await conversation.cancel("stop");
-    await closed;
+    await closed.promise;
   });
 });
 
@@ -377,7 +453,28 @@ async function* lineStream(lines: readonly string[]): AsyncIterable<string> {
   }
 }
 
-async function* blockedStream(blocked: Promise<void>): AsyncIterable<string> {
+async function* neverStream(): AsyncIterable<string> {
+  const gate = Promise.withResolvers<undefined>();
+  await gate.promise;
+  yield* [];
+}
+
+async function* continuousThreadStream(isKilled: () => boolean): AsyncIterable<string> {
+  while (!isKilled()) {
+    yield `${JSON.stringify({ type: "thread.started", thread_id: "codex-active" })}\n`;
+    await delay(2);
+  }
+}
+
+function delay(ms: number): Promise<undefined> {
+  const gate = Promise.withResolvers<undefined>();
+  setTimeout(() => {
+    gate.resolve(undefined);
+  }, ms);
+  return gate.promise;
+}
+
+async function* blockedStream(blocked: Promise<undefined>): AsyncIterable<string> {
   await blocked;
   yield* [];
 }

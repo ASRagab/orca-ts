@@ -18,6 +18,7 @@ import {
   type LlmBackend,
   type OutcomeVerdict,
   type RegressedReason,
+  type Usage,
   WorkflowMonitor,
 } from "../src/index.ts";
 
@@ -82,6 +83,7 @@ export interface WorkflowArgs {
 export interface CommandSpec {
   readonly cmd: string;
   readonly args: readonly string[];
+  readonly timeoutMs?: number;
 }
 
 export interface CommandRunSummary {
@@ -90,6 +92,7 @@ export interface CommandRunSummary {
   readonly stdout: string;
   readonly stderr: string;
   readonly exitCode: number | null;
+  readonly durationMs: number;
 }
 
 export interface ChangedFileSummary {
@@ -118,17 +121,37 @@ type DiffGuardResult =
       readonly reason: string;
     };
 
+export interface CleanupTimings {
+  baselineValidationMs?: number;
+  agentMs?: number;
+  validationMs?: number;
+  repairMs?: number;
+}
+
+export interface CleanupAgentResultWithUsage extends CleanupAgentResult {
+  readonly usage?: Usage;
+}
+
 export interface FileCleanupOutcome {
   readonly verdict: OutcomeVerdict;
   readonly changedFiles: readonly ChangedFileSummary[];
   readonly skippedFiles: readonly SkippedFileSummary[];
+  readonly changedPaths: readonly string[];
   readonly validation: readonly CommandRunSummary[];
+  readonly timings: CleanupTimings;
+  readonly reason?: string;
   /** Repair iterations to reach green: 0 for `clean`, K for `repaired`. */
   readonly iterations?: number;
   /** Set only when `verdict === "regressed"`. */
   readonly regressedReason?: RegressedReason;
   /** Total agent tokens spent on this file (initial edit + repairs). */
   readonly tokens?: number;
+  readonly usage?: Usage;
+}
+
+interface TimedStep<T> {
+  readonly value: T;
+  readonly durationMs: number;
 }
 
 /** A failed-validation signature carried through the repair loop. `message` is
@@ -441,7 +464,7 @@ export function buildPullRequestBody(input: PullRequestSummaryInput): string {
       ? ["- Not run"]
       : input.validation.map((run) => {
           const status = run.status === "passed" ? "PASS" : "FAIL";
-          return `- ${status} \`${run.command}\``;
+          return `- ${status} \`${run.command}\` (${String(run.durationMs)}ms)`;
         });
 
   const verificationOutput =
@@ -475,6 +498,24 @@ export function buildPullRequestBody(input: PullRequestSummaryInput): string {
   ].join("\n");
 }
 
+async function timed<T>(fn: () => Promise<T>): Promise<TimedStep<T>> {
+  const startedAt = Date.now();
+  const value = await fn();
+  return { value, durationMs: Date.now() - startedAt };
+}
+
+async function monitored<T>(
+  monitor: WorkflowMonitor | undefined,
+  name: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  if (monitor) {
+    return await monitor.stage(name, fn);
+  }
+
+  return await fn();
+}
+
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   await flow(argv)(async () => {
     await runCleanupWorkflow(parseWorkflowArgs(argv));
@@ -503,13 +544,17 @@ async function runCleanupWithBackend(
   selected: SelectedBackend,
   monitor?: WorkflowMonitor,
 ): Promise<void> {
-  await assertCleanWorktree();
-  const branch = await ensureCleanupBranch(args.branch);
-  const baselineValidation = await runCommandPlan([
-    { cmd: "bun", args: ["run", "lint"] },
-    { cmd: "bun", args: ["run", "typecheck"] },
-    { cmd: "bun", args: ["test"] }
-  ]);
+  const branch = await monitored(monitor, "setup", async () => {
+    await assertCleanWorktree();
+    return await ensureCleanupBranch(args.branch);
+  });
+  const baselineValidation = await monitored(monitor, "baseline validation", () =>
+    runCommandPlan([
+      { cmd: "bun", args: ["run", "lint"] },
+      { cmd: "bun", args: ["run", "typecheck"] },
+      { cmd: "bun", args: ["test"] }
+    ])
+  );
 
   if (!baselineValidation.passed) {
     throw new Error(
@@ -517,14 +562,17 @@ async function runCleanupWithBackend(
     );
   }
 
-  const trackedFiles = await listTrackedTypeScriptFiles();
+  const trackedFiles = await monitored(monitor, "list tracked files", listTrackedTypeScriptFiles);
   const groups = groupsFrom(args.startGroup);
   const files = sortFilesByCleanupGroup(selectCleanupFiles(trackedFiles)).filter((file) =>
     groups.includes(groupForFile(file))
   );
 
   if (args.dryRun) {
-    printDryRun(files, baselineValidation.runs);
+    await monitored(monitor, "dry run", () => {
+      printDryRun(files, baselineValidation.runs);
+      return Promise.resolve();
+    });
     return;
   }
 
@@ -550,10 +598,19 @@ async function runCleanupWithBackend(
       processed += 1;
       const startedAt = Date.now();
       console.log(`Cleaning ${file} (${String(processed)}${args.maxFiles ? `/${String(args.maxFiles)}` : ""})`);
-      const outcome = await cleanupFile(file, trackedFiles, acceptedPaths, selected);
+      let outcome: FileCleanupOutcome;
+      try {
+        outcome = await monitored(monitor, `file:${file}`, () =>
+          cleanupFile(file, trackedFiles, acceptedPaths, selected, askAgentForCleanup, monitor)
+        );
+      } catch (error) {
+        const durationMs = Date.now() - startedAt;
+        monitor?.recordFailure({ file, error: errorMessage(error), durationMs, category: "file" });
+        throw error;
+      }
       const durationMs = Date.now() - startedAt;
       const elapsedSeconds = (durationMs / 1000).toFixed(1);
-      const skipReason = outcome.skippedFiles[0]?.reason;
+      const skipReason = outcome.skippedFiles[0]?.reason ?? outcome.reason;
       const detail = outcome.verdict === "regressed" && outcome.regressedReason
         ? `${outcome.verdict}:${outcome.regressedReason}`
         : outcome.verdict;
@@ -563,10 +620,13 @@ async function runCleanupWithBackend(
         verdict: outcome.verdict,
         durationMs,
         smellsRemoved: outcome.changedFiles.flatMap((f) => f.smellsRemoved),
+        changedPaths: outcome.changedPaths,
+        validation: outcome.validation,
         ...(skipReason ? { reason: skipReason } : {}),
         ...(outcome.iterations === undefined ? {} : { iterations: outcome.iterations }),
         ...(outcome.regressedReason === undefined ? {} : { regressedReason: outcome.regressedReason }),
         ...(outcome.tokens === undefined ? {} : { tokens: outcome.tokens }),
+        ...(outcome.usage === undefined ? {} : { usage: outcome.usage })
       });
       validation.push(...outcome.validation);
       skippedFiles.push(...outcome.skippedFiles);
@@ -579,7 +639,7 @@ async function runCleanupWithBackend(
 
     const dirtyGroupPaths = await dirtyPathsForGroup(group);
     if (dirtyGroupPaths.length > 0) {
-      await commitGroupChanges(group, dirtyGroupPaths);
+      await monitored(monitor, `commit:${group}`, () => commitGroupChanges(group, dirtyGroupPaths));
     }
 
     if (args.maxFiles !== undefined && processed >= args.maxFiles) {
@@ -594,10 +654,12 @@ async function runCleanupWithBackend(
     return;
   }
 
-  const finalValidation = await runCommandPlan([{ cmd: "bun", args: ["run", "verify"] }]);
+  const finalValidation = await monitored(monitor, "final verify", () =>
+    runCommandPlan([{ cmd: "bun", args: ["run", "verify"] }])
+  );
   validation.push(...finalValidation.runs);
   const body = buildPullRequestBody({ changedFiles, skippedFiles, validation });
-  await writeText(PullRequestBodyPath, body);
+  await monitored(monitor, "write PR body", () => writeText(PullRequestBodyPath, body));
 
   if (!finalValidation.passed) {
     throw new Error(
@@ -610,12 +672,15 @@ async function runCleanupWithBackend(
   }
 
   if (!args.publish) {
-    console.log(`Publication skipped by --no-publish. PR body written to ${PullRequestBodyPath}.`);
+    await monitored(monitor, "publish skipped", () => {
+      console.log(`Publication skipped by --no-publish. PR body written to ${PullRequestBodyPath}.`);
+      return Promise.resolve();
+    });
     return;
   }
 
-  await pushBranch(branch);
-  await createPullRequest(args.base);
+  await monitored(monitor, "push branch", () => pushBranch(branch));
+  await monitored(monitor, "create pull request", () => createPullRequest(args.base));
 }
 
 export async function cleanupFile(
@@ -623,8 +688,11 @@ export async function cleanupFile(
   trackedFiles: readonly string[],
   acceptedPaths: ReadonlySet<string>,
   selected: SelectedBackend,
-  _askAgent: typeof askAgentForCleanup = askAgentForCleanup
+  _askAgent: typeof askAgentForCleanup = askAgentForCleanup,
+  monitor?: WorkflowMonitor
 ): Promise<FileCleanupOutcome> {
+  const normalizedPath = normalizePath(filePath);
+  const timings: CleanupTimings = {};
   const beforeStatus = parseStatusPaths(await statusShort());
   // Snapshot diff content for already-dirty paths so further agent modifications
   // to pre-existing dirty files are detected (path-only comparison misses them).
@@ -634,13 +702,18 @@ export async function cleanupFile(
   }
   const baselineDiff = await diffForPath(filePath);
   const validationPlan = planValidationCommands(filePath, trackedFiles);
-  const fileBaseline = await runCommandPlan(targetedTestCommands(validationPlan));
-  if (!fileBaseline.passed) {
+  const fileBaseline = await timed(() =>
+    monitored(monitor, `file:${normalizedPath}:baseline validation`, () =>
+      runCommandPlan(targetedTestCommands(validationPlan))
+    )
+  );
+  timings.baselineValidationMs = fileBaseline.durationMs;
+  if (!fileBaseline.value.passed) {
     return skipped(
       filePath,
-      `Targeted baseline failed: ${firstFailure(fileBaseline.runs)?.command ?? "unknown"}`,
+      `Targeted baseline failed: ${firstFailure(fileBaseline.value.runs)?.command ?? "unknown"}`,
       "precondition-skip",
-      { validation: fileBaseline.runs }
+      { validation: fileBaseline.value.runs, timings }
     );
   }
 
@@ -653,20 +726,27 @@ export async function cleanupFile(
     tokens += used;
   };
 
-  let agentResult: CleanupAgentResult;
+  let agentResult: CleanupAgentResultWithUsage;
   try {
-    agentResult = await _askAgent(selected, {
-      filePath,
-      trackedFiles,
-      baselineDiff,
-      validationPlan,
-      allowedExtras,
-      onUsage
-    });
+    const agent = await timed(() =>
+      monitored(monitor, `file:${normalizedPath}:agent turn`, () =>
+        _askAgent(selected, {
+          filePath,
+          trackedFiles,
+          baselineDiff,
+          validationPlan,
+          allowedExtras,
+          onUsage
+        })
+      )
+    );
+    timings.agentMs = agent.durationMs;
+    agentResult = agent.value;
   } catch (error) {
-    await restoreAttempt(await attemptPathsSince(beforeStatus, beforeDiffs));
+    const attemptPaths = await attemptPathsSince(beforeStatus, beforeDiffs);
+    await restoreAttempt(attemptPaths);
     // A crashed initial edit is a backend-quality failure, not a neutral skip.
-    return skipped(filePath, errorMessage(error), "regressed", { tokens });
+    return skipped(filePath, errorMessage(error), "regressed", { changedPaths: attemptPaths, timings, tokens });
   }
 
   const attempt = await attemptPathsSince(beforeStatus, beforeDiffs);
@@ -674,16 +754,20 @@ export async function cleanupFile(
 
   if (agentResult.path !== normalizePath(filePath)) {
     await restoreAttempt(attempt);
-    return skipped(filePath, `Structured result path mismatch: ${agentResult.path}`, "guard-reject", { tokens });
+    return skipped(filePath, `Structured result path mismatch: ${agentResult.path}`, "guard-reject", {
+      changedPaths: attempt,
+      timings,
+      tokens
+    });
   }
 
   if (!agentResult.changed && attempt.length === 0) {
-    return declined(tokens);
+    return declined(tokens, timings, agentResult.usage);
   }
 
   if (!guard.accepted) {
     await restoreAttempt(attempt);
-    return skipped(filePath, guard.reason, "guard-reject", { tokens });
+    return skipped(filePath, guard.reason, "guard-reject", { changedPaths: attempt, timings, tokens });
   }
 
   // Convergence-guarded repair: re-run the gate and let the agent iterate until
@@ -694,27 +778,35 @@ export async function cleanupFile(
 
   const loop = await fixLoop<ValidationIssue>(
     async () => {
-      const result = await runCommandPlan(validationPlan);
-      lastValidation = result.runs;
-      return ok(result.passed ? [] : [validationIssue(result.runs)]);
+      const validation = await timed(() =>
+        monitored(monitor, `file:${normalizedPath}:validation`, () => runCommandPlan(validationPlan))
+      );
+      timings.validationMs = (timings.validationMs ?? 0) + validation.durationMs;
+      lastValidation = validation.value.runs;
+      return ok(validation.value.passed ? [] : [validationIssue(validation.value.runs)]);
     },
     async () => {
       const beforeRepair = parseStatusPaths(await statusShort());
+      const repairStart = Date.now();
       try {
-        await _askAgent(selected, {
-          filePath,
-          trackedFiles,
-          baselineDiff: await diffForPath(filePath),
-          validationPlan,
-          allowedExtras,
-          repairFailure: lastValidation,
-          onUsage
-        });
+        await monitored(monitor, `file:${normalizedPath}:repair`, async () =>
+          _askAgent(selected, {
+            filePath,
+            trackedFiles,
+            baselineDiff: await diffForPath(filePath),
+            validationPlan,
+            allowedExtras,
+            repairFailure: lastValidation,
+            onUsage
+          })
+        );
       } catch {
         // A crashed repair makes no progress: revert this round and let the
         // no-progress guard settle the verdict on the next evaluation.
         await restoreAttempt(newChangedPaths(beforeRepair, parseStatusPaths(await statusShort())));
         return ok(undefined);
+      } finally {
+        timings.repairMs = (timings.repairMs ?? 0) + Date.now() - repairStart;
       }
       // Keep the repair in scope: undo any out-of-scope edits it introduced.
       if (!evaluateDiffGuard(filePath, await attemptPathsSince(beforeStatus, beforeDiffs), allowedExtras).accepted) {
@@ -729,7 +821,12 @@ export async function cleanupFile(
 
   if (loop.isErr()) {
     await restoreAttempt(finalPaths);
-    return skipped(filePath, errorMessage(loop.error), "regressed", { validation: lastValidation, tokens });
+    return skipped(filePath, errorMessage(loop.error), "regressed", {
+      validation: lastValidation,
+      changedPaths: finalPaths,
+      timings,
+      tokens
+    });
   }
 
   const summary = loop.value;
@@ -737,10 +834,10 @@ export async function cleanupFile(
     const finalGuard = evaluateDiffGuard(filePath, finalPaths, allowedExtras);
     if (!finalGuard.accepted) {
       await restoreAttempt(finalPaths);
-      return skipped(filePath, finalGuard.reason, "guard-reject", { tokens });
+      return skipped(filePath, finalGuard.reason, "guard-reject", { changedPaths: finalPaths, timings, tokens });
     }
     const verdict = summary.iterations === 0 ? "clean" : "repaired";
-    return changed(finalGuard.changedFiles, agentResult, lastValidation, verdict, summary.iterations, tokens);
+    return changed(finalGuard.changedFiles, agentResult, lastValidation, timings, verdict, summary.iterations, tokens);
   }
 
   await restoreAttempt(finalPaths);
@@ -748,7 +845,7 @@ export async function cleanupFile(
     filePath,
     `Could not converge: ${firstFailure(lastValidation)?.command ?? "unknown"}`,
     "regressed",
-    { validation: lastValidation, regressedReason: regressedReasonFor(summary.stop), tokens }
+    { validation: lastValidation, changedPaths: finalPaths, timings, regressedReason: regressedReasonFor(summary.stop), tokens }
   );
 }
 
@@ -823,7 +920,7 @@ async function askAgentForCleanup(
     /** Reports agent token spend (input + output) for convergence-cost scoring. */
     readonly onUsage?: (tokens: number) => void;
   }
-): Promise<CleanupAgentResult> {
+): Promise<CleanupAgentResultWithUsage> {
   const conversation = llm().autonomous(selected.backend, {
     prompt: buildCleanupPrompt(args),
     // opencode 1.16.2 hangs when a structured-output (`format`) turn follows tool
@@ -852,7 +949,8 @@ async function askAgentForCleanup(
 
   return {
     ...parsed.data,
-    path: normalizePath(parsed.data.path)
+    path: normalizePath(parsed.data.path),
+    ...(outcome.result.usage === undefined ? {} : { usage: outcome.result.usage })
   };
 }
 
@@ -1057,13 +1155,18 @@ function targetedTestCommands(commands: readonly CommandSpec[]): readonly Comman
 }
 
 async function runCommand(spec: CommandSpec): Promise<CommandRunSummary> {
-  const result = await command().run({ command: spec.cmd, args: spec.args });
+  const result = await command().run({
+    command: spec.cmd,
+    args: spec.args,
+    ...(spec.timeoutMs === undefined ? {} : { timeoutMs: spec.timeoutMs })
+  });
   return {
     command: renderCommand(spec),
     status: result.type === "success" ? "passed" : "failed",
     stdout: result.stdout,
     stderr: result.stderr,
-    exitCode: result.exitCode
+    exitCode: result.exitCode,
+    durationMs: result.durationMs
   };
 }
 
@@ -1129,16 +1232,15 @@ async function createPullRequest(base: string): Promise<void> {
 
 function changed(
   changedPaths: readonly string[],
-  agentResult: CleanupAgentResult,
+  agentResult: CleanupAgentResultWithUsage,
   validation: readonly CommandRunSummary[],
+  timings: CleanupTimings,
   verdict: "clean" | "repaired",
   iterations: number,
   tokens: number
 ): FileCleanupOutcome {
   return {
     verdict,
-    iterations,
-    tokens,
     changedFiles: changedPaths.map((path) => ({
       path,
       group: groupForFile(path),
@@ -1146,11 +1248,16 @@ function changed(
       risk: agentResult.risk
     })),
     skippedFiles: [],
-    validation
+    changedPaths,
+    validation,
+    timings,
+    iterations,
+    tokens,
+    ...(agentResult.usage === undefined ? {} : { usage: agentResult.usage })
   };
 }
 
-/** Build a skip/revert outcome with an explicit verdict. Defaults to `declined`
+/** Build a skip/revert outcome with an explicit verdict. Defaults to `guard-reject`
  * but callers pass `precondition-skip`, `guard-reject`, or `regressed`. */
 function skipped(
   filePath: string,
@@ -1158,6 +1265,8 @@ function skipped(
   verdict: Exclude<OutcomeVerdict, "clean" | "repaired" | "declined"> = "guard-reject",
   extra: {
     readonly validation?: readonly CommandRunSummary[];
+    readonly changedPaths?: readonly string[];
+    readonly timings?: CleanupTimings;
     readonly regressedReason?: RegressedReason;
     readonly tokens?: number;
   } = {}
@@ -1166,20 +1275,26 @@ function skipped(
     verdict,
     changedFiles: [],
     skippedFiles: [{ path: normalizePath(filePath), reason }],
+    changedPaths: extra.changedPaths ?? [],
     validation: extra.validation ?? [],
+    timings: extra.timings ?? {},
+    reason,
     ...(extra.regressedReason === undefined ? {} : { regressedReason: extra.regressedReason }),
     ...(extra.tokens === undefined ? {} : { tokens: extra.tokens })
   };
 }
 
 /** Neutral no-op: the agent made no edits and there was nothing to clean. */
-function declined(tokens: number): FileCleanupOutcome {
+function declined(tokens: number, timings: CleanupTimings = {}, usage?: Usage): FileCleanupOutcome {
   return {
     verdict: "declined",
     changedFiles: [],
     skippedFiles: [],
+    changedPaths: [],
     validation: [],
-    ...(tokens === 0 ? {} : { tokens })
+    timings,
+    ...(tokens === 0 ? {} : { tokens }),
+    ...(usage === undefined ? {} : { usage })
   };
 }
 

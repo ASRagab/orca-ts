@@ -24,6 +24,8 @@ export interface ClaudeBackendOptions {
   readonly capacity?: number;
   readonly spawnProcess?: ClaudeProcessSpawner;
   readonly config?: BackendConfig<"claude">;
+  readonly inactivityTimeoutMs?: number;
+  readonly wallClockTimeoutMs?: number;
 }
 
 interface ResolvedClaudeConfig<Output> {
@@ -84,6 +86,8 @@ export async function runClaudeConversation<Output>(
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
       ...(options.env === undefined ? {} : { env: options.env }),
       ...(options.spawnProcess === undefined ? {} : { spawnProcess: options.spawnProcess }),
+      ...(options.inactivityTimeoutMs === undefined ? {} : { inactivityTimeoutMs: options.inactivityTimeoutMs }),
+      ...(options.wallClockTimeoutMs === undefined ? {} : { wallClockTimeoutMs: options.wallClockTimeoutMs }),
       onStart: (process) => {
         process.write?.(`${userTurnLine(composeBackendPrompt(request.prompt, config))}\n`);
         process.endStdin?.();

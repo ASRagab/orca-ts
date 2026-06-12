@@ -16,7 +16,7 @@ import { backendFailed, jsonSchemaFromZod, type BackendConfig } from "../model/i
  * inject a scripted fake. `openEvents` resolves once the SSE connection is open
  * so the turn-starting POST can't race ahead of the stream. */
 export interface OpenCodeHttp {
-  postJson(path: string, body: string): Promise<string>;
+  postJson(path: string, body: string, signal?: AbortSignal): Promise<string>;
   openEvents(signal: AbortSignal): Promise<AsyncIterable<string>>;
 }
 
@@ -43,10 +43,18 @@ export interface OpenCodeBackendOptions {
    * never resets — it fires regardless of SSE activity, guarding against agents
    * that loop indefinitely while still emitting events. Defaults to 600s. */
   readonly wallClockTimeoutMs?: number;
+  /** Fail `opencode serve` startup if no listening URL appears before this many ms. Defaults to 30s. */
+  readonly startupTimeoutMs?: number;
   /** Seam: start (or reuse) the serve process. Defaults to spawning `opencode serve`. */
   readonly startServer?: () => Promise<OpenCodeServerProcess>;
   /** Seam: build an HTTP/SSE client for a started server. Defaults to `fetch`. */
   readonly connect?: (server: OpenCodeServerProcess) => OpenCodeHttp;
+}
+
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+  reject(reason?: unknown): void;
 }
 
 interface ResolvedOpenCodeConfig<Output> {
@@ -83,15 +91,10 @@ export async function runOpenCodeConversation<Output>(
   let abortServerTurn: (() => void) | undefined;
 
   const wallClockMs = options.wallClockTimeoutMs ?? 600_000;
-  let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
-  // The cap races the WHOLE turn — startup POSTs and the consume path included,
-  // not just the SSE read race below: a hang anywhere (server never answering,
-  // or a blocked `emit` parking the loop between race iterations) must trip it.
-  const wallClock = new Promise<"wallclock">((resolve) => {
-    wallClockTimer = setTimeout(() => {
-      resolve("wallclock");
-    }, wallClockMs);
-  });
+  const wallClock: Deferred<"wallclock"> = Promise.withResolvers<"wallclock">();
+  const wallClockTimer = setTimeout(() => {
+    wallClock.resolve("wallclock");
+  }, wallClockMs);
 
   const turn = async (): Promise<void> => {
     const server = await manager.get();
@@ -99,7 +102,7 @@ export async function runOpenCodeConversation<Output>(
 
     // Open the SSE stream first so no turn events are missed, then start the turn.
     const events = await http.openEvents(streamController.signal);
-    const serverSession = await resolveServerSession(http, config.resumeSessionId);
+    const serverSession = await resolveServerSession(http, config.resumeSessionId, streamController.signal);
 
     // Best-effort server-side abort on cancel (Scala `OpencodeConversation.cancel`):
     // without it a cancelled turn keeps editing headless on the shared server.
@@ -113,7 +116,7 @@ export async function runOpenCodeConversation<Output>(
     }
 
     const body = openCodeMessageBody(request.prompt, config);
-    await http.postJson(`/session/${serverSession}/prompt_async`, body);
+    await http.postJson(`/session/${serverSession}/prompt_async`, body, streamController.signal);
 
     const consumer = createOpenCodeSseConsumer(conversation, serverSession);
     const inactivityMs = options.inactivityTimeoutMs ?? 120_000;
@@ -123,16 +126,14 @@ export async function runOpenCodeConversation<Output>(
     // deadline out, so foreign-session chatter can't mask a dead turn.
     let deadline = Date.now() + inactivityMs;
     for (;;) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const inactivity = new Promise<"stalled">((resolve) => {
-        timer = setTimeout(
-          () => {
-            resolve("stalled");
-          },
-          Math.max(deadline - Date.now(), 0)
-        );
-      });
-      const next = await Promise.race([iterator.next(), inactivity]);
+      const inactivity: Deferred<"stalled"> = Promise.withResolvers<"stalled">();
+      const timer = setTimeout(
+        () => {
+          inactivity.resolve("stalled");
+        },
+        Math.max(deadline - Date.now(), 0)
+      );
+      const next = await Promise.race([iterator.next(), inactivity.promise]);
       clearTimeout(timer);
 
       if (next === "stalled") {
@@ -167,7 +168,7 @@ export async function runOpenCodeConversation<Output>(
   };
 
   try {
-    const winner = await Promise.race([turn().then(() => "done" as const), wallClock]);
+    const winner = await Promise.race([turn().then(() => "done" as const), wallClock.promise]);
     if (winner === "wallclock" && !conversation.signal.aborted) {
       conversation.fail(
         backendFailed(
@@ -192,12 +193,13 @@ export async function runOpenCodeConversation<Output>(
 
 async function resolveServerSession(
   http: OpenCodeHttp,
-  resumeSessionId: string | undefined
+  resumeSessionId: string | undefined,
+  signal: AbortSignal
 ): Promise<string> {
   if (resumeSessionId) {
     return resumeSessionId;
   }
-  const response = await http.postJson("/session", JSON.stringify({}));
+  const response = await http.postJson("/session", JSON.stringify({}), signal);
   return (JSON.parse(response) as { readonly id: string }).id;
 }
 
@@ -325,35 +327,47 @@ async function defaultStartServer(options: OpenCodeBackendOptions): Promise<Open
   // (keeps the stream in flowing mode, draining forever) and resolve off it.
   const stdout = child.stdout;
   let baseUrl: string;
+  let startupTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    baseUrl = await new Promise<string>((resolve, reject) => {
-      let buffer = "";
-      let resolved = false;
-      stdout.on("data", (chunk: Buffer | string) => {
-        if (resolved) {
-          return; // listener stays attached purely to drain the pipe
-        }
-        buffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
-        const match = ListeningLine.exec(buffer);
-        if (match?.[1] !== undefined) {
-          resolved = true;
-          resolve(match[1]);
-        }
-      });
-      child.once("error", (error: Error) => {
-        if (!resolved) {
-          reject(error);
-        }
-      });
-      stdout.once("end", () => {
-        if (!resolved) {
-          reject(new Error("opencode serve did not report a listening URL"));
-        }
-      });
+    const startupMs = options.startupTimeoutMs ?? 30_000;
+    const startup: Deferred<string> = Promise.withResolvers<string>();
+    let buffer = "";
+    let resolved = false;
+    startupTimer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        startup.reject(new Error(`opencode serve did not report a listening URL within ${String(startupMs)}ms`));
+      }
+    }, Math.max(startupMs, 0));
+    stdout.on("data", (chunk: Buffer | string) => {
+      if (resolved) {
+        return; // listener stays attached purely to drain the pipe
+      }
+      buffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      const match = ListeningLine.exec(buffer);
+      if (match?.[1] !== undefined) {
+        resolved = true;
+        startup.resolve(match[1]);
+      }
     });
+    child.once("error", (error: Error) => {
+      if (!resolved) {
+        resolved = true;
+        startup.reject(error);
+      }
+    });
+    stdout.once("end", () => {
+      if (!resolved) {
+        resolved = true;
+        startup.reject(new Error("opencode serve did not report a listening URL"));
+      }
+    });
+    baseUrl = await startup.promise;
   } catch (error) {
     child.kill("SIGINT");
     throw error;
+  } finally {
+    clearTimeout(startupTimer);
   }
 
   return {
@@ -374,11 +388,12 @@ export function createFetchOpenCodeHttp(server: OpenCodeServerProcess): OpenCode
     ? { authorization: server.authHeader }
     : {};
   return {
-    async postJson(path, body) {
+    async postJson(path, body, signal) {
       const response = await fetch(`${server.url}${path}`, {
         method: "POST",
         headers: { ...headers, "content-type": "application/json" },
-        body
+        body,
+        ...(signal === undefined ? {} : { signal })
       });
       if (!response.ok) {
         const errorBody = (await response.text()).trim();

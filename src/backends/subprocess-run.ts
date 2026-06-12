@@ -5,6 +5,15 @@ import {
 } from "../model/index.ts";
 import type { StreamConversation } from "../conversation/index.ts";
 
+const DefaultSubprocessInactivityTimeoutMs = 120_000;
+
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+  reject(reason?: unknown): void;
+}
+const DefaultSubprocessWallClockTimeoutMs = 600_000;
+
 /** A spawned agent subprocess: a stdout (and optional stderr) line/byte stream,
  * an exit promise, a kill signal, and — for backends that feed their prompt over
  * stdin (claude, pi) — an optional write/end pair. Codex leaves stdin ignored and
@@ -52,6 +61,10 @@ export interface RunSubprocessOptions<B extends BackendTag> {
   readonly env?: NodeJS.ProcessEnv;
   readonly stdin?: "ignore" | "pipe";
   readonly spawnProcess?: SubprocessSpawner;
+  /** Fail when stdout produces no line for this many ms. Defaults to 120s. */
+  readonly inactivityTimeoutMs?: number;
+  /** Fail after this absolute turn duration even if stdout stays active. Defaults to 600s. */
+  readonly wallClockTimeoutMs?: number;
   /** Records the spawned process so the accessor can `kill` it on cancellation. */
   readonly setProcess?: (process: SubprocessProcess) => void;
   /** Runs right after spawn (before the read loop) — claude/pi write the opening
@@ -59,10 +72,18 @@ export interface RunSubprocessOptions<B extends BackendTag> {
   readonly onStart?: (process: SubprocessProcess) => void | Promise<void>;
 }
 
+type SubprocessTimeoutKind = "inactivity" | "wallclock";
+
+interface SubprocessTimeout {
+  readonly type: "timeout";
+  readonly kind: SubprocessTimeoutKind;
+}
+
 /** Shared spawn → stdout-line-stream → consumer → outcome plumbing for
  * subprocess-stream backends (codex, claude, pi). Owns process spawn, line
- * splitting, stderr capture, non-zero-exit failure, and cancellation checks; the
- * per-backend command/args builder and line consumer plug in.
+ * splitting, stderr capture, non-zero-exit failure, cancellation checks, and
+ * timeout settlement; the per-backend command/args builder and line consumer
+ * plug in.
  *
  * The helper deliberately does NOT catch spawn / stream / consumer exceptions —
  * each driver wraps the call in its own try/catch/finally so spawn-error→fail and
@@ -91,47 +112,92 @@ export async function runSubprocessConversation<B extends BackendTag>(
   const stderr = collectText(process.stderr);
   await options.onStart?.(process);
 
-  const consumer = options.createConsumer();
-  for await (const line of splitLines(process.stdout)) {
+  const timeout: Deferred<SubprocessTimeout> = Promise.withResolvers<SubprocessTimeout>();
+  const inactivityMs = options.inactivityTimeoutMs ?? DefaultSubprocessInactivityTimeoutMs;
+  const wallClockMs = options.wallClockTimeoutMs ?? DefaultSubprocessWallClockTimeoutMs;
+  let timeoutSettled = false;
+  let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const settleTimeout = (kind: SubprocessTimeoutKind): void => {
+    if (timeoutSettled) {
+      return;
+    }
+    timeoutSettled = true;
+    process.kill("SIGTERM");
+    timeout.resolve({ type: "timeout", kind });
+  };
+  const resetInactivityTimer = (): void => {
+    clearTimeout(inactivityTimer);
+    inactivityTimer = setTimeout(() => {
+      settleTimeout("inactivity");
+    }, Math.max(inactivityMs, 0));
+  };
+
+  const wallClockTimer = setTimeout(() => {
+    settleTimeout("wallclock");
+  }, Math.max(wallClockMs, 0));
+  resetInactivityTimer();
+
+  try {
+    const consumer = options.createConsumer();
+    const lines = splitLines(process.stdout)[Symbol.asyncIterator]();
+    for (;;) {
+      const next: IteratorResult<string> | SubprocessTimeout = await Promise.race([lines.next(), timeout.promise]);
+      if (isSubprocessTimeout(next)) {
+        failSubprocessTimeout(conversation, backend, next.kind, inactivityMs, wallClockMs);
+        return;
+      }
+      if (next.done) {
+        break;
+      }
+      resetInactivityTimer();
+      if (conversation.signal.aborted) {
+        return;
+      }
+      await consumer.consume(next.value);
+      if (consumer.signal.aborted) {
+        // Kill the child once the consumer has settled the conversation on a
+        // terminal event (success, modeled failure, or early parse/tool error).
+        // Safe because we only reach here after consuming that event — the agent's
+        // session rollout is already flushed — and it stops a persistent process
+        // (pi rpc) or a stalled CLI from lingering after Orca has the outcome.
+        process.kill();
+        break;
+      }
+    }
+
+    // The consumer already settled the conversation (success/failure); the
+    // exit-code path below is only for a stream that ended without one.
+    if (consumer.signal.aborted) {
+      return;
+    }
+
+    const exit: number | null | SubprocessTimeout = await Promise.race([process.exit, timeout.promise]);
+    if (isSubprocessTimeout(exit)) {
+      failSubprocessTimeout(conversation, backend, exit.kind, inactivityMs, wallClockMs);
+      return;
+    }
+    const stderrText = (await stderr).trim();
     if (conversation.signal.aborted) {
       return;
     }
-    await consumer.consume(line);
-    if (consumer.signal.aborted) {
-      // Kill the child once the consumer has settled the conversation on a
-      // terminal event (success, modeled failure, or early parse/tool error).
-      // Safe because we only reach here after consuming that event — the agent's
-      // session rollout is already flushed — and it stops a persistent process
-      // (pi rpc) or a stalled CLI from lingering after Orca has the outcome.
-      process.kill();
-      break;
+
+    if (exit !== 0) {
+      const exitCodeText = exit === null ? "unknown" : String(exit);
+      conversation.fail(
+        backendFailed(
+          backend,
+          `${backend} exited with code ${exitCodeText}${stderrText ? `: ${stderrText}` : ""}`
+        )
+      );
+      return;
     }
-  }
 
-  // The consumer already settled the conversation (success/failure); the
-  // exit-code path below is only for a stream that ended without one.
-  if (consumer.signal.aborted) {
-    return;
+    consumer.finish();
+  } finally {
+    clearTimeout(inactivityTimer);
+    clearTimeout(wallClockTimer);
   }
-
-  const exitCode = await process.exit;
-  const stderrText = (await stderr).trim();
-  if (conversation.signal.aborted) {
-    return;
-  }
-
-  if (exitCode !== 0) {
-    const exitCodeText = exitCode === null ? "unknown" : String(exitCode);
-    conversation.fail(
-      backendFailed(
-        backend,
-        `${backend} exited with code ${exitCodeText}${stderrText ? `: ${stderrText}` : ""}`
-      )
-    );
-    return;
-  }
-
-  consumer.finish();
 }
 
 export function spawnSubprocess(
@@ -150,13 +216,14 @@ export function spawnSubprocess(
     throw new Error(`failed to capture stdout for ${command}`);
   }
 
+  const exit = Promise.withResolvers<number | null>();
+  child.on("error", exit.reject);
+  child.on("close", exit.resolve);
+
   return {
     stdout: child.stdout,
     ...(child.stderr ? { stderr: child.stderr } : {}),
-    exit: new Promise((resolve, reject) => {
-      child.on("error", reject);
-      child.on("close", resolve);
-    }),
+    exit: exit.promise,
     kill(signal?: NodeJS.Signals) {
       child.kill(signal);
     },
@@ -210,6 +277,27 @@ export async function collectText(
 
 function decodeChunk(decoder: TextDecoder, chunk: string | Uint8Array): string {
   return typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+}
+
+function isSubprocessTimeout(value: IteratorResult<string> | number | null | SubprocessTimeout): value is SubprocessTimeout {
+  return typeof value === "object" && value !== null && (value as { readonly type?: unknown }).type === "timeout";
+}
+
+function failSubprocessTimeout<B extends BackendTag>(
+  conversation: StreamConversation<B>,
+  backend: B,
+  kind: SubprocessTimeoutKind,
+  inactivityMs: number,
+  wallClockMs: number
+): void {
+  if (conversation.signal.aborted) {
+    return;
+  }
+  const message =
+    kind === "inactivity"
+      ? `${backend} emitted no stdout for ${String(inactivityMs)}ms; treating the turn as stalled`
+      : `${backend} turn exceeded ${String(wallClockMs)}ms wall-clock limit`;
+  conversation.fail(backendFailed(backend, message));
 }
 
 export function errorMessage(error: unknown): string {

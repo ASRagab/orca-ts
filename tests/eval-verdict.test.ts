@@ -9,11 +9,11 @@ import {
 } from "../workflows/ai-slop-cleanup.ts";
 
 function failed(command: string, stderr: string): CommandRunSummary {
-  return { command, status: "failed", stdout: "", stderr, exitCode: 1 };
+  return { command, status: "failed", stdout: "", stderr, exitCode: 1, durationMs: 1 };
 }
 
 function passed(command: string): CommandRunSummary {
-  return { command, status: "passed", stdout: "", stderr: "", exitCode: 0 };
+  return { command, status: "passed", stdout: "", stderr: "", exitCode: 0, durationMs: 1 };
 }
 
 const issue = (runs: readonly CommandRunSummary[]) => ({

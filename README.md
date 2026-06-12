@@ -102,16 +102,23 @@ The root export also re-exports `conversation`, `model`, `plan`, `review`, `runn
 
 Backend tags are `claude`, `codex`, `opencode`, and `pi`.
 
-The live v1 autonomous backends are `codex()`, `claude()`, `opencode()`, and `pi()`. Each drives its respective CLI (or managed server for OpenCode), so that CLI must be installed and authenticated before live backend checks can pass.
+Live v1 autonomous backends are `codex()`, `claude()`, `opencode()`, and `pi()`. Each drives its respective CLI (or managed server for OpenCode), so that CLI must be installed and authenticated before live backend checks can pass.
 
-Gemini is cut: its CLI is being deprecated by Google in favor of the Antigravity CLI (`agy`), and it never shipped a live streaming driver. Future Google support will be a new `agy` backend tag, not a revived Gemini backend.
+All live backends share the same `Conversation` contract, but their transports differ:
+
+- `codex()`, `claude()`, and `pi()` run through the shared subprocess watchdog path.
+- `opencode()` runs through a shared `opencode serve` manager over HTTP/SSE.
+- Gemini is cut: its CLI is being deprecated by Google in favor of the Antigravity CLI (`agy`), and it never shipped a live streaming driver. Future Google support will be a new `agy` backend tag, not a revived Gemini backend.
 
 Autonomous conversations reject human questions and live approval prompts. Explicit interactive Codex conversations can emit `user_question` events through the Orca-owned `ask_user` bridge; approval events remain a reserved compatibility seam.
 
-Run the gated live smoke only in an environment configured for Codex:
+Run the gated live smoke in an environment configured for the backend under test:
 
 ```bash
 ORCA_REAL_BACKEND_SMOKE=1 ORCA_REAL_BACKEND=codex bun test tests/integration/real-backend-smoke.test.ts
+ORCA_REAL_BACKEND_SMOKE=1 ORCA_REAL_BACKEND=claude bun test tests/integration/real-backend-smoke.test.ts
+ORCA_REAL_BACKEND_SMOKE=1 ORCA_REAL_BACKEND=opencode bun test tests/integration/real-backend-smoke.test.ts
+ORCA_REAL_BACKEND_SMOKE=1 ORCA_REAL_BACKEND=pi bun test tests/integration/real-backend-smoke.test.ts
 ```
 
 ## CI
@@ -137,7 +144,7 @@ Examples live under `examples/`:
 - `examples/issue-pr-bugfix.ts`
 - `examples/runnable/01-simple/index.ts`
 
-Treat these as authoring references for the supported API surface. Structured examples use `codex()` because live non-Codex process adapters remain unsupported placeholders in this port.
+Treat these as authoring references for the supported API surface. Structured examples still use `codex()` because it has the most mature structured-output and interactive coverage, not because the other live drivers are placeholders.
 
 ## Scope Cuts
 

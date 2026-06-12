@@ -6,17 +6,20 @@ export interface QuietProcResult {
   readonly stdout: string;
   readonly stderr: string;
   readonly exitCode: number | null;
+  readonly durationMs: number;
 }
 
 export interface QuietProcOptions {
   readonly cwd?: string;
   readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
 }
 
 export interface VerificationCommand {
   readonly command: string;
   readonly args?: readonly string[];
   readonly cwd?: string;
+  readonly timeoutMs?: number;
 }
 
 export type VerificationCommandResult =
@@ -26,6 +29,7 @@ export type VerificationCommandResult =
       readonly stdout: string;
       readonly stderr: string;
       readonly exitCode: 0;
+      readonly durationMs: number;
     }
   | {
       readonly type: "failed";
@@ -33,6 +37,7 @@ export type VerificationCommandResult =
       readonly stdout: string;
       readonly stderr: string;
       readonly exitCode: number | null;
+      readonly durationMs: number;
     };
 
 export interface CommandTool {
@@ -44,6 +49,8 @@ export async function runQuiet(
   args: readonly string[] = [],
   options: QuietProcOptions = {}
 ): Promise<Result<QuietProcResult, RuntimeError>> {
+  const startedAt = Date.now();
+  const rendered = [command, ...args].join(" ");
   const child = spawn(command, [...args], {
     cwd: options.cwd,
     signal: options.signal,
@@ -52,6 +59,8 @@ export async function runQuiet(
 
   let stdout = "";
   let stderr = "";
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutState = { timedOut: false };
 
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
@@ -62,24 +71,41 @@ export async function runQuiet(
     stderr += chunk;
   });
 
-  const exitCode = await new Promise<number | null>((resolve, reject) => {
-    child.on("error", reject);
-    child.on("close", resolve);
-  });
-
-  const result = { stdout, stderr, exitCode };
-  if (exitCode === 0) {
-    return ok(result);
+  const timeoutMs = options.timeoutMs;
+  if (timeoutMs !== undefined) {
+    timeout = setTimeout(() => {
+      timeoutState.timedOut = true;
+      child.kill("SIGTERM");
+    }, Math.max(timeoutMs, 0));
   }
 
-  return err(
-    commandFailed({
-      command: [command, ...args].join(" "),
-      exitCode,
-      stdout,
-      stderr
-    })
-  );
+  try {
+    const exit = Promise.withResolvers<number | null>();
+    child.on("error", exit.reject);
+    child.on("close", exit.resolve);
+    const exitCode = await exit.promise;
+    const durationMs = Date.now() - startedAt;
+    const result = { stdout, stderr, exitCode, durationMs };
+    if (exitCode === 0 && timeoutMs === undefined) {
+      return ok(result);
+    }
+
+    const failureStderr = timeoutState.timedOut
+      ? [stderr.trimEnd(), `Command timed out after ${String(timeoutMs)}ms`]
+          .filter(Boolean)
+          .join("\n")
+      : stderr;
+    return err(
+      commandFailed({
+        command: rendered,
+        exitCode,
+        stdout,
+        stderr: failureStderr
+      })
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export function createCommandTool(defaultCwd = process.cwd()): CommandTool {
@@ -87,7 +113,12 @@ export function createCommandTool(defaultCwd = process.cwd()): CommandTool {
     async run(command) {
       const args = command.args ?? [];
       const rendered = [command.command, ...args].join(" ");
-      const result = await runQuiet(command.command, args, { cwd: command.cwd ?? defaultCwd });
+      const startedAt = Date.now();
+      const result = await runQuiet(command.command, args, {
+        cwd: command.cwd ?? defaultCwd,
+        ...(command.timeoutMs === undefined ? {} : { timeoutMs: command.timeoutMs })
+      });
+      const fallbackDurationMs = Date.now() - startedAt;
 
       if (result.isOk()) {
         return {
@@ -95,7 +126,8 @@ export function createCommandTool(defaultCwd = process.cwd()): CommandTool {
           command: rendered,
           stdout: result.value.stdout,
           stderr: result.value.stderr,
-          exitCode: 0
+          exitCode: 0,
+          durationMs: result.value.durationMs
         };
       }
 
@@ -106,7 +138,8 @@ export function createCommandTool(defaultCwd = process.cwd()): CommandTool {
           command: error.command,
           stdout: error.stdout,
           stderr: error.stderr,
-          exitCode: error.exitCode
+          exitCode: error.exitCode,
+          durationMs: fallbackDurationMs
         };
       }
 
@@ -115,7 +148,8 @@ export function createCommandTool(defaultCwd = process.cwd()): CommandTool {
         command: rendered,
         stdout: "",
         stderr: JSON.stringify(error),
-        exitCode: null
+        exitCode: null,
+        durationMs: fallbackDurationMs
       };
     }
   };

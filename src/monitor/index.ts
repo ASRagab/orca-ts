@@ -1,9 +1,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import type { Usage } from "../model/index.ts";
 
 export type StageStatus = "completed" | "failed";
-
 /** Discriminated cleanup verdict. `clean`/`repaired` are safe improvements
  * (pass); `regressed`/`guard-reject` are reverted changes (fail); `declined`
  * is a neutral no-op; `precondition-skip` is excluded from the backend's
@@ -26,11 +26,22 @@ export interface StageLog {
   readonly status: StageStatus;
 }
 
+export interface CommandLog {
+  readonly command: string;
+  readonly status: "passed" | "failed";
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number | null;
+  readonly durationMs: number;
+}
+
 export interface OutcomeLog {
   readonly file: string;
   readonly verdict: OutcomeVerdict;
   readonly durationMs: number;
   readonly smellsRemoved: readonly string[];
+  readonly changedPaths?: readonly string[];
+  readonly validation?: readonly CommandLog[];
   readonly reason?: string;
   /** Repair iterations to reach green: 0 for `clean`, K for `repaired`. */
   readonly iterations?: number;
@@ -38,12 +49,14 @@ export interface OutcomeLog {
   readonly regressedReason?: RegressedReason;
   /** Total agent tokens spent on this file (initial edit + repairs). */
   readonly tokens?: number;
+  readonly usage?: Usage;
 }
 
 export interface FailureLog {
   readonly file: string;
   readonly error: unknown;
   readonly durationMs: number;
+  readonly category?: string;
 }
 
 export interface WorkflowRunSummary {
@@ -110,7 +123,7 @@ export class WorkflowMonitor {
 
   toJson(): WorkflowRunLog {
     const count = (verdict: OutcomeVerdict): number =>
-      this.#outcomes.filter((o) => o.verdict === verdict).length;
+      this.#outcomes.filter((outcome) => outcome.verdict === verdict).length;
     const pass = count("clean") + count("repaired");
     const fail = count("regressed") + count("guard-reject") + this.#failures.length;
     const skip = count("declined");

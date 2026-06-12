@@ -36,16 +36,29 @@ describe("real backend smoke", () => {
       const conversation = backend.autonomous({ prompt: smokePrompt });
 
       expect(conversation.canAskUser).toBe(false);
+      const startedAt = Date.now();
       const events = drainEvents(conversation);
       const outcome = await withTimeout(conversation, 120_000);
+      const wallTimeMs = Date.now() - startedAt;
+      const capturedEvents = await events;
+      const smokeMetadata = {
+        backend: backendTag,
+        wallTimeMs,
+        outcomeType: outcome.type,
+        eventCount: capturedEvents.length,
+        sessionIdPresent: outcome.type === "success" && outcome.result.sessionId.length > 0,
+        usage: outcome.type === "success" ? outcome.result.usage : undefined
+      };
 
+      console.log(`ORCA_REAL_BACKEND_SMOKE ${JSON.stringify(smokeMetadata)}`);
+      expect(smokeMetadata.wallTimeMs).toBeGreaterThanOrEqual(0);
+      expect(smokeMetadata.eventCount).toBeGreaterThan(0);
       expect(outcome.type).toBe("success");
       if (outcome.type === "success") {
         expect(outcome.result.backend).toBe(backendTag);
-        expect(outcome.result.sessionId.length).toBeGreaterThan(0);
+        expect(smokeMetadata.sessionIdPresent).toBe(true);
         expect(outcome.result.output.length).toBeGreaterThan(0);
       }
-      expect((await events).length).toBeGreaterThan(0);
     } finally {
       await shutdown?.();
       await rm(repo, { recursive: true, force: true });
