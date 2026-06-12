@@ -10,7 +10,7 @@ describe("typecheck pre-flight", () => {
 
   test("returns success when tsc succeeds", async () => {
     const runner: CommandRunner = () =>
-      Promise.resolve(ok({ stdout: "ok", stderr: "", exitCode: 0 }));
+      Promise.resolve(ok({ stdout: "ok", stderr: "", exitCode: 0, durationMs: 1 }));
     const result = await runTypecheck({ cwd: process.cwd(), runner });
     expect(result._unsafeUnwrap()).toEqual({ skipped: false, stdout: "ok", stderr: "" });
   });

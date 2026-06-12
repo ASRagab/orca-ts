@@ -40,6 +40,8 @@ export interface CodexBackendOptions
   readonly config?: BackendConfig<"codex">;
   readonly askUser?: AskUserResponder;
   readonly createAskUserServer?: (options: AskUserMcpServerOptions) => AskUserMcpServer;
+  readonly inactivityTimeoutMs?: number;
+  readonly wallClockTimeoutMs?: number;
 }
 
 /** Codex's subprocess handle is the shared {@link SubprocessProcess}; the alias
@@ -115,6 +117,8 @@ export async function runCodexConversation<Output>(
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
       ...(options.env === undefined ? {} : { env: options.env }),
       ...(options.spawnProcess === undefined ? {} : { spawnProcess: options.spawnProcess }),
+      ...(options.inactivityTimeoutMs === undefined ? {} : { inactivityTimeoutMs: options.inactivityTimeoutMs }),
+      ...(options.wallClockTimeoutMs === undefined ? {} : { wallClockTimeoutMs: options.wallClockTimeoutMs }),
       createConsumer: () =>
         createCodexJsonlConsumer(conversation, {
           ...(config.schema === undefined ? {} : { schema: config.schema }),

@@ -24,6 +24,8 @@ export interface PiBackendOptions {
   readonly capacity?: number;
   readonly spawnProcess?: PiProcessSpawner;
   readonly config?: BackendConfig<"pi">;
+  readonly inactivityTimeoutMs?: number;
+  readonly wallClockTimeoutMs?: number;
   /** Base directory for per-session Pi `--session-dir`s. Defaults to the OS temp dir. */
   readonly sessionsDir?: string;
 }
@@ -83,6 +85,8 @@ export async function runPiConversation<Output>(
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
       ...(options.env === undefined ? {} : { env: options.env }),
       ...(options.spawnProcess === undefined ? {} : { spawnProcess: options.spawnProcess }),
+      ...(options.inactivityTimeoutMs === undefined ? {} : { inactivityTimeoutMs: options.inactivityTimeoutMs }),
+      ...(options.wallClockTimeoutMs === undefined ? {} : { wallClockTimeoutMs: options.wallClockTimeoutMs }),
       onStart: (process) => {
         process.write?.(`${piPromptCommand(composeBackendPrompt(request.prompt, config))}\n`);
         // Pi rpc keeps reading stdin for the next command; leave it open. The
