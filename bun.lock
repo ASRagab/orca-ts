@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "orca",
+      "name": "orca-ts",
       "dependencies": {
         "neverthrow": "^8.2.0",
         "zod": "^4.1.13",

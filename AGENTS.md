@@ -6,9 +6,10 @@ Use `CONTEXT.md` for project vocabulary. In particular, prefer `flow`, `flow con
 
 ## Current Scope
 
-- The package is version `0.0.0`.
-- Local development, examples, CI verification, fixture validation, and live backend adapter work are in scope.
-- npm package publishing is not part of the current phase.
+- The package is version `0.1.0`.
+- Local development, examples, CI verification, fixture validation, live backend adapter work, and distribution are in scope.
+- npm publishing is deferred. If restored, it should use npm Trusted Publishing to a private `@twelvehart` package.
+- Releases are tag-driven through `.github/workflows/release.yml` and publish GitHub Release binaries only.
 - Default CI should stay deterministic and should not require live backend credentials.
 
 ## Backend Decisions
@@ -29,6 +30,9 @@ Use `CONTEXT.md` for project vocabulary. In particular, prefer `flow`, `flow con
 - `Plan.interactive` is intentionally unsupported because live answers cannot be replayed after crash recovery.
 - Persistent plan helpers write deterministic `.orca/plan-<hash>.md` files.
 
+- `selectBackend()` is the public runtime backend selector: `ORCA_BACKEND` overrides its required `default`, and `ORCA_BACKEND_MODEL` overrides config/per-backend models.
+- Standalone binaries prefer a project-local `orca-ts` package; when none resolves, the CLI provides the embedded API through a temporary `node_modules/orca-ts` shim next to the flow.
+
 ## Parity And History
 
 - The Scala Orca repository was the local oracle for fixture creation and prompt parity.
@@ -40,7 +44,7 @@ Use `CONTEXT.md` for project vocabulary. In particular, prefer `flow`, `flow con
 ## Verification
 
 - Use `bun run verify` as the deterministic pre-PR gate.
-- `bun run verify` covers typecheck, tests, fixture validation, release metadata validation, declaration generation, and binary smoke.
+- `bun run verify` covers typecheck, tests, fixture validation, release metadata validation, declaration generation, and a compiled-binary smoke that runs a real flow importing `orca-ts` outside the repo.
 - Run live backend smoke only with explicit environment gates, for example `ORCA_REAL_BACKEND_SMOKE=1 ORCA_REAL_BACKEND=codex bun test tests/integration/real-backend-smoke.test.ts`.
 
 ## Documentation Placement

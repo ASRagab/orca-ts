@@ -3,14 +3,13 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { flow, type LlmBackend } from "../src/index.ts";
+import { flow, type LlmBackend, type SelectedBackend } from "../src/index.ts";
 import {
   cleanupFile,
   type CleanupAgentResult,
   type CommandRunSummary,
   type CommandSpec,
-  type FileCleanupOutcome,
-  type SelectedBackend
+  type FileCleanupOutcome
 } from "../workflows/ai-slop-cleanup.ts";
 
 const ORIGINAL_CONTENT = `export const x = 1;\n`;

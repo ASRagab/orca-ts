@@ -5,6 +5,7 @@ export interface CliArgs {
   readonly backend?: BackendTag;
   readonly skipTypecheck: boolean;
   readonly help: boolean;
+  readonly version: boolean;
 }
 
 export function parseCliArgs(argv: readonly string[]): CliArgs {
@@ -12,6 +13,7 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
   let script: string | undefined;
   let skipTypecheck = false;
   let help = false;
+  let version = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -21,6 +23,10 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
     }
     if (arg === "--help" || arg === "-h") {
       help = true;
+      continue;
+    }
+    if (arg === "--version" || arg === "-v") {
+      version = true;
       continue;
     }
     if (arg === "--backend") {
@@ -41,6 +47,7 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
     ...(script === undefined ? {} : { script }),
     ...(backend === undefined ? {} : { backend }),
     skipTypecheck,
-    help
+    help,
+    version
   };
 }

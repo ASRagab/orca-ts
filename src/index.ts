@@ -6,6 +6,5 @@ export * from "./monitor/index.ts";
 export * from "./plan/index.ts";
 export * from "./review/index.ts";
 export * from "./runner/index.ts";
-export * from "./test-utils/index.ts";
 export * from "./tools/index.ts";
 export { z } from "zod";

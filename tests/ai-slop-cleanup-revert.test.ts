@@ -3,12 +3,13 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { flow, type LlmBackend } from "../src/index.ts";
+import { flow, type LlmBackend, type SelectedBackend } from "../src/index.ts";
 import {
   cleanupFile,
   type CleanupAgentResult,
-  type FileCleanupOutcome,
-  type SelectedBackend
+  type CommandRunSummary,
+  type CommandSpec,
+  type FileCleanupOutcome
 } from "../workflows/ai-slop-cleanup.ts";
 
 const ORIGINAL_CONTENT = `export const x = 1;\n`;
@@ -20,9 +21,9 @@ type AskAgentFn = (
     readonly filePath: string;
     readonly trackedFiles: readonly string[];
     readonly baselineDiff: string;
-    readonly validationPlan: readonly import("../workflows/ai-slop-cleanup.ts").CommandSpec[];
+    readonly validationPlan: readonly CommandSpec[];
     readonly allowedExtras: readonly string[];
-    readonly repairFailure?: readonly import("../workflows/ai-slop-cleanup.ts").CommandRunSummary[];
+    readonly repairFailure?: readonly CommandRunSummary[];
   }
 ) => Promise<CleanupAgentResult>;
 

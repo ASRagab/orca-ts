@@ -1,11 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import {
-  fakeBackend,
-  createFakeLlmTool,
-  eventRecorder,
-  flow,
-  llm,
-} from "../src/index.ts";
+import { createFakeLlmTool, eventRecorder, fakeBackend } from "../src/test-utils/index.ts";
+import { flow, llm } from "../src/index.ts";
 
 describe("workflow test harness", () => {
   test("fakeBackend drains outputs in order", async () => {

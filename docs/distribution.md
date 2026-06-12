@@ -1,17 +1,62 @@
 # Distribution
 
-The CLI is built with Bun:
+Orca currently ships through GitHub Release binaries for common Unix platforms. npm publishing is deferred.
+
+## Deferred npm Publishing
+
+There is no npm install path in the release workflow right now. Do not document or rely on `bun add orca-ts`, `bunx -p orca-ts`, or registry tarballs as release artifacts.
+
+If npm publishing is restored, it should use npm Trusted Publishing to a private `@twelvehart` package. Do not add an `NPM_TOKEN` workflow path.
+
+For typed project authoring before npm publishing exists, use a Git/source dependency plus the standalone `orca` binary:
 
 ```bash
-bun run build:binary
+bun add -d git+https://github.com/ASRagab/orca-ts.git typescript
+orca flow.ts
 ```
 
-Current local measurement on this machine:
+## Standalone Binaries
 
-- Binary: `dist/orca`
-- Size: `64007522` bytes
-- Cold `--help`: `real 0.10s`
+Release binaries are built with `bun build --compile` and uploaded as tarballs:
 
-The npm package exposes the public TypeScript authoring API, declarations, and `bin.orca`.
+| Asset | Platform |
+| --- | --- |
+| `orca-darwin-arm64.tar.gz` | macOS Apple Silicon |
+| `orca-darwin-x64.tar.gz` | macOS Intel |
+| `orca-linux-arm64.tar.gz` | Linux arm64 glibc |
+| `orca-linux-x64.tar.gz` | Linux x64 glibc |
 
-Live backend smoke checks are excluded from default CI and require explicit environment flags.
+Each tarball contains a single executable named `orca`. `SHA256SUMS.txt` contains one checksum line per tarball.
+
+Windows and musl/Alpine users should build from source for now.
+
+## Installer
+
+`install.sh` detects OS and architecture, downloads the matching release tarball and `SHA256SUMS.txt`, verifies the checksum with `sha256sum` or `shasum`, and installs `orca` to `${ORCA_INSTALL_DIR:-$HOME/.local/bin}`.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ASRagab/orca-ts/main/install.sh | bash
+```
+
+Environment variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `ORCA_VERSION` | Install a specific GitHub Release version, without the `v` prefix |
+| `ORCA_INSTALL_DIR` | Destination directory for the `orca` executable |
+
+## Embedded Library Resolution
+
+Standalone binaries can run a flow that imports `orca-ts` without a local `node_modules` install:
+
+1. The CLI first resolves `orca-ts` from the flow file's directory.
+2. If a project-local package exists, it wins. This avoids version skew and gives one flow context implementation.
+3. If no project package exists, the CLI registers the binary's embedded API through a temporary `node_modules/orca-ts` shim next to the flow and removes it on process exit.
+
+`orca --version` reports the embedded library version used by the fallback path.
+
+Standalone zero-project flows without `tsconfig.json` skip the CLI typecheck guard. Project typechecking needs `typescript`, `tsconfig.json`, and a local `orca-ts` Git/source dependency so the flow imports and runtime APIs resolve from the same project setup.
+
+## Verification
+
+`bun run smoke:binary` is the load-bearing distribution check. It builds `dist/orca`, checks `--help` and `--version`, then runs a flow from a temporary directory that imports `orca-ts` with no project setup.

@@ -53,6 +53,29 @@ The Pi backend spawns `pi --mode rpc --session-dir <dir>` (one dir per session i
 - Cancellation: `SIGTERM` to the child; the conversation completes cancelled.
 - `ask_user`: autonomous only; `PiAskUserExtension` is intentionally not ported.
 
+## Selecting a backend at run time
+
+Use `selectBackend()` when a flow should honor `ORCA_BACKEND` and the CLI `--backend` flag:
+
+```ts
+const selected = selectBackend({
+  default: "codex",
+  config: { readOnly: true },
+  perBackend: {
+    opencode: { model: "openai/gpt-5.5" }
+  }
+});
+```
+
+Resolution order:
+
+1. `ORCA_BACKEND` chooses the backend tag; unset or empty falls back to `default`.
+2. `config` applies to every backend.
+3. `perBackend[tag]` overrides shared config for one backend.
+4. `ORCA_BACKEND_MODEL` overrides `perBackend[tag].model` and `config.model`.
+
+Invalid backend tags throw before a live backend process starts. OpenCode returns `shutdown`, and flow owners must call it when done because `opencode serve` is a managed process.
+
 ## Live backend smoke
 
 The live backend smoke is gated so default tests and `bun run verify` stay deterministic:

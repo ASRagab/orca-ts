@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { err, ok, type Result } from "neverthrow";
 import type { RuntimeError } from "../model/index.ts";
 import { runQuiet, type QuietProcResult } from "../tools/process.ts";
@@ -11,19 +13,26 @@ export interface TypecheckOptions {
   readonly project?: string;
   readonly skip?: boolean;
   readonly runner?: CommandRunner;
+  readonly which?: (cwd: string) => string | null;
 }
 
 export interface TypecheckResult {
   readonly skipped: boolean;
   readonly stdout: string;
   readonly stderr: string;
+  readonly reason?: "flag" | "tsc-not-found";
 }
 
 export async function runTypecheck(
   options: TypecheckOptions
 ): Promise<Result<TypecheckResult, RuntimeError>> {
   if (options.skip) {
-    return ok({ skipped: true, stdout: "", stderr: "" });
+    return ok({ skipped: true, reason: "flag", stdout: "", stderr: "" });
+  }
+
+  const command = options.which ? options.which(options.cwd) : defaultWhichTsc(options.cwd, options.project);
+  if (command === null) {
+    return ok({ skipped: true, reason: "tsc-not-found", stdout: "", stderr: "" });
   }
 
   const runner = options.runner ?? runQuiet;
@@ -32,7 +41,7 @@ export async function runTypecheck(
     args.push("-p", options.project);
   }
 
-  const result = await runner("tsc", args, { cwd: options.cwd });
+  const result = await runner(command, args, { cwd: options.cwd });
   if (result.isErr()) {
     const error = result.error;
     if (error._tag === "CommandFailed") {
@@ -47,4 +56,17 @@ export async function runTypecheck(
   }
 
   return ok({ skipped: false, stdout: result.value.stdout, stderr: result.value.stderr });
+}
+
+function defaultWhichTsc(cwd: string, project?: string): string | null {
+  if (!existsSync(resolve(cwd, project ?? "tsconfig.json"))) {
+    return null;
+  }
+
+  const localTsc = join(cwd, "node_modules", ".bin", "tsc");
+  if (existsSync(localTsc)) {
+    return localTsc;
+  }
+
+  return Bun.which("tsc");
 }

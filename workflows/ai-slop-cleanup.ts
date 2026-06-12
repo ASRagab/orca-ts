@@ -1,8 +1,6 @@
 import { basename, join } from "node:path";
 import { ok } from "neverthrow";
 import {
-  claude,
-  codex,
   command,
   fixLoop,
   flow,
@@ -10,12 +8,11 @@ import {
   gh,
   git,
   llm,
-  opencode,
-  pi,
   z,
+  selectBackend,
   type BackendTag,
   type FixLoopStop,
-  type LlmBackend,
+  type SelectedBackend,
   type OutcomeVerdict,
   type RegressedReason,
   type Usage,
@@ -523,7 +520,13 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 }
 
 async function runCleanupWorkflow(args: WorkflowArgs): Promise<void> {
-  const selected = selectBackend();
+  const selected = selectBackend({
+    default: "codex",
+    perBackend: {
+      codex: { approvalPolicy: "never" },
+      opencode: { model: "openai/gpt-5.5" }
+    }
+  });
   console.log(`Cleanup backend: ${selected.tag}${selected.model ? ` (${selected.model})` : ""}`);
   // Eval mode always records a verdict log — it is the run's only deliverable.
   const monitor = args.monitor || args.evalMode ? new WorkflowMonitor(selected.tag) : undefined;
@@ -1324,47 +1327,6 @@ function printDryRun(files: readonly string[], validation: readonly CommandRunSu
   }
 }
 
-export interface SelectedBackend {
-  readonly tag: BackendTag;
-  readonly backend: LlmBackend;
-  readonly model?: string;
-  readonly shutdown?: () => Promise<void>;
-}
-
-/** Per-backend default model when the operator does not override via
- * `ORCA_BACKEND_MODEL`. codex resolves its own default, so it stays unset. */
-const DefaultBackendModel: Partial<Record<BackendTag, string>> = {
-  opencode: "openai/gpt-5.5"
-};
-
-/** Picks the cleanup agent backend from `ORCA_BACKEND` (default `codex`). Any
- * live backend works; the file-by-file loop, diff guard, and structured-output
- * contract are backend-agnostic. opencode runs a shared `opencode serve`, so it
- * also returns a `shutdown` the workflow calls in its `finally`. */
-export function selectBackend(): SelectedBackend {
-  const tag = (process.env.ORCA_BACKEND ?? "codex") as BackendTag;
-  const model = process.env.ORCA_BACKEND_MODEL ?? DefaultBackendModel[tag];
-  const withModel = (backend: LlmBackend): SelectedBackend => ({
-    tag,
-    backend,
-    ...(model ? { model } : {})
-  });
-
-  switch (tag) {
-    case "codex":
-      return withModel(codex({ approvalPolicy: "never" }));
-    case "claude":
-      return withModel(claude());
-    case "pi":
-      return withModel(pi());
-    case "opencode": {
-      const backend = opencode();
-      return { ...withModel(backend), shutdown: () => backend.shutdown() };
-    }
-    default:
-      throw new Error(`ai-slop-cleanup does not support backend: ${String(tag)}`);
-  }
-}
 
 function readFlag(argv: readonly string[], flag: string): string | undefined {
   const prefix = `${flag}=`;

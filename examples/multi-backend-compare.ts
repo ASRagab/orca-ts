@@ -1,4 +1,5 @@
-import { codex, fakeBackend, flow, fs, llm, z } from "../src/index.ts";
+import { codex, flow, fs, llm, z } from "../src/index.ts";
+import { fakeBackend } from "../src/test-utils/index.ts";
 import { join } from "node:path";
 
 const OutputSchema = z.object({

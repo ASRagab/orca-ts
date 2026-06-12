@@ -1,7 +1,7 @@
 import { describe, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { assertTier2Golden, type Tier2Golden } from "../src/index.ts";
+import { assertTier2Golden, type Tier2Golden } from "../src/test-utils/index.ts";
 
 describe("Tier 2 golden flows", () => {
   test("asserts fake-agent flow behavior against golden fixtures", async () => {

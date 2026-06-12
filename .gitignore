@@ -6,8 +6,6 @@ dist/
 .pi/
 .*.bun-build
 
-bin/
-
 # Local dogfooding/scratch artifacts.
 CONTEXT.md
 .claude/handoffs/

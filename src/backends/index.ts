@@ -7,6 +7,7 @@ export * from "./opencode-run.ts";
 export * from "./opencode-sse.ts";
 export * from "./pi-rpc.ts";
 export * from "./pi-run.ts";
+export * from "./select.ts";
 export * from "./subprocess-run.ts";
 export * from "./types.ts";
 export * from "./unsupported.ts";
