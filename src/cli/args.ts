@@ -1,4 +1,5 @@
 import { BackendTagSchema, type BackendTag } from "../model/index.ts";
+import { extractFlowArgs } from "../flow/args.ts";
 
 export interface CliArgs {
   readonly script?: string;
@@ -6,6 +7,7 @@ export interface CliArgs {
   readonly skipTypecheck: boolean;
   readonly help: boolean;
   readonly version: boolean;
+  readonly flowArgs: readonly string[];
 }
 
 export function parseCliArgs(argv: readonly string[]): CliArgs {
@@ -48,6 +50,7 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
     ...(backend === undefined ? {} : { backend }),
     skipTypecheck,
     help,
-    version
+    version,
+    flowArgs: extractFlowArgs(argv)
   };
 }

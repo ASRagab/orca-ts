@@ -32,6 +32,8 @@ Use `CONTEXT.md` for project vocabulary. In particular, prefer `flow`, `flow con
 
 - `selectBackend()` is the public runtime backend selector: `ORCA_BACKEND` overrides its required `default`, and `ORCA_BACKEND_MODEL` overrides config/per-backend models.
 - Standalone binaries prefer a project-local `orca-ts` package; when none resolves, the CLI provides the embedded API through a temporary `node_modules/orca-ts` shim next to the flow.
+- `flowArgs()` is the public flow-argument channel: it returns the user's task tokens (everything after `--`). The CLI captures them and forwards them via the `ORCA_FLOW_ARGS` env var; a flow run directly (`bun flow.ts -- foo`) parses them from argv. Flows must read task input via `flowArgs()` — never `process.argv`, which also holds the flow path and CLI flags.
+- `ok`, `err`, and the `Result` type are re-exported from the package root so flows (including standalone runs that only see the embedded `orca-ts` surface) can build/unwrap `Result`s without a `neverthrow` dependency in the target repo.
 
 ## Parity And History
 
@@ -55,3 +57,13 @@ Use `CONTEXT.md` for project vocabulary. In particular, prefer `flow`, `flow con
 - Keep review-loop behavior in `docs/review.md`.
 - Keep fixture and parity details in `docs/parity.md`.
 - Keep distribution and release mechanics in `docs/distribution.md` and `docs/release.md`.
+- Keep detailed Agent Skill guidance inside each `skills/*/SKILL.md`; the README only points to them.
+
+## Agent Skills
+
+- Three host-agnostic, stack-agnostic Agent Skills live in-repo under `skills/`: `orca-ts-setup` (install + backend verify/doctor), `orca-ts-author` (read repo → interview → generate gated flow → save), `orca-ts-flow` (run → monitor → heal). They are co-located with the runtime so the bundled flow templates can be typecheck-gated against the in-repo API and cannot drift.
+- Shared reference cookbook, flow templates, and scripts live in `skills/_shared/` (one copy, not per-skill) — the three skills install together as a set. Scripts (`orca-setup.sh`, `orca-doctor.sh`, `orca-run.sh`, `orca-typecheck-flow.sh`) locate every CLI at runtime; never hardcode a path.
+- The backend doctor's auth probes are: definitive for `codex` (`codex login status`) and `opencode` (`opencode auth list`); presence/version only for `claude`/`pi` (no safe non-spending auth check), with the opt-in live smoke (`ORCA_REAL_BACKEND_SMOKE=1` / `--smoke`) as the definitive proof.
+- Saved workflows are stack-agnostic: they live at the target repo's `.orca/workflows/<name>.ts`, are triggered through the standalone `orca` binary (which skips the typecheck guard in a repo with no `tsconfig.json`), and must never depend on the target repo's package manager. Verification gates are the target repo's own detected test/lint commands; the author skill refuses to emit an ungated flow. Templates import `ok`/`err`/`flowArgs` from `"orca-ts"` (never `neverthrow`/`process.argv`) so they run under the embedded shim with no target-repo deps.
+- Repo-mutating templates protect the user's tree: `issue-to-pr` auto-stashes pre-existing work and cuts an `orca/<slug>` branch before commit/push; `cleanup-sweep` requires a clean baseline, reverts only the iteration's own change, and detects/reverts off-target edits; `bugfix` requires a green baseline before the repro; `persistent-multitask` checks off completed tasks in the persisted plan for true crash-resume. Destructive git ops (force-push, history rewrite, `reset --hard`, broad `clean -fd`) are never auto-performed.
+- `tests/skill-templates.test.ts` typecheck-gates every bundled template via `tsconfig.skill-templates.json` (extends the base tsconfig, `rootDir: "."`, `orca-ts` resolved by package self-reference). Templates are eslint-ignored (they carry intentional `REPLACE_WITH_*` slots and are typecheck-gated separately).

@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { runTypecheck } from "../runner/index.ts";
+import { FLOW_ARGS_ENV } from "../flow/args.ts";
 import { parseCliArgs } from "./args.ts";
 import { ORCA_VERSION } from "./version.ts";
 
@@ -42,6 +43,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   if (args.backend) {
     process.env.ORCA_BACKEND = args.backend;
   }
+
+  process.env[FLOW_ARGS_ENV] = JSON.stringify(args.flowArgs);
 
   const resolvedScript = resolve(args.script);
   const { ensureOrcaResolvable } = await import("./embedded.ts");

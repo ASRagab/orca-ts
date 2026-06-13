@@ -8,7 +8,8 @@ export default tseslint.config(
       "dist/**",
       "node_modules/**",
       "openspec/**",
-      "fixtures/**"
+      "fixtures/**",
+      "skills/**/assets/templates/**"
     ]
   },
   js.configs.recommended,

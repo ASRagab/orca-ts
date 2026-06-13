@@ -168,6 +168,29 @@ The best way to learn the authoring model is to start with the examples.
 | `examples/multi-backend-compare.ts` | Comparing backend behavior |
 | `workflows/ai-slop-cleanup.ts` | Full dogfood workflow with monitoring support |
 
+## Agent Skills
+
+Installable Agent Skills under `skills/` take a coding agent from "I have a
+workflow idea" to a saved, self-validating workflow — in **any** git-backed repo,
+not just TypeScript projects. They compose as a pipeline:
+
+| Skill | Purpose |
+| --- | --- |
+| `skills/orca-ts-setup` | Install the `orca` binary and verify at least one backend (claude/codex/opencode/pi) is authenticated; re-runnable as a doctor |
+| `skills/orca-ts-author` | Detect the target repo's real test/lint commands, interview for the workflow shape, generate a flow that typechecks, and enforce verification gates |
+| `skills/orca-ts-flow` | Run a saved workflow with monitoring, detect stalls (by progress, not slowness), and heal backend/auth/non-convergence failures within safety bounds |
+
+Saved workflows live at the target repo's `.orca/workflows/<name>.ts` and are
+triggered through the standalone `orca` binary — no dependency on the target
+repo's package manager:
+
+```bash
+orca .orca/workflows/<name>.ts --backend <tag> [-- "<task args>"]
+```
+
+Detailed guidance lives in each skill's `SKILL.md`; shared reference, templates,
+and scripts are under `skills/_shared/`.
+
 ## Guides And Reference
 
 | Document | Purpose |

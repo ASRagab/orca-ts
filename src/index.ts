@@ -8,3 +8,7 @@ export * from "./review/index.ts";
 export * from "./runner/index.ts";
 export * from "./tools/index.ts";
 export { z } from "zod";
+// Re-exported so flows (including standalone runs that only get the embedded
+// orca-ts surface) can build fixLoop/Result values without a neverthrow dep.
+export { err, ok } from "neverthrow";
+export type { Result } from "neverthrow";

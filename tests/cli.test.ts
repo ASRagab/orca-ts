@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { parseCliArgs } from "../src/cli/args.ts";
+import { extractFlowArgs, flowArgs } from "../src/flow/args.ts";
 import { runQuiet } from "../src/tools/process.ts";
 
 describe("CLI args", () => {
@@ -9,7 +10,8 @@ describe("CLI args", () => {
       script: "flow.ts",
       skipTypecheck: true,
       help: false,
-      version: false
+      version: false,
+      flowArgs: []
     });
   });
 
@@ -19,7 +21,8 @@ describe("CLI args", () => {
       script: "flow.ts",
       skipTypecheck: false,
       help: false,
-      version: false
+      version: false,
+      flowArgs: []
     });
   });
 
@@ -28,7 +31,19 @@ describe("CLI args", () => {
     expect(parseCliArgs(["--version"])).toEqual({
       skipTypecheck: false,
       help: false,
-      version: true
+      version: true,
+      flowArgs: []
+    });
+  });
+
+  test("captures task tokens after -- as flowArgs", () => {
+    expect(parseCliArgs(["flow.ts", "--backend", "codex", "--", "fix", "the", "bug"])).toEqual({
+      script: "flow.ts",
+      backend: "codex",
+      skipTypecheck: false,
+      help: false,
+      version: false,
+      flowArgs: ["fix", "the", "bug"]
     });
   });
   test("bin shim invokes the CLI", async () => {
@@ -65,5 +80,43 @@ describe("CLI args", () => {
     }
 
     expect(embeddedLoaded).toBe(false);
+  });
+});
+
+describe("flow args", () => {
+  test("extractFlowArgs returns tokens after the -- separator", () => {
+    expect(extractFlowArgs(["foo.ts", "--backend", "codex", "--", "fix", "the", "bug"])).toEqual([
+      "fix",
+      "the",
+      "bug"
+    ]);
+  });
+
+  test("extractFlowArgs is empty when no -- separator is present", () => {
+    expect(extractFlowArgs(["foo.ts", "--backend", "codex"])).toEqual([]);
+  });
+
+  test("flowArgs prefers the ORCA_FLOW_ARGS env channel", () => {
+    const previous = process.env.ORCA_FLOW_ARGS;
+    process.env.ORCA_FLOW_ARGS = JSON.stringify(["alpha", "beta"]);
+    try {
+      expect(flowArgs()).toEqual(["alpha", "beta"]);
+    } finally {
+      if (previous === undefined) delete process.env.ORCA_FLOW_ARGS;
+      else process.env.ORCA_FLOW_ARGS = previous;
+    }
+  });
+
+  test("flowArgs falls back to argv when the env channel is unset", () => {
+    const previousEnv = process.env.ORCA_FLOW_ARGS;
+    const previousArgv = process.argv;
+    delete process.env.ORCA_FLOW_ARGS;
+    process.argv = ["bun", "flow.ts", "--", "x", "y"];
+    try {
+      expect(flowArgs()).toEqual(["x", "y"]);
+    } finally {
+      process.argv = previousArgv;
+      if (previousEnv !== undefined) process.env.ORCA_FLOW_ARGS = previousEnv;
+    }
   });
 });
