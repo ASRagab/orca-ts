@@ -36,11 +36,12 @@
     "lint": "eslint .",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "docs:check": "bun run scripts/check-doc-links.ts",
     "test:integration:real": "ORCA_REAL_BACKEND_SMOKE=1 bun test tests/integration/real-backend-smoke.test.ts",
     "validate:fixtures": "bun run scripts/validate-fixtures.ts && bun run scripts/validate-adr-matrix.ts",
     "validate:release": "bun run scripts/validate-release.ts",
     "smoke:binary": "bun run scripts/smoke-binary.ts",
-    "verify": "bun run typecheck && bun test && bun run validate:fixtures && bun run validate:release && bun run build:types && bun run smoke:binary"
+    "verify": "bun run typecheck && bun test && bun run docs:check && bun run validate:fixtures && bun run validate:release && bun run build:types && bun run smoke:binary"
   },
   "dependencies": {
     "neverthrow": "^8.2.0",

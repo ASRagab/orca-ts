@@ -46,7 +46,7 @@ Use `CONTEXT.md` for project vocabulary. In particular, prefer `flow`, `flow con
 ## Verification
 
 - Use `bun run verify` as the deterministic pre-PR gate.
-- `bun run verify` covers typecheck, tests, fixture validation, release metadata validation, declaration generation, and a compiled-binary smoke that runs a real flow importing `orca-ts` outside the repo.
+- `bun run verify` covers typecheck, tests, doc-link checking, fixture validation, release metadata validation, declaration generation, and a compiled-binary smoke that runs a real flow importing `orca-ts` outside the repo.
 - Run live backend smoke only with explicit environment gates, for example `ORCA_REAL_BACKEND_SMOKE=1 ORCA_REAL_BACKEND=codex bun test tests/integration/real-backend-smoke.test.ts`.
 
 ## Documentation Placement

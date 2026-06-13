@@ -9,6 +9,7 @@ export default tseslint.config(
       "node_modules/**",
       "openspec/**",
       "fixtures/**",
+      ".orca/**",
       "skills/**/assets/templates/**"
     ]
   },

@@ -60,6 +60,17 @@ flow back (and before the typecheck gate, when one is reachable).
     off-target edits (files the agent touched but wasn't asked to). Destructive
     or irreversible ops (force-push, history rewrite, `reset --hard`, broad
     `clean -fd`) are never auto-performed — escalate to the user.
+13. **Typed-lint repos must ignore the workflow dir.** If the target repo lints
+    TypeScript with type information (e.g. ESLint flat config with
+    `projectService: true` / `parserOptions.project`, the `typescript-eslint`
+    default), a flow saved to `.orca/workflows/*.ts` will make the repo's own
+    lint command FAIL on the flow file itself ("not found by the project
+    service") — because `.orca/` is gitignored scratch not in any tsconfig. That
+    turns the workflow's own lint gate RED at baseline, so every task fails and
+    the workflow is dead on arrival. Before relying on a detected lint gate in a
+    TS repo, confirm the lint config ignores `.orca/**` (or `.orca/workflows/**`);
+    if it doesn't, add it (one line in the ignores list) and note the fix in the
+    runbook. This does not affect non-TS targets or untyped lint.
 
 ## Pre-handoff self-audit checklist
 
@@ -76,3 +87,4 @@ Before declaring a generated flow done, confirm each:
 - [ ] Any Zod schema used with `pi`/OpenCode tolerates off-shape output (`z.preprocess`).
 - [ ] No dependency on the agent asking the operator a question (autonomous only).
 - [ ] If the target repo has no `tsconfig.json`, the runbook records the skipped-typecheck note.
+- [ ] In a typed-lint TS target, the lint config ignores `.orca/**` (else the flow's own lint gate is red at baseline).

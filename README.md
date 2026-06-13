@@ -69,7 +69,7 @@ bun install --frozen-lockfile
 bun run verify
 ```
 
-`bun run verify` runs typecheck, unit tests, fixture validation, release metadata validation, declaration generation, and a compiled binary smoke test. It does not require live backend credentials.
+`bun run verify` runs typecheck, unit tests, doc-link checking, fixture validation, release metadata validation, declaration generation, and a compiled binary smoke test. It does not require live backend credentials.
 
 ## Write Your First Flow
 
