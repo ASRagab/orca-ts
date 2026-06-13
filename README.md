@@ -180,6 +180,38 @@ not just TypeScript projects. They compose as a pipeline:
 | `skills/orca-ts-author` | Detect the target repo's real test/lint commands, interview for the workflow shape, generate a flow that typechecks, and enforce verification gates |
 | `skills/orca-ts-flow` | Run a saved workflow with monitoring, detect stalls (by progress, not slowness), and heal backend/auth/non-convergence failures within safety bounds |
 
+### Install The Skills
+
+The skills install with the [`skills` CLI](https://github.com/vercel-labs/skills)
+(`npx skills`), which reads the `skills/<name>/` directories in this repo and
+copies each into your coding agent's skills directory:
+
+```bash
+# See which skills the repo provides
+npx skills add ASRagab/orca-ts --list
+
+# Install all three, user-level (works for every detected agent)
+npx skills add ASRagab/orca-ts --skill '*' --global
+
+# Or install one skill to one agent (e.g. Claude Code)
+npx skills add ASRagab/orca-ts --skill orca-ts-setup --agent claude-code
+```
+
+Without `--global` the skills install into the current repo's agent directory
+(project scope). Install order does not matter, but the intended flow is
+`orca-ts-setup` → `orca-ts-author` → `orca-ts-flow`. Each skill is a
+self-contained directory — its `SKILL.md` plus its own `scripts/`, `reference/`,
+and flow templates — so there is no shared payload to install separately.
+
+Before the repo is public, install from a local checkout instead:
+
+```bash
+git clone https://github.com/ASRagab/orca-ts.git
+npx skills add ./orca-ts --skill '*' --global
+```
+
+### Run A Saved Workflow
+
 Saved workflows live at the target repo's `.orca/workflows/<name>.ts` and are
 triggered through the standalone `orca` binary — no dependency on the target
 repo's package manager:
@@ -188,8 +220,7 @@ repo's package manager:
 orca .orca/workflows/<name>.ts --backend <tag> [-- "<task args>"]
 ```
 
-Detailed guidance lives in each skill's `SKILL.md`; shared reference, templates,
-and scripts are under `skills/_shared/`.
+Detailed guidance lives in each skill's `SKILL.md`.
 
 ## Guides And Reference
 

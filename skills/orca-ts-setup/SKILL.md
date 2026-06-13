@@ -24,13 +24,13 @@ Prefer an existing on-`PATH` binary; otherwise run the documented installer. The
 bundled script does both and confirms with `orca --version`:
 
 ```bash
-bash skills/_shared/scripts/orca-setup.sh
+bash skills/orca-ts-setup/scripts/orca-setup.sh
 ```
 
 Honor the user's pin/location if they give one:
 
 ```bash
-ORCA_VERSION=0.1.0 ORCA_INSTALL_DIR="$HOME/bin" bash skills/_shared/scripts/orca-setup.sh
+ORCA_VERSION=0.1.0 ORCA_INSTALL_DIR="$HOME/bin" bash skills/orca-ts-setup/scripts/orca-setup.sh
 ```
 
 - If `orca` is already on `PATH` (and matches any requested `ORCA_VERSION`), the
@@ -58,7 +58,7 @@ Run the shared doctor for the chosen backend(s). It probes each for CLI-on-PATH,
 a non-spending readiness check, and auth, then classifies the result:
 
 ```bash
-bash skills/_shared/scripts/orca-doctor.sh --backend codex --backend claude
+bash skills/orca-ts-setup/scripts/orca-doctor.sh --backend codex --backend claude
 # or: --all  to probe every backend
 ```
 
@@ -78,7 +78,7 @@ The doctor exits `0` iff at least one chosen backend is `ready` or `unverified`.
 Optional definitive auth proof for claude/pi (spends a few tokens — gated):
 
 ```bash
-bash skills/_shared/scripts/orca-doctor.sh --backend claude --smoke
+bash skills/orca-ts-setup/scripts/orca-doctor.sh --backend claude --smoke
 # or set ORCA_REAL_BACKEND_SMOKE=1 in the environment
 ```
 

@@ -15,7 +15,7 @@ tests and linters. This skill produces the latter, for any git-backed repo.
 Flow: **read the repo → interview → generate from a template → enforce
 verification gates → typecheck (when reachable) → save to `.orca/workflows/`.**
 
-> Author from the shared cookbook, in this order: `skills/_shared/reference/recipes.md`
+> Author from the shared cookbook, in this order: `skills/orca-ts-author/reference/recipes.md`
 > (the 6 archetypes = the templates), `dsl.md` (verbs/types), `gotchas.md`
 > (codegen rules + self-audit), `backends.md` (backend matrix). Prefer the
 > bundled `assets/templates/` — they are kept compiling by CI.
@@ -79,7 +79,7 @@ accept a bare answer. Never dump all axes at once.
 ## 4. Typecheck the flow (when a TS toolchain is reachable)
 
 ```bash
-bash skills/_shared/scripts/orca-typecheck-flow.sh .orca/workflows/<name>.ts
+bash skills/orca-ts-author/scripts/orca-typecheck-flow.sh .orca/workflows/<name>.ts
 ```
 
 - **OK** → the flow typechecks against `orca-ts`; proceed.
@@ -109,7 +109,7 @@ flow's `git`/`gh` tools act on the right repo) **before writing**. Then write:
 1. **`.orca/workflows/<name>.ts`** — the generated flow.
 2. **`.orca/workflows/<name>.run.md`** — a runbook containing:
    - the exact trigger: `orca .orca/workflows/<name>.ts --backend <tag> [-- "<args>"]`
-     (or via `bash skills/_shared/scripts/orca-run.sh .orca/workflows/<name>.ts ...`);
+     (or via `bash skills/orca-ts-author/scripts/orca-run.sh .orca/workflows/<name>.ts ...`);
    - prerequisites (verified backend, clean worktree if the flow commits, `gh`
      auth for issue-to-pr);
    - the verification commands it gates on;

@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { runQuiet } from "../src/tools/process.ts";
@@ -8,7 +8,7 @@ import { runQuiet } from "../src/tools/process.ts";
 // in-repo orca-ts (resolved via package self-reference in
 // tsconfig.skill-templates.json). Mirrors the Scala orca-flow recipes test.
 
-const TEMPLATES_DIR = "skills/_shared/assets/templates";
+const TEMPLATES_DIR = "skills/orca-ts-author/assets/templates";
 const EXPECTED_ARCHETYPES = [
   "single-change",
   "persistent-multitask",
@@ -37,4 +37,26 @@ describe("skill flow templates", () => {
     }
     expect(result.value.exitCode).toBe(0);
   }, 120_000);
+});
+
+// Each skill installs as a self-contained directory via `npx skills`, so scripts
+// used by more than one skill are bundled into each skill's own scripts/ dir.
+// These groups MUST stay byte-identical — otherwise an installed skill silently
+// runs a stale copy. The fix when this fails is to re-copy the canonical script,
+// never to let the copies diverge.
+const DUPLICATED_SCRIPTS: ReadonlyArray<readonly [string, ...string[]]> = [
+  ["skills/orca-ts-author/scripts/orca-run.sh", "skills/orca-ts-flow/scripts/orca-run.sh"],
+  ["skills/orca-ts-setup/scripts/orca-doctor.sh", "skills/orca-ts-flow/scripts/orca-doctor.sh"],
+];
+
+describe("bundled skill scripts", () => {
+  for (const group of DUPLICATED_SCRIPTS) {
+    const [canonical, ...copies] = group;
+    test(`${canonical} copies stay byte-identical`, () => {
+      const expected = readFileSync(canonical, "utf8");
+      for (const copy of copies) {
+        expect(readFileSync(copy, "utf8")).toBe(expected);
+      }
+    });
+  }
 });

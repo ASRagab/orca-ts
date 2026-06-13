@@ -22,11 +22,11 @@ Run through the standalone binary with monitoring on, against the confirmed
 target repo. Use the wrapper (surfaces exit + points at the monitor log):
 
 ```bash
-bash skills/_shared/scripts/orca-run.sh .orca/workflows/<name>.ts --monitor
+bash skills/orca-ts-flow/scripts/orca-run.sh .orca/workflows/<name>.ts --monitor
 # backend override at run time (selectBackend honors --backend):
-bash skills/_shared/scripts/orca-run.sh .orca/workflows/<name>.ts --monitor --backend codex
+bash skills/orca-ts-flow/scripts/orca-run.sh .orca/workflows/<name>.ts --monitor --backend codex
 # task args after --, if the flow reads them:
-bash skills/_shared/scripts/orca-run.sh .orca/workflows/<name>.ts --monitor -- "fix the flaky test"
+bash skills/orca-ts-flow/scripts/orca-run.sh .orca/workflows/<name>.ts --monitor -- "fix the flaky test"
 ```
 
 `--monitor` makes the run write `.orca/monitoring/<runId>.json` (stage timing,
@@ -73,7 +73,7 @@ Bounded, safety-gated recovery by class:
 - **environment (auth/crash)** → re-verify the backend with the shared doctor,
   guide re-auth, then **resume**:
   ```bash
-  bash skills/_shared/scripts/orca-doctor.sh --backend <tag>
+  bash skills/orca-ts-flow/scripts/orca-doctor.sh --backend <tag>
   # if unauth: codex login / opencode auth login / claude then /login / set pi token
   ```
   Re-run the workflow; the persistent-multitask archetype recovers
