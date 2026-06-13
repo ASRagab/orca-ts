@@ -60,3 +60,28 @@ describe("bundled skill scripts", () => {
     });
   }
 });
+
+// install.sh is the source of truth for the default install directory. The
+// setup script's fallback resolver and every doc example must agree with it,
+// otherwise users get steered at a dir that isn't on PATH (the bug that
+// motivated the ~/.local/bin switch). These files must reference the canonical
+// default and must NOT carry a stale `$HOME/bin` install-dir example.
+const CANONICAL_INSTALL_DIR = "$HOME/.local/bin";
+const INSTALL_DIR_DOCS: ReadonlyArray<string> = [
+  "install.sh",
+  "skills/orca-ts-setup/scripts/orca-setup.sh",
+  "skills/orca-ts-setup/SKILL.md",
+  "README.md",
+];
+
+describe("install dir default agreement", () => {
+  for (const path of INSTALL_DIR_DOCS) {
+    test(`${path} references ${CANONICAL_INSTALL_DIR} and not stale $HOME/bin`, () => {
+      const text = readFileSync(path, "utf8");
+      expect(text).toContain(CANONICAL_INSTALL_DIR);
+      // Match a literal `$HOME/bin` used as an install dir (followed by a
+      // quote or slash boundary), without flagging `$HOME/.local/bin`.
+      expect(text).not.toMatch(/\$HOME\/bin(?=["/\s])/);
+    });
+  }
+});

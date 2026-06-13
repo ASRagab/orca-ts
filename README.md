@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/ASRagab/orca-ts/main/install.sh | b
 Pin a version or change the install directory with environment variables:
 
 ```bash
-ORCA_VERSION=0.1.0 ORCA_INSTALL_DIR="$HOME/bin" \
+ORCA_VERSION=0.1.0 ORCA_INSTALL_DIR="$HOME/.local/bin" \
   bash <(curl -fsSL https://raw.githubusercontent.com/ASRagab/orca-ts/main/install.sh)
 ```
 

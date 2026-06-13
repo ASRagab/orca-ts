@@ -4,9 +4,10 @@
 #
 #   orca-setup.sh                 # use an on-PATH orca, else run the installer
 #   ORCA_VERSION=0.1.0 orca-setup.sh
-#   ORCA_INSTALL_DIR="$HOME/bin" orca-setup.sh
+#   ORCA_INSTALL_DIR="$HOME/.local/bin" orca-setup.sh
 #
 # Honors ORCA_VERSION and ORCA_INSTALL_DIR (passed through to install.sh).
+# When ORCA_INSTALL_DIR is unset, install.sh defaults to $HOME/.local/bin.
 # Prints the resolved binary path and version on success.
 set -uo pipefail
 
@@ -55,11 +56,15 @@ if ! curl -fsSL "$INSTALL_URL" | bash; then
 fi
 
 # 3. Re-resolve and confirm (installer may drop into a dir not yet on PATH).
+# install.sh installs to ${ORCA_INSTALL_DIR:-$HOME/.local/bin}; mirror that
+# default here so the fallback finds a freshly-installed binary even when the
+# target dir is not yet on PATH and ORCA_INSTALL_DIR was left unset.
 hash -r 2>/dev/null || true
 resolved="$(command -v orca 2>/dev/null || true)"
-if [ -z "$resolved" ] && [ -n "${ORCA_INSTALL_DIR:-}" ] && [ -x "$ORCA_INSTALL_DIR/orca" ]; then
-  resolved="$ORCA_INSTALL_DIR/orca"
-  echo "⚠ orca installed to $resolved but that dir is not on PATH — add it: export PATH=\"$ORCA_INSTALL_DIR:\$PATH\"" >&2
+install_dir="${ORCA_INSTALL_DIR:-$HOME/.local/bin}"
+if [ -z "$resolved" ] && [ -x "$install_dir/orca" ]; then
+  resolved="$install_dir/orca"
+  echo "⚠ orca installed to $resolved but that dir is not on PATH — add it: export PATH=\"$install_dir:\$PATH\"" >&2
 fi
 
 if [ -z "$resolved" ]; then

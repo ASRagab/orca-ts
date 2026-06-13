@@ -30,7 +30,7 @@ bash skills/orca-ts-setup/scripts/orca-setup.sh
 Honor the user's pin/location if they give one:
 
 ```bash
-ORCA_VERSION=0.1.0 ORCA_INSTALL_DIR="$HOME/bin" bash skills/orca-ts-setup/scripts/orca-setup.sh
+ORCA_VERSION=0.1.0 ORCA_INSTALL_DIR="$HOME/.local/bin" bash skills/orca-ts-setup/scripts/orca-setup.sh
 ```
 
 - If `orca` is already on `PATH` (and matches any requested `ORCA_VERSION`), the
