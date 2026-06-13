@@ -166,6 +166,7 @@ The best way to learn the authoring model is to start with the examples.
 | `examples/issue-pr.ts` | Issue-to-PR style workflow |
 | `examples/issue-pr-bugfix.ts` | Bugfix-oriented issue workflow |
 | `examples/multi-backend-compare.ts` | Comparing backend behavior |
+| `examples/epic.ts` | Structured output with a Zod schema and a directly pinned `codex()` backend |
 | `workflows/ai-slop-cleanup.ts` | Full dogfood workflow with monitoring support |
 
 ## Agent Skills
@@ -269,6 +270,7 @@ The package metadata exposes these entry points:
 ```bash
 bun run typecheck
 bun test
+bun run docs:check
 bun run lint
 bun run validate:fixtures
 bun run validate:release
