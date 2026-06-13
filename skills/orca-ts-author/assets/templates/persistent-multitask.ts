@@ -4,6 +4,10 @@
 // Each converged task is checked off in the persisted plan, so a crash or
 // re-run resumes from real progress instead of re-running completed work.
 //
+// Emits a monitoring log to .orca/monitoring/<runId>.json (per-task verdict +
+// duration + iterations) via WorkflowMonitor, so orca-ts-flow can report real
+// progress and outcomes. `bun run scripts/summarize-run.ts <log>` summarizes it.
+//
 // SLOTS the author skill fills:
 //   - OBJECTIVE : the high-level goal to decompose into tasks
 //   - GATE      : detected target-repo verification commands (>=1 test, >=1 lint)
@@ -22,8 +26,11 @@ import {
   recoverPlan,
   selectBackend,
   writePlan,
+  WorkflowMonitor,
   z,
+  type FixLoopStop,
   type PlanTask,
+  type RegressedReason,
 } from "orca-ts";
 
 interface Cmd {
@@ -44,6 +51,8 @@ const GATE: readonly Cmd[] = [
 
 const OBJECTIVE = "REPLACE_WITH_OBJECTIVE";
 
+const MONITOR_DIR = ".orca/monitoring";
+
 const PlanSchema = z.object({
   tasks: z.array(z.object({ id: z.string(), description: z.string() })),
 });
@@ -57,6 +66,7 @@ await flow(flowArgs())(async () => {
   const selected = selectBackend({ default: "claude" });
   const cwd = process.cwd();
   const planPath = defaultPlanPath(cwd, OBJECTIVE);
+  const monitor = new WorkflowMonitor(selected.tag);
 
   try {
     const tasks = await loadOrPlanTasks(selected.backend, cwd);
@@ -67,10 +77,17 @@ await flow(flowArgs())(async () => {
 
     const result = await implementTaskLoop(pending, async (task) => {
       console.log(`▶ ${task.id}: ${task.description}`);
+      const taskStart = Date.now();
       const impl = await llm()
         .autonomous(selected.backend, { prompt: `Implement this task:\n${task.description}` })
         .awaitResult();
       if (impl.type !== "success") {
+        monitor.recordFailure({
+          file: task.id,
+          error: `implementation failed: ${impl.type}`,
+          durationMs: Date.now() - taskStart,
+          category: "environment",
+        });
         return err(backendFailed(selected.tag, `${task.id} implementation failed: ${impl.type}`));
       }
 
@@ -96,6 +113,16 @@ await flow(flowArgs())(async () => {
 
       if (loop.isErr() || !loop.value.converged) {
         const why = loop.isErr() ? JSON.stringify(loop.error) : loop.value.stop;
+        monitor.recordOutcome({
+          file: task.id,
+          verdict: "regressed",
+          durationMs: Date.now() - taskStart,
+          smellsRemoved: [],
+          reason: why,
+          ...(loop.isOk()
+            ? { iterations: loop.value.iterations, regressedReason: regressedReasonFor(loop.value.stop) }
+            : {}),
+        });
         return err(backendFailed(selected.tag, `${task.id} did not converge: ${why}`));
       }
 
@@ -105,6 +132,13 @@ await flow(flowArgs())(async () => {
       if (written.isErr()) {
         return err(backendFailed(selected.tag, `failed to persist plan: ${JSON.stringify(written.error)}`));
       }
+      monitor.recordOutcome({
+        file: task.id,
+        verdict: loop.value.iterations === 0 ? "clean" : "repaired",
+        durationMs: Date.now() - taskStart,
+        smellsRemoved: [],
+        iterations: loop.value.iterations,
+      });
       return ok(undefined);
     });
 
@@ -114,9 +148,15 @@ await flow(flowArgs())(async () => {
       `Completed ${String(result.value.completed.length)} task(s) this run; ${String(completed)}/${String(tasks.length)} total.`,
     );
   } finally {
+    await monitor.writeLog(MONITOR_DIR);
+    console.log(`▶ monitor log: ${MONITOR_DIR}/${monitor.runId}.json`);
     await selected.shutdown?.();
   }
 });
+
+function regressedReasonFor(stop: FixLoopStop): RegressedReason {
+  return stop === "timeout" ? "timeout" : stop === "ceiling" ? "ceiling" : "stuck";
+}
 
 async function loadOrPlanTasks(
   backend: ReturnType<typeof selectBackend>["backend"],

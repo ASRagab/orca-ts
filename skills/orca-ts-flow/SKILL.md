@@ -22,16 +22,22 @@ Run through the standalone binary with monitoring on, against the confirmed
 target repo. Use the wrapper (surfaces exit + points at the monitor log):
 
 ```bash
-bash skills/orca-ts-flow/scripts/orca-run.sh .orca/workflows/<name>.ts --monitor
+bash skills/orca-ts-flow/scripts/orca-run.sh .orca/workflows/<name>.ts
 # backend override at run time (selectBackend honors --backend):
-bash skills/orca-ts-flow/scripts/orca-run.sh .orca/workflows/<name>.ts --monitor --backend codex
+bash skills/orca-ts-flow/scripts/orca-run.sh .orca/workflows/<name>.ts --backend codex
 # task args after --, if the flow reads them:
-bash skills/orca-ts-flow/scripts/orca-run.sh .orca/workflows/<name>.ts --monitor -- "fix the flaky test"
+bash skills/orca-ts-flow/scripts/orca-run.sh .orca/workflows/<name>.ts -- "fix the flaky test"
 ```
 
-`--monitor` makes the run write `.orca/monitoring/<runId>.json` (stage timing,
-per-task/file outcomes, failures, usage). Prefer running in the background so
-you can watch progress while it runs.
+There is **no `--monitor` CLI flag** — a flow opts into monitoring itself. The
+bundled persistent-multitask / cleanup templates use `WorkflowMonitor` (from
+`orca-ts`) to write `.orca/monitoring/<runId>.json` (per-task/file verdict,
+duration, iterations, usage when the backend reports it) and print
+`▶ monitor log: <path>` at the end. A flow authored without `WorkflowMonitor`
+writes no JSON — monitor it via the persistent plan + git instead (§2). The
+wrapper only reports a log that is **new** for this run (it snapshots the
+newest `*.json` before launching), so it never points you at a stale log from a
+previous run. Prefer running in the background so you can watch progress live.
 
 ## 2. Monitor for REAL progress (not slowness)
 
