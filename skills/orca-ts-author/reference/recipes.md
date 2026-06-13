@@ -37,7 +37,11 @@ tasks; each task implements then converges `GATE` in its own `fixLoop`. A task
 that can't converge fails the loop (returns `backendFailed`). **Each converged
 task is checked off (`[x]`) in the persisted plan and re-running recovers it**
 (`recoverPlan`), skipping done tasks — this is the crash-resume path
-`orca-ts-flow` relies on. Slots: `OBJECTIVE`, `GATE`, default backend.
+`orca-ts-flow` relies on. The template instantiates `WorkflowMonitor` (from
+`orca-ts`) and writes `.orca/monitoring/<runId>.json` (per-task verdict,
+duration, iterations) in a `finally`, so `orca-ts-flow` gets real per-run
+outcomes and `scripts/summarize-run.ts` can summarize them. Slots: `OBJECTIVE`,
+`GATE`, default backend.
 
 ## issue-to-pr
 Reads the task from `flowArgs()` (`-- "<prompt or owner/repo#n>"`), implements,
@@ -74,6 +78,55 @@ Pins each backend directly (ignores `--backend`), runs `PROMPT` read-only on
 each, and prints outcome type + wall-clock + token usage. OpenCode is shut down
 in `finally`. Use it to choose a backend before standardizing a real workflow on
 one. Slots: `PROMPT`, the `candidates` list. Read-only — does not mutate the repo.
+
+## Variants — composable extensions
+
+These are not separate templates; they are small, proven modifications you graft
+onto an archetype during slot-filling. Apply them like any other edit, then run
+the typecheck gate + self-audit as usual.
+
+### plan-from-recent-changes (persistent-multitask)
+**When:** the objective is "react to what just changed" — refresh docs against
+recent merges, triage new issues, sweep code touched by the last N PRs. The
+stock persistent-multitask planner decomposes a static `OBJECTIVE` only and has
+no view of repo history, so the plan can't be informed by recent work.
+
+**How:** add a deterministic context-gathering step and inject its digest into
+the planning prompt (only when planning, *not* on resume — so recovered runs
+stay deterministic). Gather with `command().run` over `gh`/`git`, degrade
+gracefully if `gh` is absent:
+
+```ts
+async function gatherContext(prCount: number): Promise<string> {
+  const parts: string[] = [];
+  const prs = await command().run({
+    command: "gh",
+    args: ["pr", "list", "--state", "merged", "--limit", String(prCount),
+           "--json", "number,title,mergedAt"],
+  });
+  parts.push(prs.type === "success" && prs.stdout.trim()
+    ? `Merged PRs (JSON):\n${prs.stdout.trim()}`
+    : "Merged PRs: unavailable (gh not authenticated); rely on commits below.");
+  const log = await command().run({ command: "git", args: ["log", "-20", "--pretty=format:%h %s"] });
+  if (log.type === "success" && log.stdout.trim()) parts.push(`Recent commits:\n${log.stdout.trim()}`);
+  return parts.join("\n\n");
+}
+```
+
+Then in `loadOrPlanTasks`, *after* the `recoverPlan` early-return, fold the
+digest into the planning prompt so the task list catches up to real changes.
+Keep the `gh` call optional: a repo with no `gh` auth still plans from commits.
+This is the shape used to author the doc-refresh workflow and it demonstrably
+biased the plan toward the latest merged work.
+
+### emit-monitoring-json (any mutating archetype)
+persistent-multitask already does this; to add per-run observability to another
+archetype, instantiate `new WorkflowMonitor(selected.tag)`, call
+`recordOutcome`/`recordFailure` per unit of work, and `await monitor.writeLog(".orca/monitoring")`
+in the `finally`. `orca-ts-flow` reads these logs and `scripts/summarize-run.ts`
+summarizes them. Note `exactOptionalPropertyTypes`: build optional fields with a
+conditional spread (`...(cond ? { iterations } : {})`) rather than passing
+`undefined`.
 
 ## Slot-filling checklist
 - Replace every `REPLACE_WITH_*` constant.
