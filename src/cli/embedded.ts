@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as root from "../index.ts";
+import * as loop from "../loop/index.ts";
 import * as model from "../model/index.ts";
 
 const EmbeddedKey = Symbol.for("orca-ts.embedded");
@@ -9,6 +10,7 @@ const PackageJson = JSON.stringify({
   main: "index.cjs",
   exports: {
     ".": "./index.cjs",
+    "./loop": "./loop.cjs",
     "./model": "./model.cjs"
   }
 }, null, 2);
@@ -25,6 +27,7 @@ export function ensureOrcaResolvable(scriptPath: string): void {
 function registerEmbeddedOrca(scriptDir: string): void {
   Reflect.set(globalThis, EmbeddedKey, {
     root: { ...root },
+    loop: { ...loop },
     model: { ...model }
   });
 
@@ -38,11 +41,12 @@ function registerEmbeddedOrca(scriptDir: string): void {
   mkdirSync(packageDir, { recursive: true });
   writeFileSync(join(packageDir, "package.json"), `${PackageJson}\n`);
   writeFileSync(join(packageDir, "index.cjs"), embeddedModule("root"));
+  writeFileSync(join(packageDir, "loop.cjs"), embeddedModule("loop"));
   writeFileSync(join(packageDir, "model.cjs"), embeddedModule("model"));
   scheduleCleanup(packageDir, nodeModulesDir, createdNodeModules);
 }
 
-function embeddedModule(name: "root" | "model"): string {
+function embeddedModule(name: "root" | "loop" | "model"): string {
   return `const registry = globalThis[Symbol.for("orca-ts.embedded")];\nif (!registry) throw new Error("orca embedded library is not registered");\nmodule.exports = registry.${name};\n`;
 }
 
