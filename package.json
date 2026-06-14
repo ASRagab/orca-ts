@@ -21,6 +21,9 @@
     ".": {
       "default": "./src/index.ts"
     },
+    "./loop": {
+      "default": "./src/loop/index.ts"
+    },
     "./model": {
       "default": "./src/model/index.ts"
     },
@@ -37,6 +40,7 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "docs:check": "bun run scripts/check-doc-links.ts",
+    "check:facade-gate": "bun run scripts/check-facade-gate.ts",
     "test:integration:real": "ORCA_REAL_BACKEND_SMOKE=1 bun test tests/integration/real-backend-smoke.test.ts",
     "validate:fixtures": "bun run scripts/validate-fixtures.ts && bun run scripts/validate-adr-matrix.ts",
     "validate:release": "bun run scripts/validate-release.ts",
@@ -44,6 +48,7 @@
     "verify": "bun run typecheck && bun test && bun run docs:check && bun run validate:fixtures && bun run validate:release && bun run build:types && bun run smoke:binary"
   },
   "dependencies": {
+    "effect": "^3.21.3",
     "neverthrow": "^8.2.0",
     "zod": "^4.1.13"
   },
