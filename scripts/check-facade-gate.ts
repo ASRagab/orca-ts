@@ -18,8 +18,8 @@ import { Glob } from "bun";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-// L04 flips this to true (tasks 3.4-3.5).
-const ENFORCING = false;
+// L04 flips this to true (tasks 3.4-3.5). Env override keeps placeholder paths lintable.
+const ENFORCING = process.env.ORCA_FACADE_GATE_ENFORCING === "1";
 
 const root = process.cwd();
 
