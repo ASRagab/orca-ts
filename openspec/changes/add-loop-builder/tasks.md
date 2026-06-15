@@ -25,9 +25,9 @@
 
 - [ ] 4.1 Expand `fixLoop` into a generic convergence primitive while preserving the current issue-list overload/behavior
 - [ ] 4.2 Add `budget-exhausted` to the stop union and implement an enforceable token budget over reported `Usage`; absent usage reports `unknown` and does not trip the guard
-- [ ] 4.3 Implement the hand-built 3-color DFS graph: cycle detection returning the back-edge set, topological order, traversal
-- [ ] 4.4 Distinguish declared loop back-edges (first-class) from accidental cycles (reported)
-- [ ] 4.5 Enforce the termination contract at build/lint: a back-edge with no preset and no `.measure()` fails
+- [x] 4.3 Implement the hand-built 3-color DFS graph: cycle detection returning the back-edge set, topological order, traversal
+- [x] 4.4 Distinguish declared loop back-edges (first-class) from accidental cycles (reported)
+- [x] 4.5 Enforce the termination contract at build/lint: a back-edge with no preset and no `.measure()` fails
 - [ ] 4.6 Unify stuck detection into one fingerprint primitive (action+inputs hash, sliding window, N-repeat + oscillation); keep failed-command signature as a configured projection
 - [ ] 4.7 Tests: current `fixLoop` callers still pass, unguarded back-edge rejected, budget-exhausted stop, missing-usage budget behavior, repeated-fingerprint `stuck`, A→B→A oscillation `stuck`
 
