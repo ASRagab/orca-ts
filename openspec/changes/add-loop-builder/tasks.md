@@ -7,11 +7,11 @@
 
 ## 2. StateStore port + default adapter
 
-- [ ] 2.1 Define the `StateStore` port: `load / checkpoint / branch / merge / history`, all `Result`-typed
-- [ ] 2.2 Define the zod-typed task-manifest type and the `measure`/progress projection over it
-- [ ] 2.3 Implement the `snapshot` adapter (JSON to `.orca/state-<hash>.json` per cycle); `branch` = copy-on-fanout, `merge` = reducer
-- [ ] 2.4 Implement `history` for the `snapshot` adapter (append/read prior cycle snapshots)
-- [ ] 2.5 Tests: zero-config snapshot persistence, adapter-swap leaves loop code unchanged, branch/merge round-trip
+- [x] 2.1 Define the `StateStore` port: `load / checkpoint / branch / merge / history`, all `Result`-typed
+- [x] 2.2 Define the zod-typed task-manifest type and the `measure`/progress projection over it
+- [x] 2.3 Implement the `snapshot` adapter (JSON to `.orca/state-<hash>.json` per cycle); `branch` = copy-on-fanout, `merge` = reducer
+- [x] 2.4 Implement `history` for the `snapshot` adapter (append/read prior cycle snapshots)
+- [x] 2.5 Tests: zero-config snapshot persistence, adapter-swap leaves loop code unchanged, branch/merge round-trip
 
 ## 3. Effect engine behind the facade
 
