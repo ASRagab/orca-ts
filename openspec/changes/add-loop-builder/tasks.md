@@ -33,9 +33,9 @@
 
 ## 5. Builder API + preset archetypes
 
-- [ ] 5.1 Implement `loop()` lowering to `flow()` + `fixLoop()`: `.reason()`, `.step()`, `.measure()`, `.until()`, `.guard()`
-- [ ] 5.2 Implement preset archetypes: `untilGatesGreen()`, `untilManifestComplete()`, `untilNoIssues()`, `untilConfident(t)`, `times(n)`
-- [ ] 5.3 Tests: minimal single-cycle loop runs and is engine-internals-free; preset supplies the variant; `.measure()` overrides a preset
+- [x] 5.1 Implement `loop()` lowering to `flow()` + `fixLoop()`: `.reason()`, `.step()`, `.measure()`, `.until()`, `.guard()`
+- [x] 5.2 Implement preset archetypes: `untilGatesGreen()`, `untilManifestComplete()`, `untilNoIssues()`, `untilConfident(t)`, `times(n)`
+- [x] 5.3 Tests: minimal single-cycle loop runs and is engine-internals-free; preset supplies the variant; `.measure()` overrides a preset
 
 ## 6. Fan-out / fan-in
 
