@@ -15,21 +15,21 @@
 
 ## 3. Effect engine behind the facade
 
-- [ ] 3.1 Implement the internal engine with Effect (`Schedule` for recurrence/variant stop, `Effect.all({concurrency})` + `Fiber`/`Scope` for fan-out + structured cancellation)
-- [ ] 3.2 Implement the boundary bridge: `Result` ⟷ `Effect.either`; public entry returns `Result`/plain
-- [ ] 3.3 Wire internal DI via Effect `Layer` while keeping plain authoring accessors (`fs()/git()/llm()`) Effect-free
-- [ ] 3.4 Implement the facade gate as a `verify`-blocking type-test/lint check; fail on any Effect type in public/flow surface
-- [ ] 3.5 Tests: public call returns `Result`, cancellation interrupts in-flight branches, facade gate fails on a seeded leak and passes when clean
+- [x] 3.1 Implement the internal engine with Effect (`Schedule` for recurrence/variant stop, `Effect.all({concurrency})` + `Fiber`/`Scope` for fan-out + structured cancellation)
+- [x] 3.2 Implement the boundary bridge: `Result` ⟷ `Effect.either`; public entry returns `Result`/plain
+- [x] 3.3 Wire internal DI via Effect `Layer` while keeping plain authoring accessors (`fs()/git()/llm()`) Effect-free
+- [x] 3.4 Implement the facade gate as a `verify`-blocking type-test/lint check; fail on any Effect type in public/flow surface
+- [x] 3.5 Tests: public call returns `Result`, cancellation interrupts in-flight branches, facade gate fails on a seeded leak and passes when clean
 
 ## 4. Generic convergence + cyclic graph termination
 
-- [ ] 4.1 Expand `fixLoop` into a generic convergence primitive while preserving the current issue-list overload/behavior
-- [ ] 4.2 Add `budget-exhausted` to the stop union and implement an enforceable token budget over reported `Usage`; absent usage reports `unknown` and does not trip the guard
+- [x] 4.1 Expand `fixLoop` into a generic convergence primitive while preserving the current issue-list overload/behavior
+- [x] 4.2 Add `budget-exhausted` to the stop union and implement an enforceable token budget over reported `Usage`; absent usage reports `unknown` and does not trip the guard
 - [x] 4.3 Implement the hand-built 3-color DFS graph: cycle detection returning the back-edge set, topological order, traversal
 - [x] 4.4 Distinguish declared loop back-edges (first-class) from accidental cycles (reported)
 - [x] 4.5 Enforce the termination contract at build/lint: a back-edge with no preset and no `.measure()` fails
-- [ ] 4.6 Unify stuck detection into one fingerprint primitive (action+inputs hash, sliding window, N-repeat + oscillation); keep failed-command signature as a configured projection
-- [ ] 4.7 Tests: current `fixLoop` callers still pass, unguarded back-edge rejected, budget-exhausted stop, missing-usage budget behavior, repeated-fingerprint `stuck`, A→B→A oscillation `stuck`
+- [x] 4.6 Unify stuck detection into one fingerprint primitive (action+inputs hash, sliding window, N-repeat + oscillation); keep failed-command signature as a configured projection
+- [x] 4.7 Tests: current `fixLoop` callers still pass, unguarded back-edge rejected, budget-exhausted stop, missing-usage budget behavior, repeated-fingerprint `stuck`, A→B→A oscillation `stuck`
 
 ## 5. Builder API + preset archetypes
 

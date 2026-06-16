@@ -45,7 +45,7 @@
     "validate:fixtures": "bun run scripts/validate-fixtures.ts && bun run scripts/validate-adr-matrix.ts",
     "validate:release": "bun run scripts/validate-release.ts",
     "smoke:binary": "bun run scripts/smoke-binary.ts",
-    "verify": "bun run typecheck && bun test && bun run docs:check && bun run validate:fixtures && bun run validate:release && bun run build:types && bun run smoke:binary"
+    "verify": "bun run typecheck && bun test && bun run docs:check && bun run validate:fixtures && bun run validate:release && bun run build:types && bun run check:facade-gate && bun run smoke:binary"
   },
   "dependencies": {
     "effect": "^3.21.3",
