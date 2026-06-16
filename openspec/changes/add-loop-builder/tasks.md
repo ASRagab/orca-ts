@@ -15,11 +15,11 @@
 
 ## 3. Effect engine behind the facade
 
-- [ ] 3.1 Implement the internal engine with Effect (`Schedule` for recurrence/variant stop, `Effect.all({concurrency})` + `Fiber`/`Scope` for fan-out + structured cancellation)
-- [ ] 3.2 Implement the boundary bridge: `Result` ⟷ `Effect.either`; public entry returns `Result`/plain
-- [ ] 3.3 Wire internal DI via Effect `Layer` while keeping plain authoring accessors (`fs()/git()/llm()`) Effect-free
-- [ ] 3.4 Implement the facade gate as a `verify`-blocking type-test/lint check; fail on any Effect type in public/flow surface
-- [ ] 3.5 Tests: public call returns `Result`, cancellation interrupts in-flight branches, facade gate fails on a seeded leak and passes when clean
+- [x] 3.1 Implement the internal engine with Effect (`Schedule` for recurrence/variant stop, `Effect.all({concurrency})` + `Fiber`/`Scope` for fan-out + structured cancellation)
+- [x] 3.2 Implement the boundary bridge: `Result` ⟷ `Effect.either`; public entry returns `Result`/plain
+- [x] 3.3 Wire internal DI via Effect `Layer` while keeping plain authoring accessors (`fs()/git()/llm()`) Effect-free
+- [x] 3.4 Implement the facade gate as a `verify`-blocking type-test/lint check; fail on any Effect type in public/flow surface
+- [x] 3.5 Tests: public call returns `Result`, cancellation interrupts in-flight branches, facade gate fails on a seeded leak and passes when clean
 
 ## 4. Generic convergence + cyclic graph termination
 

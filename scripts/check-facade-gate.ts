@@ -1,4 +1,4 @@
-// Facade gate (design D2) — PLACEHOLDER / non-enforcing skeleton.
+// Facade gate (design D2) — ENFORCING, verify-blocking.
 //
 // The loop engine is Effect-powered, but Effect must never leak into the public
 // authoring surface. This gate asserts no Effect type appears in:
@@ -8,20 +8,17 @@
 //   - authored workflow files (.orca/workflows/**/*.ts)
 // Internal engine files under src/loop/engine/** MAY reference Effect and are NOT scanned.
 //
-// STATUS: foundation scaffold. `ENFORCING = false` => this always exits 0 (PASS) so L01
-// can land before any engine/builder logic exists. L04 (tasks 3.4-3.5) flips `ENFORCING`
-// to true, at which point the detection below becomes verify-blocking and this script is
-// added to the `verify` chain.
+// Any Effect reference in a scanned file fails the run (exit 1) and is named. This script is
+// part of the `verify` chain and runs after `build:types` so the declaration targets exist.
+// There is intentionally NO disable switch — the gate is the single load-bearing safeguard of D2.
 //
 // Usage: bun run scripts/check-facade-gate.ts   (alias: bun run check:facade-gate)
+// Tests point ORCA_FACADE_GATE_ROOT at a temp tree to exercise the leak/clean paths in isolation.
 import { Glob } from "bun";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-// L04 flips this to true (tasks 3.4-3.5). Env override keeps placeholder paths lintable.
-const ENFORCING = process.env.ORCA_FACADE_GATE_ENFORCING === "1";
-
-const root = process.cwd();
+const root = process.env.ORCA_FACADE_GATE_ROOT ?? process.cwd();
 
 // Generated declarations to scan (built by `bun run build:types`).
 const DECLARATION_TARGETS = [
@@ -32,7 +29,8 @@ const DECLARATION_TARGETS = [
 // Authored flow/workflow files to scan.
 const SOURCE_GLOBS = ["examples/**/*.ts", ".orca/workflows/**/*.ts"];
 
-// Effect leak signatures. Conservative for the skeleton; refined when L04 makes this enforce.
+// Effect leak signatures: an `effect` import (static or dynamic), an `Effect.<Member>` reference,
+// or a bare `Effect<...>` type application — any of which means Effect reached a scanned file.
 const EFFECT_REFERENCE = /(?:from\s+["']effect["']|import\(["']effect["']\)|\bEffect\.[A-Z]|\bEffect<)/;
 
 interface Leak {
@@ -79,16 +77,6 @@ if (missing.length > 0) {
   );
 }
 
-if (!ENFORCING) {
-  console.log(
-    `✓ facade gate: PLACEHOLDER (non-enforcing) — scanned ${String(scanned.length)} file(s), ` +
-      `${String(leaks.length)} potential Effect reference(s) noted. ` +
-      `L04 (task 3.4) makes this verify-blocking.`,
-  );
-  process.exit(0);
-}
-
-// --- Enforcing path (activated by L04) ---
 if (leaks.length > 0) {
   console.error(`✖ facade gate: Effect type leaked into the public surface (${String(leaks.length)}):`);
   for (const leak of leaks) console.error(`  - ${leak.file}:${String(leak.line)}: ${leak.text}`);
