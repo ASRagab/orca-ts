@@ -46,9 +46,9 @@
 
 ## 7. Context management
 
-- [ ] 7.1 Implement automatic staged compaction by token pressure (mask → prune → summarize) with aggressive defaults and a small working window
-- [ ] 7.2 Implement large-output offload (>threshold → scratch file + injected pointer) with pointer resolution
-- [ ] 7.3 Tests: compaction escalates across thresholds, defaults apply with no config, oversized output offloaded and retrievable
+- [x] 7.1 Implement automatic staged compaction by token pressure (mask → prune → summarize) with aggressive defaults and a small working window
+- [x] 7.2 Implement large-output offload (>threshold → scratch file + injected pointer) with pointer resolution
+- [x] 7.3 Tests: compaction escalates across thresholds, defaults apply with no config, oversized output offloaded and retrievable
 
 ## 8. Sources & Sinks
 

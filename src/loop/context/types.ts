@@ -10,7 +10,7 @@ export interface CompactionConfig {
   readonly offloadThresholdChars: number;
 }
 
-/** Pointer injected in place of an offloaded oversized output. TODO(L08, task 7.2). */
+/** Pointer to an offloaded oversized output; resolves back to the full payload (see ./offload.ts). */
 export interface OffloadPointer {
   readonly path: string;
   readonly bytes: number;
