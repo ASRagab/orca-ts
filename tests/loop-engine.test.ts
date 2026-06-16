@@ -5,10 +5,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { flow, type FsTool } from "../src/index.ts";
+import { flow, flowContext, type FsTool } from "../src/index.ts";
 import {
   type EngineOutcome,
   engineFs,
+  engineGit,
+  engineLlm,
   fromResult,
   runBranches,
   runCancellable,
@@ -191,10 +193,19 @@ describe("loop engine — Layer DI resolves the flow context", () => {
     };
 
     await flow([], { fs: fakeFs })(async () => {
+      const ctx = flowContext();
       // The plain boundary captures the ambient context; the engine sees it via a Layer.
-      const program = withAmbientFlowContext(Effect.map(engineFs, (resolved) => resolved === fakeFs));
+      const program = withAmbientFlowContext(
+        Effect.all([engineFs, engineGit, engineLlm]).pipe(
+          Effect.map(([resolvedFs, resolvedGit, resolvedLlm]) => ({
+            fsIsOverride: resolvedFs === fakeFs,
+            gitMatches: resolvedGit === ctx.git,
+            llmMatches: resolvedLlm === ctx.llm,
+          })),
+        ),
+      );
       const result = await runToResult(program);
-      expect(result._unsafeUnwrap()).toBe(true);
+      expect(result._unsafeUnwrap()).toEqual({ fsIsOverride: true, gitMatches: true, llmMatches: true });
     });
   });
 });

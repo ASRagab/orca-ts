@@ -150,7 +150,6 @@ export function withAmbientFlowContext<A, E>(effect: Effect.Effect<A, E, FlowCon
 
 // In-engine equivalents of the plain fs()/git()/llm() authoring accessors, resolved from the
 // Layer. The public accessors stay Effect-free; these never leave src/loop/engine/**.
-export const engineContext: Effect.Effect<FlowContext, never, FlowContext> = FlowContextTag;
 export const engineFs = Effect.map(FlowContextTag, (context) => context.fs);
 export const engineGit = Effect.map(FlowContextTag, (context) => context.git);
 export const engineLlm = Effect.map(FlowContextTag, (context) => context.llm);

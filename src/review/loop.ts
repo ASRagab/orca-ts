@@ -21,11 +21,6 @@ export type {
  * non-convergence reasons that map onto a `regressed` verdict. */
 export type FixLoopStop = "converged" | "unfixable" | "stuck" | "timeout" | "ceiling" | "budget-exhausted";
 
-export interface FixLoopCycleReport {
-  readonly usage?: Usage;
-}
-
-export type FixLoopFixResult = FixLoopCycleReport | undefined;
 export type FixLoopFixOutcome = Result<unknown, RuntimeError>;
 
 export interface FixLoopSummary<I extends { readonly fixable: boolean } = ReviewIssue> {
