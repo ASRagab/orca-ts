@@ -11,7 +11,6 @@ import { enforceTerminationContract, type TerminationContractError } from "../te
 import type {
   ConfidenceState,
   GatesState,
-  JoinPolicy,
   LoopBuilder,
   LoopGuards,
   LoopOutcome,
@@ -297,12 +296,8 @@ export function times(n: number): TerminationPreset {
   };
 }
 
-// Opt-in fan-out / fan-in combinators (design D9 / tasks 6.1-6.2). TODO(L07).
-const NOT_IMPLEMENTED = "loop fan-out/fan-in not implemented yet (see L07)";
-export function fanOut(): never {
-  throw new Error(NOT_IMPLEMENTED);
-}
-export function fanIn(policy: JoinPolicy): never {
-  void policy;
-  throw new Error(NOT_IMPLEMENTED);
-}
+// Opt-in fan-out / fan-in combinators (spec loop-builder; design D9; tasks 6.1-6.4). They live
+// in ./fanout.ts (Effect-free, building on the engine's plain `runBoundedBranches` seam) and are
+// surfaced here so the loop authoring module exposes them; omitting them leaves the single-cycle
+// loop() surface above unchanged.
+export * from "../fanout.ts";

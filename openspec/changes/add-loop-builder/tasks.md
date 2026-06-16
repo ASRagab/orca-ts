@@ -39,10 +39,10 @@
 
 ## 6. Fan-out / fan-in
 
-- [ ] 6.1 Implement bounded `fanOut` (concurrency cap via Effect structured concurrency; isolated state copy per branch)
-- [ ] 6.2 Implement `fanIn` join policies: `barrier`, `race`, `quorum`, `reduce`, with a merge reducer and a partial-failure policy
-- [ ] 6.3 Implement condensed-summary branch returns (isolated branch context returns a bounded summary, not raw state)
-- [ ] 6.4 Tests: concurrency bound honored, quorum proceeds at k, reducer is the only merge point, partial-failure policy applied
+- [x] 6.1 Implement bounded `fanOut` (concurrency cap via Effect structured concurrency; isolated state copy per branch)
+- [x] 6.2 Implement `fanIn` join policies: `barrier`, `race`, `quorum`, `reduce`, with a merge reducer and a partial-failure policy
+- [x] 6.3 Implement condensed-summary branch returns (isolated branch context returns a bounded summary, not raw state)
+- [x] 6.4 Tests: concurrency bound honored, quorum proceeds at k, reducer is the only merge point, partial-failure policy applied
 
 ## 7. Context management
 
