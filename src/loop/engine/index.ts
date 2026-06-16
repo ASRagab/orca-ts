@@ -12,7 +12,9 @@
 // boundary, without exposing any Effect type to the authoring accessors (design D2).
 import { Context, Effect, Layer, Ref, Schedule } from "effect";
 import type { LoopStopReason } from "../builder/types.ts";
+import type { Result } from "neverthrow";
 import { currentFlowContext, type FlowContext } from "../../flow/context.ts";
+import { runToResult } from "./bridge.ts";
 
 export * from "./bridge.ts";
 
@@ -92,6 +94,29 @@ export interface BranchesSpec<A> {
  */
 export function runBranches<A>(spec: BranchesSpec<A>): Effect.Effect<readonly A[], Error> {
   return Effect.all(spec.branches, { concurrency: spec.concurrency });
+}
+
+/**
+ * Plain-boundary bounded fan-out — the Effect-free seam L07's `fanOut` builds on (design D2). Each
+ * thunk is a self-contained unit of branch work that resolves to its own outcome value and MUST
+ * NOT reject: the caller captures branch success/failure AS DATA so a partial-failure policy can
+ * weigh it, and a thunk that throws anyway is squashed into the outer `err`. Branches run with the
+ * given concurrency cap (`runBranches` ⇒ `Effect.all { concurrency }`); an aborted `signal` hard-
+ * interrupts every in-flight branch via structured concurrency and surfaces as `err`. Returning a
+ * `Result` here means `src/loop/fanout.ts` never names an Effect type — Effect stays in the engine.
+ */
+export async function runBoundedBranches<A>(
+  thunks: readonly (() => Promise<A>)[],
+  concurrency: number,
+  signal?: AbortSignal,
+): Promise<Result<readonly A[], Error>> {
+  const branches = thunks.map((thunk) =>
+    Effect.tryPromise({
+      try: () => thunk(),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+  return runToResult(runBranches({ branches, concurrency }), signal === undefined ? {} : { signal });
 }
 
 /**
