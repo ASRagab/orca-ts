@@ -81,10 +81,10 @@
 
 ## 12. Optional state adapters
 
-- [ ] 12.1 Implement the `sqlite` adapter on `bun:sqlite` (per-step WAL checkpoint + lease-based crash recovery; `history` table for time-travel)
-- [ ] 12.2 Spike DBOS on Bun (functional `registerWorkflow`/`runStep` API, external/non-bundled) and record the verdict as a follow-up design note; do not ship `--durable` in this change
-- [ ] 12.3 Leave `dolt` deferred: keep only the design note; no adapter implementation (port shape already supports it)
-- [ ] 12.4 Tests: sqlite mid-loop resume, default run needs no service, DBOS/Dolt are not exposed as selectable adapters
+- [x] 12.1 Implement the `sqlite` adapter on `bun:sqlite` (per-step WAL checkpoint + lease-based crash recovery; `history` table for time-travel)
+- [x] 12.2 Spike DBOS on Bun (functional `registerWorkflow`/`runStep` API, external/non-bundled) and record the verdict as a follow-up design note; do not ship `--durable` in this change
+- [x] 12.3 Leave `dolt` deferred: keep only the design note; no adapter implementation (port shape already supports it)
+- [x] 12.4 Tests: sqlite mid-loop resume, default run needs no service, DBOS/Dolt are not exposed as selectable adapters
 
 ## 13. Docs, examples, verification
 
