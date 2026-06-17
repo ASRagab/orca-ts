@@ -2,6 +2,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Usage } from "../model/index.ts";
+import { TokenBudgetCounter, type TokenUsageSummary } from "../loop/termination.ts";
+import type { LoopStopReason } from "../loop/builder/types.ts";
 
 export type StageStatus = "completed" | "failed";
 /** Discriminated cleanup verdict. `clean`/`repaired` are safe improvements
@@ -72,6 +74,58 @@ export interface WorkflowRunSummary {
   readonly durationMs: number;
 }
 
+// Per-cycle progress stream (spec execution-observability / tasks §9). The stream is derived from
+// the same manifest projection (L05 `measure`) that drives the termination variant, so the reported
+// `measure`/`delta` cannot drift from the stop reason. Cumulative usage reuses the L02
+// `TokenBudgetCounter`, so a cycle with no backend usage surfaces as `unknown`, never zero.
+
+/** Stop status known at a cycle. `running` = no terminal reason yet — the incipient-runaway
+ * window where a flat `delta` with rising `cumulativeUsage` is visible before a guard fires. */
+export type CycleStopStatus = LoopStopReason | "running";
+
+/** One branch of a fan-out cycle. Missing backend usage is `unknown`, not zero. */
+export interface BranchProgress {
+  readonly id: string;
+  readonly status: StageStatus;
+  readonly usage: Usage | "unknown";
+}
+
+/** A completed cycle's progress record, appended to the run log. */
+export interface CycleProgress {
+  readonly iteration: number;
+  readonly measure: number;
+  /** Change in `measure` vs the prior recorded cycle (`0` for the first). */
+  readonly delta: number;
+  readonly stopReasonSoFar: CycleStopStatus;
+  /** Present only for a fan-out cycle. */
+  readonly branches?: readonly BranchProgress[];
+  /** Cumulative reported usage across cycles; `unknown` (not zero) once any cycle reports none. */
+  readonly cumulativeUsage: TokenUsageSummary;
+}
+
+/** A single branch of a fan-out cycle as observed by the caller; `usage` omitted ⇒ `unknown`. */
+export interface BranchObservation {
+  readonly id: string;
+  readonly status: StageStatus;
+  readonly usage?: Usage;
+}
+
+/** Caller input for {@link WorkflowMonitor.recordCycle}; `delta` and `cumulativeUsage` are derived. */
+export interface CycleObservation {
+  readonly iteration: number;
+  /** Current measure from the manifest projection / loop variant. */
+  readonly measure: number;
+  /** Total backend usage reported this cycle (non-fanout); omit ⇒ cumulative becomes `unknown`. */
+  readonly usage?: Usage;
+  /** Per-branch records for a fan-out cycle; when present, cumulative usage folds each branch. */
+  readonly branches?: readonly BranchObservation[];
+  /** Terminal stop reason for the loop-ending cycle. Defaults to a value derived from the variant:
+   * `converged` when `measure <= floor`, else `running`. */
+  readonly stopReason?: LoopStopReason;
+  /** Convergence floor for the derived stop status; default `0` (the loop builder's floor). */
+  readonly floor?: number;
+}
+
 export interface WorkflowRunLog {
   readonly runId: string;
   readonly startedAt: string;
@@ -80,6 +134,8 @@ export interface WorkflowRunLog {
   readonly outcomes: readonly OutcomeLog[];
   readonly failures: readonly FailureLog[];
   readonly summary: WorkflowRunSummary;
+  /** Per-cycle progress stream; empty for a non-loop run. */
+  readonly progress: readonly CycleProgress[];
 }
 
 export class WorkflowMonitor {
@@ -89,6 +145,9 @@ export class WorkflowMonitor {
   readonly #stages: StageLog[] = [];
   readonly #outcomes: OutcomeLog[] = [];
   readonly #failures: FailureLog[] = [];
+  readonly #progress: CycleProgress[] = [];
+  readonly #cumulativeUsage = new TokenBudgetCounter();
+  #lastMeasure: number | undefined;
 
   constructor(backend: string) {
     this.#runId = randomUUID();
@@ -121,6 +180,37 @@ export class WorkflowMonitor {
     this.#failures.push(log);
   }
 
+  /** Append a per-cycle progress record. `delta` is derived against the prior cycle's `measure`
+   * and `cumulativeUsage` is folded with the L02 token counter, so both stay consistent with the
+   * termination variant and a usage-less cycle reports `unknown` rather than zero. */
+  recordCycle(observation: CycleObservation): void {
+    if (observation.branches !== undefined) {
+      for (const branch of observation.branches) {
+        this.#cumulativeUsage.record(branch.usage);
+      }
+    } else {
+      this.#cumulativeUsage.record(observation.usage);
+    }
+
+    const delta = this.#lastMeasure === undefined ? 0 : observation.measure - this.#lastMeasure;
+    this.#lastMeasure = observation.measure;
+
+    const floor = observation.floor ?? 0;
+    const stopReasonSoFar: CycleStopStatus =
+      observation.stopReason ?? (observation.measure <= floor ? "converged" : "running");
+
+    this.#progress.push({
+      iteration: observation.iteration,
+      measure: observation.measure,
+      delta,
+      stopReasonSoFar,
+      ...(observation.branches === undefined
+        ? {}
+        : { branches: observation.branches.map(toBranchProgress) }),
+      cumulativeUsage: this.#cumulativeUsage.summary(),
+    });
+  }
+
   toJson(): WorkflowRunLog {
     const count = (verdict: OutcomeVerdict): number =>
       this.#outcomes.filter((outcome) => outcome.verdict === verdict).length;
@@ -136,6 +226,7 @@ export class WorkflowMonitor {
       outcomes: [...this.#outcomes],
       failures: [...this.#failures],
       summary: { pass, fail, skip, preconditionSkip, durationMs: Date.now() - this.#startedAt.getTime() },
+      progress: [...this.#progress],
     };
   }
 
@@ -144,4 +235,8 @@ export class WorkflowMonitor {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, JSON.stringify(this.toJson(), null, 2));
   }
+}
+
+function toBranchProgress(branch: BranchObservation): BranchProgress {
+  return { id: branch.id, status: branch.status, usage: branch.usage ?? "unknown" };
 }

@@ -14,7 +14,8 @@ function log(backend: string, outcomes: readonly OutcomeLog[]): WorkflowRunLog {
     stages: [],
     outcomes: [...outcomes],
     failures: [],
-    summary: { pass: 0, fail: 0, skip: 0, preconditionSkip: 0, durationMs: 0 }
+    summary: { pass: 0, fail: 0, skip: 0, preconditionSkip: 0, durationMs: 0 },
+    progress: []
   };
 }
 

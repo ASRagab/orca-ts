@@ -121,6 +121,16 @@ class LoopBuilderImpl<S> implements LoopBuilder<S> {
           }
           current = body.value.state;
           cycle += 1;
+          // Post-cycle measure from the SAME variant the loop converges on, so the emitted
+          // progress stream cannot drift from the termination variant (spec execution-observability).
+          if (options.onCycle !== undefined) {
+            const measure = await variant(current, cycle);
+            options.onCycle({
+              iteration: cycle,
+              measure,
+              ...(body.value.usage === undefined ? {} : { usage: body.value.usage }),
+            });
+          }
           return ok(body.value.usage === undefined ? {} : { usage: body.value.usage });
         },
         fingerprint: false,
