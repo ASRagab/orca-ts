@@ -179,6 +179,16 @@ export const FileSystemErrorSchema = z.object({
   message: z.string()
 });
 
+// The loop-io trigger/output seam (`Source`/`Sink`) reports failures here. `kind` is the
+// stringified SourceKind/SinkKind; modelled as a plain string so this schema stays free of any
+// loop-module dependency (model must not import loop).
+export const IoFailedErrorSchema = z.object({
+  _tag: z.literal("IoFailed"),
+  seam: z.enum(["source", "sink"]),
+  kind: z.string(),
+  message: z.string()
+});
+
 export const RuntimeErrorSchema = z.discriminatedUnion("_tag", [
   NothingToCommitErrorSchema,
   BranchAlreadyExistsErrorSchema,
@@ -188,7 +198,8 @@ export const RuntimeErrorSchema = z.discriminatedUnion("_tag", [
   UnsupportedFeatureErrorSchema,
   BackendFailedErrorSchema,
   TypecheckFailedErrorSchema,
-  FileSystemErrorSchema
+  FileSystemErrorSchema,
+  IoFailedErrorSchema
 ]);
 
 export type BackendTag = z.infer<typeof BackendTagSchema>;

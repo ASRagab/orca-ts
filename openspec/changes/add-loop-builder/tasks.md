@@ -52,10 +52,10 @@
 
 ## 8. Sources & Sinks
 
-- [ ] 8.1 Define the `Source` interface; implement `manual`, `cron`, `watch`, `webhook`, `queue`
-- [ ] 8.2 Define the `Sink` interface; implement `pr`, `file`, `slack`, `queue`, `stdout` (all `Result`-typed)
-- [ ] 8.3 Provide fake `Source`/`Sink` in `test-utils`
-- [ ] 8.4 Tests: bundled source triggers a run, sink failure is `err`, whole loop runs end-to-end against fake `Source`/`Sink` plus fake `FlowContext` services with no real trigger/output/tool IO
+- [x] 8.1 Define the `Source` interface; implement `manual`, `cron`, `watch`, `webhook`, `queue`
+- [x] 8.2 Define the `Sink` interface; implement `pr`, `file`, `slack`, `queue`, `stdout` (all `Result`-typed)
+- [x] 8.3 Provide fake `Source`/`Sink` in `test-utils`
+- [x] 8.4 Tests: bundled source triggers a run, sink failure is `err`, whole loop runs end-to-end against fake `Source`/`Sink` plus fake `FlowContext` services with no real trigger/output/tool IO
 
 ## 9. Observability
 

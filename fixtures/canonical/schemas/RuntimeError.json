@@ -213,6 +213,35 @@
         "message"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "_tag": {
+          "type": "string",
+          "const": "IoFailed"
+        },
+        "seam": {
+          "type": "string",
+          "enum": [
+            "source",
+            "sink"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "_tag",
+        "seam",
+        "kind",
+        "message"
+      ],
+      "additionalProperties": false
     }
   ]
 }

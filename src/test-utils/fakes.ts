@@ -5,6 +5,7 @@ import type { LlmBackend, LlmTool, AutonomousRequest } from "../backends/types.t
 import { StreamConversation, type Conversation } from "../conversation/conversation.ts";
 import { sessionId } from "../model/brand.ts";
 import type { BackendTag } from "../model/schemas.ts";
+import type { Sink, Source, SourceSubscription } from "../loop/io/index.ts";
 
 export interface FakeSubprocess {
   readonly lines: readonly string[];
@@ -142,5 +143,60 @@ export function scriptedFakeAgent(steps: readonly ScriptedFakeAgentStep[]): Scri
         ...(step.diff === undefined ? {} : { diff: step.diff })
       }));
     }
+  };
+}
+
+// --- Fake Source / Sink (loop-io spec): in-memory, so a loop runs end to end with no real ---
+// --- trigger or output IO. The fake sink captures emitted outputs; the fake source fires on demand. ---
+
+export interface FakeSource<E> extends Source<E> {
+  readonly kind: "manual";
+  /** Push a trigger event to the started handler. No-op until started / after stop. */
+  fire(event: E): void;
+  /** Whether a handler is currently subscribed. */
+  isStarted(): boolean;
+}
+
+export function fakeSource<E = void>(): FakeSource<E> {
+  let handler: ((event: E) => void) | undefined;
+  return {
+    kind: "manual",
+    isStarted: () => handler !== undefined,
+    fire(event) {
+      handler?.(event);
+    },
+    start(received) {
+      handler = received;
+      const sub: SourceSubscription = {
+        stop() {
+          handler = undefined;
+          return Promise.resolve(ok(undefined));
+        },
+      };
+      return Promise.resolve(ok(sub));
+    },
+  };
+}
+
+export interface FakeSink<A> extends Sink<A> {
+  readonly kind: "stdout";
+  /** Outputs captured by each successful emit, in order. */
+  emitted(): readonly A[];
+}
+
+/** A capturing Sink. With `failWith`, every emit returns `err(RuntimeError)` and captures nothing. */
+export function fakeSink<A = unknown>(options: { failWith?: RuntimeError } = {}): FakeSink<A> {
+  const captured: A[] = [];
+  const { failWith } = options;
+  return {
+    kind: "stdout",
+    emitted: () => captured,
+    emit(output) {
+      if (failWith !== undefined) {
+        return Promise.resolve(err(failWith));
+      }
+      captured.push(output);
+      return Promise.resolve(ok(undefined));
+    },
   };
 }
