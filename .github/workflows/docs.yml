@@ -7,17 +7,15 @@ name: Docs
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build
+  deploy:
+    name: Build And Publish
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -33,20 +31,22 @@ jobs:
       - name: Build docs
         run: bun run docs:site:build
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: website/dist
-
-  deploy:
-    name: Deploy
-    needs: build
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
+      - name: Publish docs branch
+        env:
+          PAGES_WORKTREE: ${{ runner.temp }}/gh-pages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin gh-pages:refs/remotes/origin/gh-pages --depth=1
+          git worktree add "$PAGES_WORKTREE" origin/gh-pages
+          find "$PAGES_WORKTREE" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -R website/dist/. "$PAGES_WORKTREE"/
+          touch "$PAGES_WORKTREE/.nojekyll"
+          cd "$PAGES_WORKTREE"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No docs changes to publish."
+          else
+            git commit -m "Deploy documentation website"
+            git push origin HEAD:gh-pages
+          fi
