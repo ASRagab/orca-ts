@@ -73,11 +73,11 @@
 
 ## 11. Collapse legacy loop functions behind compatibility wrappers
 
-- [ ] 11.1 Express `runReviewAndFixLoop` behavior as a review-and-fix `.until()` strategy over `fixLoop`
-- [ ] 11.2 Express `implementTaskLoop` behavior as a sequential-task `.until()` strategy over `fixLoop`
-- [ ] 11.3 Keep both public exports for one release as deprecated wrappers; preserve `PlanTool` and `ReviewTool` compatibility
-- [ ] 11.4 Ship a migration note from wrappers to `.until()` strategies
-- [ ] 11.5 Tests: both strategies reproduce prior behavior; wrappers emit deprecation warnings; existing plan/review tests continue to pass
+- [x] 11.1 Express `runReviewAndFixLoop` behavior as a review-and-fix `.until()` strategy over `fixLoop`
+- [x] 11.2 Express `implementTaskLoop` behavior as a sequential-task `.until()` strategy over `fixLoop`
+- [x] 11.3 Keep both public exports for one release as deprecated wrappers; preserve `PlanTool` and `ReviewTool` compatibility
+- [x] 11.4 Ship a migration note from wrappers to `.until()` strategies
+- [x] 11.5 Tests: both strategies reproduce prior behavior; wrappers emit deprecation warnings; existing plan/review tests continue to pass
 
 ## 12. Optional state adapters
 
