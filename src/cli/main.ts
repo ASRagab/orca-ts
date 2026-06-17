@@ -2,8 +2,39 @@ import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { runTypecheck } from "../runner/index.ts";
 import { FLOW_ARGS_ENV } from "../flow/args.ts";
-import { parseCliArgs } from "./args.ts";
+import { unsupportedFeature, type RuntimeError } from "../model/index.ts";
+import {
+  discoverLoops,
+  exitCodeForRun,
+  formatLoopListing,
+  listLoops,
+  loadDefinition,
+  serve,
+  type LoopRunError,
+  type ModuleImporter
+} from "../loop/index.ts";
+import { parseCliArgs, type CliArgs } from "./args.ts";
 import { ORCA_VERSION } from "./version.ts";
+
+const USAGE = [
+  "Usage: orca [--backend <name>] [--no-typecheck] <flow.ts> [-- <task args>]",
+  "       orca run <loop>      run a loop once; exit status reflects the stop reason",
+  "       orca serve <loop>    host a loop's trigger, spawning a child process per firing",
+  "       orca loops           list defined loops with their source and sink",
+  "       orca --version"
+].join("\n");
+
+const DEFERRED_DBOS_NOTE =
+  "durable DBOS mode is deferred — see openspec/changes/add-loop-builder/design.md §D5 (DBOS Bun-compatibility spike). " +
+  "Run without --durable/--postgres-url and without `--state dbos` to use the service-free default adapter.";
+
+/** Durable DBOS mode is not selectable in this change (spec distribution; design D5). */
+export function deferredDurableError(args: CliArgs): RuntimeError | undefined {
+  if (args.durable === true || args.postgresUrl !== undefined || args.stateAdapter === "dbos") {
+    return unsupportedFeature("durable", DEFERRED_DBOS_NOTE);
+  }
+  return undefined;
+}
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   const args = parseCliArgs(argv);
@@ -13,11 +44,48 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return;
   }
 
-  if (args.help || !args.script) {
-    console.log("Usage: orca [--backend <name>] [--no-typecheck] [--version] <flow.ts>");
+  // Reject deferred durable mode before any typecheck/import so the pointer surfaces immediately.
+  const deferred = deferredDurableError(args);
+  if (deferred !== undefined) {
+    process.stderr.write(`orca: ${describeError(deferred)}\n`);
+    process.exitCode = 1;
     return;
   }
 
+  if (args.help || (args.command === undefined && args.script === undefined)) {
+    console.log(USAGE);
+    return;
+  }
+
+  if ((args.command === "run" || args.command === "serve") && args.loop === undefined) {
+    process.stderr.write(`orca: ${args.command} requires a <loop> (module path or registered name)\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!(await preflight(args))) {
+    return; // typecheck failed; exit code already set
+  }
+
+  if (args.command === "loops") {
+    await runLoops();
+    return;
+  }
+  if (args.command === "run" && args.loop !== undefined) {
+    await runLoop(args.loop);
+    return;
+  }
+  if (args.command === "serve" && args.loop !== undefined) {
+    await runServe(args.loop);
+    return;
+  }
+  if (args.script !== undefined) {
+    await runFlowScript(args.script);
+  }
+}
+
+/** Shared preflight for every command: typecheck (unless skipped) + backend/flow-arg env wiring. */
+async function preflight(args: CliArgs): Promise<boolean> {
   const typecheck = await runTypecheck({ cwd: process.cwd(), skip: args.skipTypecheck });
   if (typecheck.isErr()) {
     const error = typecheck.error;
@@ -28,7 +96,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       process.stderr.write(`${JSON.stringify(error)}\n`);
     }
     process.exitCode = 1;
-    return;
+    return false;
   }
 
   if (typecheck.value.skipped) {
@@ -43,13 +111,119 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   if (args.backend) {
     process.env.ORCA_BACKEND = args.backend;
   }
-
   process.env[FLOW_ARGS_ENV] = JSON.stringify(args.flowArgs);
+  return true;
+}
 
-  const resolvedScript = resolve(args.script);
+/** `orca loops`: discover and list defined loops without firing any Source / backend / Sink. */
+async function runLoops(): Promise<void> {
+  const importLoop = await loopImporter();
+  const discovered = await discoverLoops({ dir: resolve(process.cwd(), ".orca", "loops"), import: importLoop });
+  if (discovered.isErr()) {
+    process.stderr.write(`orca: ${describeError(discovered.error)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(formatLoopListing(listLoops(discovered.value.values())));
+}
+
+/** `orca run <loop>`: resolve the loop, run it once, exit with a status reflecting the stop reason. */
+async function runLoop(target: string): Promise<void> {
+  const importLoop = await loopImporter();
+  const loaded = await loadDefinition(target, { cwd: process.cwd(), import: importLoop });
+  if (loaded.isErr()) {
+    process.stderr.write(`orca: ${describeError(loaded.error)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const definition = loaded.value;
+  const outcome = await definition.run(readLoopEvent());
+  if (outcome.isErr()) {
+    process.stderr.write(`orca: loop "${definition.name}" failed: ${describeError(outcome.error)}\n`);
+  } else {
+    process.stderr.write(
+      `orca: loop "${definition.name}" stopped (${outcome.value.stopReason}) after ${String(outcome.value.iterations)} iteration(s)\n`
+    );
+  }
+  process.exitCode = exitCodeForRun(outcome);
+}
+
+/** `orca serve <loop>`: a thin supervisor owning the trigger, spawning a child per firing (D8). */
+async function runServe(target: string): Promise<void> {
+  const importLoop = await loopImporter();
+  const loaded = await loadDefinition(target, { cwd: process.cwd(), import: importLoop });
+  if (loaded.isErr()) {
+    process.stderr.write(`orca: ${describeError(loaded.error)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const definition = loaded.value;
+  const supervisor = await serve(definition, { loopRef: target });
+  if (supervisor.isErr()) {
+    process.stderr.write(`orca: ${describeError(supervisor.error)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  process.stderr.write(
+    `orca: serving loop "${definition.name}" (source=${definition.source.kind}); press Ctrl-C to stop\n`
+  );
+  await waitForShutdown();
+  await supervisor.value.stop();
+}
+
+/** Legacy flow-script path — unchanged behavior. */
+async function runFlowScript(script: string): Promise<void> {
+  const resolvedScript = resolve(script);
   const { ensureOrcaResolvable } = await import("./embedded.ts");
   ensureOrcaResolvable(resolvedScript);
   await import(pathToFileURL(resolvedScript).href);
+}
+
+/** An embedded-aware importer: register the standalone orca-ts fallback, then import the module. */
+async function loopImporter(): Promise<ModuleImporter> {
+  const { ensureOrcaResolvable } = await import("./embedded.ts");
+  return async (absolutePath) => {
+    ensureOrcaResolvable(absolutePath);
+    const module: unknown = await import(pathToFileURL(absolutePath).href);
+    return module as Record<string, unknown>;
+  };
+}
+
+/** A one-shot `orca run` reads its trigger event from the environment (set by the serve child). */
+function readLoopEvent(): unknown {
+  const raw = process.env.ORCA_LOOP_EVENT;
+  if (raw === undefined) {
+    return undefined;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed;
+  } catch {
+    return raw;
+  }
+}
+
+/** Resolve when the supervisor receives a termination signal. */
+function waitForShutdown(): Promise<void> {
+  return new Promise<void>((resolveShutdown) => {
+    const stop = (): void => {
+      process.off("SIGINT", stop);
+      process.off("SIGTERM", stop);
+      resolveShutdown();
+    };
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+  });
+}
+
+function describeError(error: LoopRunError): string {
+  if ("message" in error) {
+    return error.message;
+  }
+  if ("reason" in error) {
+    return error.reason;
+  }
+  return JSON.stringify(error);
 }
 
 if (import.meta.main) {

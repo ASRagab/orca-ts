@@ -65,11 +65,11 @@
 
 ## 10. CLI
 
-- [ ] 10.1 Add explicit CLI command parsing for `run`, `serve`, and `loops` while preserving legacy `orca <flow.ts>` behavior, `--backend`, `--no-typecheck`, and post-`--` flow args
-- [ ] 10.2 Define loop discovery: `orca run <loop>` accepts a loop module path or registered loop name; `orca loops` lists metadata from the same registry without executing loops
-- [ ] 10.3 Implement `orca serve <loop>` as a thin supervisor owning triggers, spawning an ephemeral child per firing
-- [ ] 10.4 Child isolation: independent termination incl. OS-level kill; cross-loop token budget via the shared manifest store
-- [ ] 10.5 Tests: legacy `orca <flow.ts>` still works, `run` exits with stop-reason status, `loops` lists without side effects, trigger firing spawns isolated child, one child crash leaves supervisor + others alive
+- [x] 10.1 Add explicit CLI command parsing for `run`, `serve`, and `loops` while preserving legacy `orca <flow.ts>` behavior, `--backend`, `--no-typecheck`, and post-`--` flow args
+- [x] 10.2 Define loop discovery: `orca run <loop>` accepts a loop module path or registered loop name; `orca loops` lists metadata from the same registry without executing loops
+- [x] 10.3 Implement `orca serve <loop>` as a thin supervisor owning triggers, spawning an ephemeral child per firing
+- [x] 10.4 Child isolation: independent termination incl. OS-level kill; cross-loop token budget via the shared manifest store
+- [x] 10.5 Tests: legacy `orca <flow.ts>` still works, `run` exits with stop-reason status, `loops` lists without side effects, trigger firing spawns isolated child, one child crash leaves supervisor + others alive
 
 ## 11. Collapse legacy loop functions behind compatibility wrappers
 
