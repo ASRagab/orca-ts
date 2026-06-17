@@ -11,6 +11,8 @@ describe("examples", () => {
       "implement.ts",
       "issue-pr-bugfix.ts",
       "issue-pr.ts",
+      "loop-fanout.ts",
+      "loop-single-cycle.ts",
       "multi-backend-compare.ts",
     ]);
   });

@@ -138,21 +138,91 @@ Precedence:
 2. `ORCA_BACKEND_MODEL` overrides `perBackend[tag].model` and `config.model`.
 3. Flow code that calls `claude()`, `codex()`, `opencode()`, or `pi()` directly pins the backend and ignores `--backend`.
 
+## Loops
+
+A loop is a flow that repeats a cycle until a measurable goal is met. `loop()` reads like a guarded `while`: declare the per-cycle work, declare the measure that must reach zero, and `.run()` lowers it onto `flow()` plus the generic convergence primitive. The single-cycle case names no engine, queue, or `Effect` symbol.
+
+```ts
+import { codex, loop, untilManifestComplete, type TaskManifest } from "orca-ts";
+
+const result = await loop<TaskManifest>("ralph")
+  .reason(codex(), { prompt: "Pick the next pending task and implement it." })
+  .step("mark-one-task-complete", passOneTask)
+  .until(untilManifestComplete())
+  .guard({ maxIterations: 10 })
+  .run(manifest);
+```
+
+| Method | Purpose |
+| --- | --- |
+| `.reason(backend, request)` | The single LLM verb; drives a backend autonomously for one cycle |
+| `.step(name, fn)` | A deterministic transform over the threaded loop state |
+| `.until(variant)` | The termination variant — a preset (below) or a custom `{ measure }` |
+| `.measure(fn)` | Power-user variant override; takes precedence over a preset |
+| `.guard({ maxIterations, wallClockMs, tokenBudget })` | Seatbelt guards layered under the variant |
+| `.run(initial, options?)` | Build (enforcing termination by construction) then run; returns `Result<LoopOutcome, LoopRunError>` |
+
+A back-edge with no variant fails at build time, not at run time: a loop must declare what converges. Full runnable version: [`examples/loop-single-cycle.ts`](examples/loop-single-cycle.ts).
+
+### Preset Archetypes
+
+A preset bundles a loop variant (a measure with floor `0`) so the author writes no measure math:
+
+| Preset | Converges when |
+| --- | --- |
+| `untilGatesGreen()` | failing tests/gates reach `0` |
+| `untilManifestComplete()` | the task manifest has no pending task |
+| `untilNoIssues()` | the open-issue list is empty |
+| `untilConfident(threshold)` | confidence reaches the threshold |
+| `times(n)` | `n` cycles have run (also contributes a `maxIterations` ceiling) |
+
+### Fan-out / Fan-in
+
+Bounded fan-out and join-policy fan-in are opt-in combinators; a plain loop never needs them. `fanOut` runs each branch over an isolated `structuredClone` of the state under a concurrency cap; `fanIn` applies a join policy (`barrier`, `race`, `quorum`, `reduce`) then a reducer — the only point where branch state recombines. See [`examples/loop-fanout.ts`](examples/loop-fanout.ts).
+
+### State Adapters
+
+Loop state targets the `StateStore` port (`load` / `checkpoint` / `branch` / `merge` / `history`); swapping the adapter never changes the loop definition.
+
+| Adapter | Factory | Use |
+| --- | --- | --- |
+| Snapshot (default) | `createSnapshotStore({ root })` | Zero-config; one JSON file per cycle at `.orca/state-<hash>.json` |
+| SQLite | `createSqliteStore({ path })` | Durable mid-loop resume: per-step WAL checkpoint, lease-based crash recovery, `history` table |
+
+`createSqliteStore` runs on `bun:sqlite` and returns a `Result` because it touches the filesystem on open. Durable service-backed modes (DBOS, Dolt) are deferred — see [Agent notes](AGENTS.md). The Effect-powered engine that drives cycles, recurrence, and bounded concurrency never reaches this authoring surface; a verify-blocking facade gate enforces it.
+
+### Distributing A Loop
+
+`defineLoop({ name, source, sink, onTrigger })` packages a loop with its trigger `Source` and output `Sink`. A loop module exports the definition; importing it only registers it (no trigger fires, no backend runs), so `orca loops` discovery is side-effect-free. Place loop modules under `.orca/loops/`. `orca run <loop>` runs one firing; `orca serve <loop>` hosts the trigger and spawns an isolated child per firing.
+
 ## CLI Reference
 
 ```bash
-orca [--backend <name>] [--no-typecheck] [--version] <flow.ts>
+orca [--backend <name>] [--no-typecheck] <flow.ts> [-- <task args>]
+orca run <loop>      # run a loop once; exit status reflects the stop reason
+orca serve <loop>    # host a loop's trigger, spawning a child process per firing
+orca loops           # list defined loops with their source and sink
+orca --version
 ```
+
+| Command | Meaning |
+| --- | --- |
+| `<flow.ts>` | Legacy script path: import and run a flow file (unchanged behavior) |
+| `run <loop>` | Run a loop once. `<loop>` is a loop module path or a registered loop name; exit code reflects the stop reason |
+| `serve <loop>` | Run a thin supervisor that owns the loop's trigger `Source` and spawns one isolated child process per firing |
+| `loops` | Discover and list loops from `.orca/loops/` without firing any trigger, backend, or sink |
 
 | Option | Meaning |
 | --- | --- |
-| `<flow.ts>` | TypeScript flow file to import and run |
 | `--backend <name>` | Validates the tag and sets `ORCA_BACKEND`, which `selectBackend()` reads |
 | `--no-typecheck` | Skips the `tsc --noEmit` pre-flight and sets `ORCA_TYPECHECK_SKIPPED=1` |
 | `--version`, `-v` | Prints `orca <version>` |
 | `--help`, `-h` | Prints usage |
+| `-- <task args>` | Everything after `--` is the flow/loop task input, read via `flowArgs()` |
 
-By default, the CLI typechecks the current project before importing the flow when it can find project typecheck setup: `typescript`, `tsconfig.json`, and a local `orca-ts` Git/source dependency. A zero-project standalone binary flow without `tsconfig.json` skips this guard. Use `--no-typecheck` only when you intentionally want to skip it.
+Loop verbs and the legacy script path share one preflight: the typecheck guard, `--backend`, and the `--` task-arg channel apply to all of them. By default, the CLI typechecks the current project before importing when it can find project typecheck setup: `typescript`, `tsconfig.json`, and a local `orca-ts` Git/source dependency. A zero-project standalone binary flow without `tsconfig.json` skips this guard. Use `--no-typecheck` only when you intentionally want to skip it.
+
+Durable, service-backed loop modes (`--durable`, `--postgres-url`, `--state dbos`) are parsed but rejected with a pointer to the deferral rationale — see [Agent notes](AGENTS.md). The default state adapter needs no service.
 
 ## Examples
 
@@ -167,6 +237,8 @@ The best way to learn the authoring model is to start with the examples.
 | `examples/issue-pr-bugfix.ts` | Bugfix-oriented issue workflow |
 | `examples/multi-backend-compare.ts` | Comparing backend behavior |
 | `examples/epic.ts` | Structured output with a Zod schema and a directly pinned `codex()` backend |
+| `examples/loop-single-cycle.ts` | A single-cycle preset loop (`loop()` + `untilManifestComplete()`), runnable with no real backend |
+| `examples/loop-fanout.ts` | A fan-out / fan-in loop: bounded-concurrency branches joined through a reducer |
 | `workflows/ai-slop-cleanup.ts` | Full dogfood workflow with monitoring support |
 
 ## Agent Skills
@@ -247,6 +319,7 @@ import {
   currentFlowContext,
   flow,
   llm,
+  loop,
   opencode,
   pi,
   plan,
