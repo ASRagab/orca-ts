@@ -10,3 +10,6 @@ dist/
 .claude/handoffs/
 .claude/plans/
 tests/ai-slop-cleanup-workflow.test.ts
+
+# Astro generated metadata
+website/.astro/

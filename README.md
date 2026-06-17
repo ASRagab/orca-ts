@@ -12,6 +12,8 @@ The package is version `0.1.0`. The canonical install path is the standalone `or
 
 Canonical repository: <https://github.com/ASRagab/orca-ts>
 
+Documentation website: <https://ASRagab.github.io/orca-ts/>
+
 ## Quickstart
 
 ### Requirements
