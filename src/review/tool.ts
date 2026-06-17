@@ -1,7 +1,7 @@
 import type { Result } from "neverthrow";
 import type { RuntimeError } from "../model/index.ts";
 import {
-  runReviewAndFixLoop,
+  reviewAndFixStrategy,
   type ReviewAndFixOptions,
   type ReviewLoopSummary
 } from "./loop.ts";
@@ -30,7 +30,7 @@ export function createReviewTool(options: ReviewToolOptions = {}): ReviewTool {
   return {
     reviewers,
     async run(runOptions) {
-      return await runReviewAndFixLoop({
+      return await reviewAndFixStrategy({
         requested: runOptions.requested ?? reviewers,
         ...(runOptions.loadPrompts === undefined ? {} : { loadPrompts: runOptions.loadPrompts }),
         review: runOptions.review,

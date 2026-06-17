@@ -343,56 +343,100 @@ export interface ReviewAndFixOptions {
   readonly parallel?: boolean;
 }
 
-export async function runReviewAndFixLoop(
+/** Review-and-fix `.until()` strategy over the generic {@link fixLoop} (design D7):
+ * one review pass collects issues, then `fixLoop` drives the fixable-issue count
+ * to zero. A two-phase state runs reviewers exactly once and applies the fix at
+ * most once, reproducing the single-pass review/fix behavior. */
+export async function reviewAndFixStrategy(
   options: ReviewAndFixOptions
 ): Promise<Result<ReviewLoopSummary, RuntimeError>> {
   const prompts = await (options.loadPrompts ?? loadReviewerPrompts)();
   const selected = selectReviewers(prompts, options.requested);
   const events: string[] = [];
 
-  let issues: readonly ReviewIssue[];
+  let issues: readonly ReviewIssue[] = [];
+  let fixable: readonly ReviewIssue[] = [];
+  let phase: "review" | "fixed" = "review";
+  let fixed = false;
 
-  if (options.parallel) {
-    events.push("review:parallel:started");
-    const result = await runReviewersParallel(selected, options.review);
-    if (result.isErr()) return err(result.error);
-    issues = result.value;
-    events.push("review:parallel:completed");
-  } else {
-    const collected: ReviewIssue[] = [];
-    for (const reviewer of selected) {
-      events.push(`review:${reviewer.id}:started`);
-      const result = await options.review(reviewer);
-      if (result.isErr()) {
-        return err(result.error);
+  const loop = await fixLoop<{ readonly fixableRemaining: number }>({
+    evaluate: async () => {
+      if (phase === "review") {
+        const reviewed = await runReviewPhase(selected, options, events);
+        if (reviewed.isErr()) return err(reviewed.error);
+        issues = reviewed.value;
+        fixable = issues.filter((issue) => issue.fixable);
       }
-      collected.push(...result.value);
-      events.push(`review:${reviewer.id}:completed`);
-    }
-    issues = collected;
-  }
+      return ok({ fixableRemaining: phase === "review" ? fixable.length : 0 });
+    },
+    converged: (state) => state.fixableRemaining === 0,
+    nextAction: (state) => (state.fixableRemaining === 0 ? undefined : REVIEW_FIX_ACTION),
+    fix: async () => {
+      events.push("fix:started");
+      const result = await options.fix(fixable);
+      if (result.isErr()) return err(result.error);
+      events.push("fix:completed");
+      fixed = true;
+      phase = "fixed";
+      return ok({});
+    },
+    fingerprint: false,
+    maxIterations: 1,
+  });
 
-  const fixable = issues.filter((issue) => issue.fixable);
-  if (fixable.length === 0) {
-    return ok({
-      selected: selected.map((reviewer) => reviewer.id),
-      issues,
-      fixed: false,
-      events
-    });
+  if (loop.isErr()) {
+    return err(loop.error);
   }
-
-  events.push("fix:started");
-  const fixed = await options.fix(fixable);
-  if (fixed.isErr()) {
-    return err(fixed.error);
-  }
-  events.push("fix:completed");
 
   return ok({
     selected: selected.map((reviewer) => reviewer.id),
     issues,
-    fixed: true,
-    events
+    fixed,
+    events,
   });
+}
+
+const REVIEW_FIX_ACTION: FixLoopAction = { identity: "review-fix", inputs: null };
+
+/** One review pass — parallel dispatch or sequential per-reviewer — recording the
+ * same domain events the loop has always emitted. */
+async function runReviewPhase(
+  selected: readonly ReviewerPrompt[],
+  options: ReviewAndFixOptions,
+  events: string[]
+): Promise<Result<readonly ReviewIssue[], RuntimeError>> {
+  if (options.parallel) {
+    events.push("review:parallel:started");
+    const result = await runReviewersParallel(selected, options.review);
+    if (result.isErr()) return err(result.error);
+    events.push("review:parallel:completed");
+    return ok(result.value);
+  }
+
+  const collected: ReviewIssue[] = [];
+  for (const reviewer of selected) {
+    events.push(`review:${reviewer.id}:started`);
+    const result = await options.review(reviewer);
+    if (result.isErr()) return err(result.error);
+    collected.push(...result.value);
+    events.push(`review:${reviewer.id}:completed`);
+  }
+  return ok(collected);
+}
+
+/** Deprecated compatibility wrapper kept for one release (design D7): delegates to
+ * `reviewAndFixStrategy` and emits a runtime DeprecationWarning. Not tagged
+ * `@deprecated` so existing callers still using it for this release stay lint-clean. */
+export function runReviewAndFixLoop(
+  options: ReviewAndFixOptions
+): Promise<Result<ReviewLoopSummary, RuntimeError>> {
+  emitDeprecation("runReviewAndFixLoop", "reviewAndFixStrategy");
+  return reviewAndFixStrategy(options);
+}
+
+function emitDeprecation(name: string, replacement: string): void {
+  process.emitWarning(
+    `${name}() is deprecated and will be removed in a future release; migrate to ${replacement}().`,
+    { type: "DeprecationWarning", code: "ORCA_DEP_LOOP_COLLAPSE" }
+  );
 }
