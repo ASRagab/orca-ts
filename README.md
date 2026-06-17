@@ -140,7 +140,7 @@ Precedence:
 
 ## Loops
 
-A loop is a flow that repeats a cycle until a measurable goal is met. `loop()` reads like a guarded `while`: declare the per-cycle work, declare the measure that must reach zero, and `.run()` lowers it onto `flow()` plus the generic convergence primitive. The single-cycle case names no engine, queue, or `Effect` symbol.
+A loop is a flow that repeats a cycle until a measurable goal is met. Use it when the work has a progress signal: failing gates, pending tasks, open issues, confidence, or a fixed cycle count.
 
 ```ts
 import { codex, loop, untilManifestComplete, type TaskManifest } from "orca-ts";
@@ -153,47 +153,11 @@ const result = await loop<TaskManifest>("ralph")
   .run(manifest);
 ```
 
-| Method | Purpose |
-| --- | --- |
-| `.reason(backend, request)` | The single LLM verb; drives a backend autonomously for one cycle |
-| `.step(name, fn)` | A deterministic transform over the threaded loop state |
-| `.until(variant)` | The termination variant — a preset (below) or a custom `{ measure }` |
-| `.measure(fn)` | Power-user variant override; takes precedence over a preset |
-| `.guard({ maxIterations, wallClockMs, tokenBudget })` | Seatbelt guards layered under the variant |
-| `.run(initial, options?)` | Build (enforcing termination by construction) then run; returns `Result<LoopOutcome, LoopRunError>` |
+Presets such as `untilManifestComplete()`, `untilGatesGreen()`, `untilNoIssues()`, `untilConfident(threshold)`, and `times(n)` supply the convergence measure. Add `.guard({ maxIterations, wallClockMs, tokenBudget })` for seatbelts. A loop with no preset or custom `.measure()` fails before it runs.
 
-A back-edge with no variant fails at build time, not at run time: a loop must declare what converges. Full runnable version: [`examples/loop-single-cycle.ts`](examples/loop-single-cycle.ts).
+Distributable loops live as import-safe modules under `.orca/loops/` and export `defineLoop({ name, source, sink, onTrigger })`. Use `orca loops` to list them, `orca run <loop>` to run one firing, and `orca serve <loop>` to host the trigger.
 
-### Preset Archetypes
-
-A preset bundles a loop variant (a measure with floor `0`) so the author writes no measure math:
-
-| Preset | Converges when |
-| --- | --- |
-| `untilGatesGreen()` | failing tests/gates reach `0` |
-| `untilManifestComplete()` | the task manifest has no pending task |
-| `untilNoIssues()` | the open-issue list is empty |
-| `untilConfident(threshold)` | confidence reaches the threshold |
-| `times(n)` | `n` cycles have run (also contributes a `maxIterations` ceiling) |
-
-### Fan-out / Fan-in
-
-Bounded fan-out and join-policy fan-in are opt-in combinators; a plain loop never needs them. `fanOut` runs each branch over an isolated `structuredClone` of the state under a concurrency cap; `fanIn` applies a join policy (`barrier`, `race`, `quorum`, `reduce`) then a reducer — the only point where branch state recombines. See [`examples/loop-fanout.ts`](examples/loop-fanout.ts).
-
-### State Adapters
-
-Loop state targets the `StateStore` port (`load` / `checkpoint` / `branch` / `merge` / `history`); swapping the adapter never changes the loop definition.
-
-| Adapter | Factory | Use |
-| --- | --- | --- |
-| Snapshot (default) | `createSnapshotStore({ root })` | Zero-config; one JSON file per cycle at `.orca/state-<hash>.json` |
-| SQLite | `createSqliteStore({ path })` | Durable mid-loop resume: per-step WAL checkpoint, lease-based crash recovery, `history` table |
-
-`createSqliteStore` runs on `bun:sqlite` and returns a `Result` because it touches the filesystem on open. Durable service-backed modes (DBOS, Dolt) are deferred — see [Agent notes](AGENTS.md). The Effect-powered engine that drives cycles, recurrence, and bounded concurrency never reaches this authoring surface; a verify-blocking facade gate enforces it.
-
-### Distributing A Loop
-
-`defineLoop({ name, source, sink, onTrigger })` packages a loop with its trigger `Source` and output `Sink`. A loop module exports the definition; importing it only registers it (no trigger fires, no backend runs), so `orca loops` discovery is side-effect-free. Place loop modules under `.orca/loops/`. `orca run <loop>` runs one firing; `orca serve <loop>` hosts the trigger and spawns an isolated child per firing.
+Start with the full guide: [Loops](docs/loops.md). It covers the first-loop tutorial, presets, custom measures, state stores, fan-out/fan-in, loop modules, `orca run/serve/loops`, recipes, troubleshooting, and migration from legacy workflow scripts.
 
 ## CLI Reference
 
@@ -238,20 +202,24 @@ The best way to learn the authoring model is to start with the examples.
 | `examples/multi-backend-compare.ts` | Comparing backend behavior |
 | `examples/epic.ts` | Structured output with a Zod schema and a directly pinned `codex()` backend |
 | `examples/loop-single-cycle.ts` | A single-cycle preset loop (`loop()` + `untilManifestComplete()`), runnable with no real backend |
+| `examples/loop-gated-task.ts` | A gate-converging loop using `untilGatesGreen()` |
 | `examples/loop-fanout.ts` | A fan-out / fan-in loop: bounded-concurrency branches joined through a reducer |
+| `examples/loop-persisted-state.ts` | Snapshot state store checkpoint, history, branch, and merge |
+| `examples/loop-served-trigger.ts` | Import-safe `defineLoop()` module for `.orca/loops/` |
 | `workflows/ai-slop-cleanup.ts` | Full dogfood workflow with monitoring support |
 
 ## Agent Skills
 
-Installable Agent Skills under `skills/` take a coding agent from "I have a
-workflow idea" to a saved, self-validating workflow — in **any** git-backed repo,
-not just TypeScript projects. They compose as a pipeline:
+Installable Agent Skills under `skills/` take a coding agent from "I have an
+Orca automation idea" to a saved, self-validating workflow or loop module — in
+**any** git-backed repo, not just TypeScript projects. They compose as a
+pipeline:
 
 | Skill | Purpose |
 | --- | --- |
 | `skills/orca-ts-setup` | Install the `orca` binary and verify at least one backend (claude/codex/opencode/pi) is authenticated; re-runnable as a doctor |
-| `skills/orca-ts-author` | Detect the target repo's real test/lint commands, interview for the workflow shape, generate a flow that typechecks, and enforce verification gates |
-| `skills/orca-ts-flow` | Run a saved workflow with monitoring, detect stalls (by progress, not slowness), and heal backend/auth/non-convergence failures within safety bounds |
+| `skills/orca-ts-author` | Detect the target repo's real test/lint commands, interview for the workflow or loop shape, generate an artifact that typechecks, and enforce verification gates |
+| `skills/orca-ts-flow` | Run a saved workflow or loop with monitoring, detect stalls (by progress, not slowness), and heal backend/auth/non-convergence failures within safety bounds |
 
 ### Install The Skills
 
@@ -285,12 +253,20 @@ npx skills add ./orca-ts --skill '*' --global
 
 ### Run A Saved Workflow
 
-Saved workflows live at the target repo's `.orca/workflows/<name>.ts` and are
-triggered through the standalone `orca` binary — no dependency on the target
-repo's package manager:
+Saved one-shot workflows live at the target repo's `.orca/workflows/<name>.ts`
+and are triggered through the standalone `orca` binary — no dependency on the
+target repo's package manager:
 
 ```bash
 orca .orca/workflows/<name>.ts --backend <tag> [-- "<task args>"]
+```
+
+Reusable loop modules live under `.orca/loops/<name>.ts` and use the loop CLI:
+
+```bash
+orca loops
+orca run <name-or-path>
+orca serve <name-or-path>
 ```
 
 Detailed guidance lives in each skill's `SKILL.md`.
@@ -300,6 +276,7 @@ Detailed guidance lives in each skill's `SKILL.md`.
 | Document | Purpose |
 | --- | --- |
 | [Backend reference](docs/backends.md) | Backend adapter behavior and live smoke details |
+| [Loops](docs/loops.md) | Loop tutorial, recipes, API notes, state, distribution, and troubleshooting |
 | [Plans](docs/plans.md) | Persistent plan helpers under `.orca/` |
 | [Review automation](docs/review.md) | Reviewer prompts, review loops, and fix execution |
 | [Parity harness](docs/parity.md) | Fixture tiers, schema exports, and backend parity checks |

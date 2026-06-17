@@ -1,6 +1,6 @@
 ---
 name: orca-ts-setup
-description: "Install the Orca TypeScript `orca` binary and verify at least one coding-agent backend (claude/codex/opencode/pi) is on PATH, authenticated, and usable. Asks which backend(s) to enable, runs a non-spending readiness probe, and troubleshoots install/auth/config failures. Re-runnable as a doctor. Use first, before authoring or running an Orca workflow, or whenever a backend stops working. Triggers on \"install orca\", \"set up orca\", \"orca setup\", \"verify orca backend\", \"orca backend not working\", \"orca doctor\"."
+description: "Install the Orca TypeScript `orca` binary and verify at least one coding-agent backend (claude/codex/opencode/pi) is on PATH, authenticated, and usable. Asks which backend(s) to enable, runs a non-spending readiness probe, and troubleshoots install/auth/config failures. Re-runnable as a doctor. Use first, before authoring or running an Orca workflow or loop module, or whenever a backend stops working. Triggers on \"install orca\", \"set up orca\", \"orca setup\", \"verify orca backend\", \"orca backend not working\", \"orca doctor\"."
 compatibility: "Host-agnostic (any coding agent) and stack-agnostic (any git-backed repo). Binary-only use needs neither Bun, Node, nor a JVM. Verifying a backend needs that backend's CLI installed and authenticated. Bundled scripts locate every CLI at runtime — never hardcoded."
 metadata:
   author: "Ahmad Ragab"
@@ -8,9 +8,10 @@ metadata:
 
 # orca-ts-setup — install Orca and prove a backend works
 
-Orca runs TypeScript flows that drive a coding-agent backend. Before you can
-author (`orca-ts-author`) or run (`orca-ts-flow`) a workflow, two things must be
-true: the `orca` binary is installed, and **at least one** backend is
+Orca runs TypeScript workflows and loop modules that drive a coding-agent
+backend. Before you can author (`orca-ts-author`) or run (`orca-ts-flow`) an
+artifact, two things must be true: the `orca` binary is installed, and **at
+least one** backend is
 authenticated and usable. This skill establishes both and troubleshoots
 failures. It is safe to re-run any time as a doctor.
 

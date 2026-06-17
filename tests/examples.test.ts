@@ -12,6 +12,9 @@ describe("examples", () => {
       "issue-pr-bugfix.ts",
       "issue-pr.ts",
       "loop-fanout.ts",
+      "loop-gated-task.ts",
+      "loop-persisted-state.ts",
+      "loop-served-trigger.ts",
       "loop-single-cycle.ts",
       "multi-backend-compare.ts",
     ]);

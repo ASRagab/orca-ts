@@ -6,6 +6,10 @@ Each delegates to a named `.until()` strategy. The wrappers stay for **one
 release** and emit a `DeprecationWarning` (code `ORCA_DEP_LOOP_COLLAPSE`) on every
 call; their later removal is a separate breaking change.
 
+For new loop-builder authoring with `loop()`, presets, state stores, and
+`.orca/loops/` modules, start with [Loops](loops.md). This page only covers the
+legacy wrapper migration.
+
 ## Review-and-fix
 
 `runReviewAndFixLoop(options)` → `reviewAndFixStrategy(options)`.

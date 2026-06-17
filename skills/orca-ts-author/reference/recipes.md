@@ -1,18 +1,24 @@
 # Recipes — archetypes mapped to templates
 
-Six archetypes cover the common shapes. Each maps to one bundled template under
-`assets/templates/`. Every template is kept compiling by the CI gate
+Six workflow archetypes cover the common one-shot shapes. Loop module recipes
+cover reusable trigger-driven artifacts. Each template lives under
+`assets/templates/` and is kept compiling by the CI gate
 (`tests/skill-templates.test.ts` → `tsconfig.skill-templates.json`). To author a
-workflow: pick the archetype, copy its template, fill the labelled SLOTS, run the
-self-audit (`gotchas.md`), then save it to the target repo's `.orca/workflows/`.
+workflow or loop: pick the artifact shape, copy its template, fill the labelled
+SLOTS, run the self-audit (`gotchas.md`), then save it to `.orca/workflows/` or
+`.orca/loops/`.
 
-Every template imports from `"orca-ts"`, wires the **target repo's own** test +
-lint commands as a verification gate, and (where it may run on OpenCode) shuts
-the managed server down in a `finally`. The trigger is always the standalone
-binary — no dependency on the target repo's package manager:
+Every template imports from `"orca-ts"`. Mutating templates wire the **target
+repo's own** test + lint commands as a verification gate, and any template that
+may run on OpenCode shuts the managed server down in a `finally`. The trigger is
+always the standalone binary — no dependency on the target repo's package
+manager:
 
 ```bash
 orca .orca/workflows/<name>.ts --backend <tag> [-- "<task args>"]
+orca loops
+orca run <name-or-path>
+orca serve <name-or-path>
 ```
 
 | Archetype | Template | Use when |
@@ -23,6 +29,15 @@ orca .orca/workflows/<name>.ts --backend <tag> [-- "<task args>"]
 | bugfix | `bugfix.ts` | reproduce-first / TDD: prove the bug red, then fix to green |
 | cleanup-sweep | `cleanup-sweep.ts` | per-file edit across many files, keep-if-green / revert-if-regressed |
 | multi-backend-compare | `multi-backend-compare.ts` | run one prompt across backends to compare outcome + cost |
+
+| Loop module recipe | Template | Use when |
+|---|---|---|
+| served-trigger | `loop-served-trigger.ts` | export an import-safe `.orca/loops/<name>.ts` module with `defineLoop()`, a `Source`, a `Sink`, and one `loop()` run per trigger |
+
+Loop modules differ from workflow scripts: they do **not** call `flow(...)` at
+top level. Importing the module only registers the definition for `orca loops`;
+work starts inside `onTrigger`, when `orca run` or an `orca serve` child invokes
+the definition.
 
 ## single-change
 One autonomous turn implements `TASK_PROMPT`, then a `fixLoop` re-runs `GATE`
@@ -132,6 +147,8 @@ conditional spread (`...(cond ? { iterations } : {})`) rather than passing
 - Replace every `REPLACE_WITH_*` constant.
 - `GATE` must contain at least one test command and one lint command, taken from
   what `orca-ts-author` detected in the target repo (never `bun`/`npm` by
-  assumption). The skill refuses to emit an ungated flow.
+  assumption). The skill refuses to emit ungated mutating code.
 - Set the `selectBackend({ default })` tag to the backend `orca-ts-setup` verified.
+- For loop modules, export `defineLoop()` and keep imports side-effect-free:
+  no backend turn, source start, sink emit, or repo mutation at module import.
 - Run the `gotchas.md` self-audit before saving.

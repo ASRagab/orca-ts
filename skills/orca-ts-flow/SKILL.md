@@ -1,25 +1,27 @@
 ---
 name: orca-ts-flow
-description: "Execute a saved (or just-authored) Orca TypeScript workflow against any git-backed repo, monitor it for real progress (not slowness), and diagnose, resolve, and where safe self-heal runtime failures — backend crash, expired/missing auth, gate failures, non-convergence, stalls. Surfaces exit status + per-agent cost and shuts down any managed backend (OpenCode). Use to run/monitor/troubleshoot an Orca workflow. Triggers on \"run my orca workflow\", \"orca flow stuck\", \"orca run failed\", \"monitor orca\", \"orca workflow not making progress\", \"heal orca run\"."
-compatibility: "Host-agnostic and stack-agnostic. Runs flows through the standalone `orca` binary (no target-repo package manager needed). Reuses the shared backend doctor for auth/crash healing. Reads .orca/monitoring/<runId>.json, the persistent plan, and git log for progress."
+description: "Execute a saved (or just-authored) Orca TypeScript workflow or loop module against any git-backed repo, monitor it for real progress (not slowness), and diagnose, resolve, and where safe self-heal runtime failures — backend crash, expired/missing auth, gate failures, non-convergence, stalls, served child failures. Surfaces exit status + per-agent cost and shuts down any managed backend (OpenCode). Use to run/monitor/troubleshoot an Orca workflow or loop. Triggers on \"run my orca workflow\", \"orca flow stuck\", \"orca run failed\", \"monitor orca\", \"orca workflow not making progress\", \"heal orca run\"."
+compatibility: "Host-agnostic and stack-agnostic. Runs workflows and loop modules through the standalone `orca` binary (no target-repo package manager needed). Reuses the shared backend doctor for auth/crash healing. Reads .orca/monitoring/<runId>.json, loop state, the persistent plan, and git log for progress."
 metadata:
   author: "Ahmad Ragab"
 ---
 
-# orca-ts-flow — run, monitor, and heal an Orca workflow
+# orca-ts-flow — run, monitor, and heal an Orca workflow or loop
 
-Authoring produces a flow; this skill **runs** it and keeps it healthy. It judges
-real progress (not backend slowness), classifies failures from runtime signals,
-and applies bounded, safety-gated recovery — escalating anything destructive.
+Authoring produces a workflow script or loop module; this skill **runs** it and
+keeps it healthy. It judges real progress (not backend slowness), classifies
+failures from runtime signals, and applies bounded, safety-gated recovery —
+escalating anything destructive.
 
 Flow: **run with monitoring → watch for real progress → on failure classify →
 heal within bounds (or escalate) → surface outcome + cost → tear down managed
 backends.**
 
-## 1. Run the workflow
+## 1. Run the artifact
 
-Run through the standalone binary with monitoring on, against the confirmed
-target repo. Use the wrapper (surfaces exit + points at the monitor log):
+For legacy workflow scripts under `.orca/workflows/`, run through the standalone
+binary with monitoring on, against the confirmed target repo. Use the wrapper
+(surfaces exit + points at the monitor log):
 
 ```bash
 bash skills/orca-ts-flow/scripts/orca-run.sh .orca/workflows/<name>.ts
@@ -29,7 +31,18 @@ bash skills/orca-ts-flow/scripts/orca-run.sh .orca/workflows/<name>.ts --backend
 bash skills/orca-ts-flow/scripts/orca-run.sh .orca/workflows/<name>.ts -- "fix the flaky test"
 ```
 
-There is **no `--monitor` CLI flag** — a flow opts into monitoring itself. The
+For loop modules under `.orca/loops/`, use the loop CLI:
+
+```bash
+orca loops
+ORCA_LOOP_EVENT='{}' orca run <name-or-path>
+orca serve <name-or-path>
+```
+
+Use `orca run` for one firing and `orca serve` for a long-lived source. `orca
+loops` is discovery-only; it must not start a source, backend, or sink.
+
+There is **no `--monitor` CLI flag** — an artifact opts into monitoring itself. The
 bundled persistent-multitask / cleanup templates use `WorkflowMonitor` (from
 `orca-ts`) to write `.orca/monitoring/<runId>.json` (per-task/file verdict,
 duration, iterations, usage when the backend reports it) and print
@@ -46,7 +59,9 @@ wall-clock cap). Normal agent turns run ~55–145s, so **wall-clock slowness alo
 is not a stall.** Judge *flow-level* progress from three signals:
 
 - **Monitoring JSON** — new entries in `stages`/`outcomes` in the latest
-  `.orca/monitoring/<runId>.json` (tail it; the wrapper prints its path).
+  `.orca/monitoring/<runId>.json` (tail it; the workflow wrapper prints its path).
+- **Loop state** — new `.orca/state-<hash>.json` files or sqlite `history`
+  entries when a loop uses a `StateStore`.
 - **Persistent plan** — newly checked boxes in `.orca/plan-*.md` (multitask).
 - **git** — new commits / changed files (`git log --oneline -5`, `git status`).
 
@@ -68,6 +83,7 @@ On a non-zero exit or a flagged stall, classify the cause from the run's signals
 | **non-convergence** | a `fixLoop` hit its guard — `regressed` outcome with `regressedReason` `stuck`/`timeout`/`ceiling` |
 | **stall** | no flow-level progress past the watchdog window (§2) |
 | **crash** | the run died mid-flow with a recoverable partial state (plan/commits present) |
+| **served-child** | `orca serve` stays alive but a child firing exits non-zero or reports a loop stop failure |
 
 Report the classification with its evidence (the offending command, the failure
 category from monitoring, the affected backend).
@@ -89,6 +105,9 @@ Bounded, safety-gated recovery by class:
   `--backend`. If it still won't converge, **escalate to the user** with the
   failing gate output — do not loop forever.
 - **crash** → re-run; the flow resumes from the persistent plan / committed work.
+- **served-child** → inspect the child run output and rerun the same event with
+  `ORCA_LOOP_EVENT='...' orca run <name-or-path>` when possible. Do not restart
+  the supervisor unless the `Source` itself failed.
 - **gate/validation** → this is the workflow doing its job; let the in-flow
   fix-loop iterate. Only intervene if it converges to non-convergence (above).
 
@@ -113,6 +132,6 @@ stop the stray server. Confirm none is dangling before declaring the run done.
 
 ## Done when
 
-The run completed (or was healed to completion, or escalated with a clear
-reason), the exit status + cost are reported, and no managed backend process is
-left running.
+The workflow or loop completed (or was healed to completion, or escalated with a
+clear reason), the exit status + cost are reported, and no managed backend
+process is left running.
