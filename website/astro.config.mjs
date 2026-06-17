@@ -16,7 +16,7 @@ export default defineConfig({
         }
       ],
       editLink: {
-        baseUrl: "https://github.com/ASRagab/orca-ts/edit/main/website/src/content/docs/"
+        baseUrl: "https://github.com/ASRagab/orca-ts/edit/main/website/"
       },
       sidebar: [
         {

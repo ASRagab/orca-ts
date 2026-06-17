@@ -26,6 +26,6 @@ Common fixes:
 | Failure | Fix |
 | --- | --- |
 | Missing dependency | Run `cd website && bun install --frozen-lockfile`. |
-| Broken internal link | Use a relative link to the target `.md` file. |
+| Broken internal link | Use a relative route link to the generated page, for example `../quickstart/`. |
 | Missing GitHub Pages assets | Check `site` and `base` in `website/astro.config.mjs`. |
 | Sidebar item 404 | Confirm the `slug` matches a file under `website/src/content/docs`. |
