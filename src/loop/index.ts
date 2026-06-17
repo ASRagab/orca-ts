@@ -5,3 +5,6 @@ export * from "./builder/index.ts";
 export * from "./state/index.ts";
 export * from "./io/index.ts";
 export * from "./context/index.ts";
+// L11 distribution: defineLoop + the serve supervisor. Effect-free; the CLI (run/serve/loops)
+// and authored loop modules both consume this surface.
+export * from "./serve.ts";
