@@ -4,11 +4,13 @@ import {
   flow,
   flowContext,
   fs,
+  linear,
   plan,
   requestToolApproval,
   review,
   terminal,
-  type FsTool
+  type FsTool,
+  type LinearTool
 } from "../src/index.ts";
 
 describe("flow runtime", () => {
@@ -28,6 +30,27 @@ describe("flow runtime", () => {
 
     await flow([], { fs: fakeFs })(async () => {
       expect((await fs().readText("x"))._unsafeUnwrap()).toBe("override");
+    });
+  });
+
+  test("linear accessor resolves the default tool and honors overrides", async () => {
+    const fakeLinear: LinearTool = {
+      fetchIssue: () => Promise.resolve(ok({ id: "issue-1", identifier: "ENG-1" })),
+      updateIssue: (input) => Promise.resolve(ok({ id: input.issueId })),
+      createIssueComment: () => Promise.resolve(ok({ id: "comment-1" })),
+      createAgentActivity: () => Promise.resolve(ok({ id: "activity-1" })),
+      updateAgentSession: (input) => Promise.resolve(ok({ id: input.agentSessionId })),
+      getTeamWorkflowStates: () => Promise.resolve(ok([]))
+    };
+
+    await flow([], { linear: fakeLinear })(async () => {
+      expect(await linear().fetchIssue({ issueId: "ENG-1" })).toEqual(
+        ok({ id: "issue-1", identifier: "ENG-1" })
+      );
+    });
+
+    await flow([], { linear: fakeLinear })(() => {
+      expect(linear()).toBe(fakeLinear);
     });
   });
 

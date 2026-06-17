@@ -11,7 +11,7 @@ import { ioFailed, unsupportedFeature, type RuntimeError } from "../../model/ind
 // change. All failures surface as `err(RuntimeError)`; a Source never throws across `start`/`stop`.
 
 /** Bundled source kinds. A custom trigger reuses the closest kind or its own structural object. */
-export type SourceKind = "manual" | "cron" | "watch" | "webhook" | "queue";
+export type SourceKind = "manual" | "cron" | "watch" | "webhook" | "queue" | "linear-issue" | "linear-agent";
 
 /** Handle returned by a started Source so the supervisor can stop the trigger. */
 export interface SourceSubscription {

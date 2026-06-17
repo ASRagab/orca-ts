@@ -11,6 +11,7 @@ describe("examples", () => {
       "implement.ts",
       "issue-pr-bugfix.ts",
       "issue-pr.ts",
+      "linear-ticket-triage.ts",
       "loop-fanout.ts",
       "loop-gated-task.ts",
       "loop-persisted-state.ts",

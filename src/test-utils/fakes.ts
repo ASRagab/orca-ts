@@ -6,6 +6,12 @@ import { StreamConversation, type Conversation } from "../conversation/conversat
 import { sessionId } from "../model/brand.ts";
 import type { BackendTag } from "../model/schemas.ts";
 import type { Sink, Source, SourceSubscription } from "../loop/io/index.ts";
+import type {
+  LinearAgentActivityInput,
+  LinearAgentSessionUpdateInput,
+  LinearIssueUpdateInput,
+  LinearTool,
+} from "../tools/index.ts";
 
 export interface FakeSubprocess {
   readonly lines: readonly string[];
@@ -197,6 +203,58 @@ export function fakeSink<A = unknown>(options: { failWith?: RuntimeError } = {})
       }
       captured.push(output);
       return Promise.resolve(ok(undefined));
+    },
+  };
+}
+
+export interface FakeLinearTool extends LinearTool {
+  readonly issueComments: readonly { readonly issueId: string; readonly body: string }[];
+  readonly issueUpdates: readonly LinearIssueUpdateInput[];
+  readonly agentActivities: readonly LinearAgentActivityInput[];
+  readonly agentSessionUpdates: readonly LinearAgentSessionUpdateInput[];
+}
+
+export function createFakeLinearTool(): FakeLinearTool {
+  const issueComments: { readonly issueId: string; readonly body: string }[] = [];
+  const issueUpdates: LinearIssueUpdateInput[] = [];
+  const agentActivities: LinearAgentActivityInput[] = [];
+  const agentSessionUpdates: LinearAgentSessionUpdateInput[] = [];
+
+  return {
+    issueComments,
+    issueUpdates,
+    agentActivities,
+    agentSessionUpdates,
+    fetchIssue(input) {
+      return Promise.resolve(ok({ id: input.issueId }));
+    },
+    updateIssue(input) {
+      issueUpdates.push(input);
+      return Promise.resolve(ok({ id: input.issueId, title: input.title ?? null }));
+    },
+    createIssueComment(input) {
+      issueComments.push(input);
+      return Promise.resolve(ok({ id: `comment-${String(issueComments.length)}`, body: input.body }));
+    },
+    createAgentActivity(input) {
+      agentActivities.push(input);
+      return Promise.resolve(ok({
+        id: `activity-${String(agentActivities.length)}`,
+        body: input.body,
+        ...(input.type === undefined ? {} : { type: input.type }),
+      }));
+    },
+    updateAgentSession(input) {
+      agentSessionUpdates.push(input);
+      return Promise.resolve(ok({
+        id: input.agentSessionId,
+        ...(input.plan === undefined ? {} : { plan: input.plan }),
+        ...(input.externalUrl === undefined ? {} : { externalUrl: input.externalUrl }),
+        ...(input.externalUrls === undefined ? {} : { externalUrls: input.externalUrls }),
+      }));
+    },
+    getTeamWorkflowStates() {
+      return Promise.resolve(ok([]));
     },
   };
 }

@@ -11,7 +11,7 @@ import { createGitHubTool, type GitHubTool } from "../../tools/index.ts";
 // custom output implements only `Sink` — no engine change.
 
 /** Bundled sink kinds. A custom output reuses the closest kind or its own structural object. */
-export type SinkKind = "pr" | "file" | "slack" | "queue" | "stdout";
+export type SinkKind = "pr" | "file" | "slack" | "queue" | "stdout" | "linear-issue" | "linear-agent";
 
 /** A loop output — the only loop-level emit boundary; Result-typed. */
 export interface Sink<A = unknown> {
