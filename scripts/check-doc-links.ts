@@ -10,20 +10,32 @@
 //   bun run scripts/check-doc-links.ts                 # default doc set
 //   bun run scripts/check-doc-links.ts README.md docs/backends.md
 // Exits 0 when all internal links resolve, 1 otherwise.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-// Default scope mirrors the doc-refresh workflow's tracked doc set.
+function markdownFilesUnder(dir: string): string[] {
+  const absolute = resolve(process.cwd(), dir);
+  if (!existsSync(absolute)) return [];
+
+  const files: string[] = [];
+  for (const entry of readdirSync(absolute)) {
+    const child = join(absolute, entry);
+    const stat = statSync(child);
+    if (stat.isDirectory()) {
+      files.push(...markdownFilesUnder(child.slice(process.cwd().length + 1)));
+    } else if (/\.(md|mdx)$/.test(child)) {
+      files.push(child.slice(process.cwd().length + 1));
+    }
+  }
+  return files.sort();
+}
+
 const DEFAULT_DOCS = [
   "README.md",
   "AGENTS.md",
   "CONTEXT.md",
-  "docs/backends.md",
-  "docs/distribution.md",
-  "docs/parity.md",
-  "docs/plans.md",
-  "docs/release.md",
-  "docs/review.md",
+  ...markdownFilesUnder("docs"),
+  ...markdownFilesUnder("website/src/content/docs")
 ];
 
 const root = process.cwd();
