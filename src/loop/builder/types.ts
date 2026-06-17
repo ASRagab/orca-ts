@@ -2,7 +2,7 @@ import type { Result } from "neverthrow";
 
 import type { AutonomousRequest, LlmBackend } from "../../backends/index.ts";
 import type { FlowOverrides } from "../../flow/index.ts";
-import type { BackendTag, RuntimeError } from "../../model/index.ts";
+import type { BackendTag, RuntimeError, Usage } from "../../model/index.ts";
 import type { TerminationContractError } from "../termination-contract.ts";
 
 // Declarative loop() builder — the Effect-free authoring front door (spec loop-builder).
@@ -68,10 +68,24 @@ export interface LoopOutcome<S = unknown> {
   readonly iterations: number;
 }
 
+/**
+ * Per-cycle observability report emitted after each completed cycle when `onCycle` is set. The
+ * `measure` comes from the loop variant (the L05 manifest projection), so a record fed straight to
+ * `WorkflowMonitor.recordCycle` stays consistent with the termination variant (spec
+ * execution-observability). `usage` omitted ⇒ the backend reported none this cycle.
+ */
+export interface LoopCycleReport {
+  readonly iteration: number;
+  readonly measure: number;
+  readonly usage?: Usage;
+}
+
 /** Flow setup supplied to a run; `overrides` is how tests inject fake accessors (flow-runtime spec). */
 export interface LoopRunOptions {
   readonly args?: readonly string[];
   readonly overrides?: FlowOverrides;
+  /** Optional observability hook; receives a {@link LoopCycleReport} after each completed cycle. */
+  readonly onCycle?: (cycle: LoopCycleReport) => void;
 }
 
 /** A `.run()` fails either at build (unguarded back-edge) or at runtime (a step/reason error). */

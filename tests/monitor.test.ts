@@ -106,7 +106,8 @@ describe("workflow monitor", () => {
         }
       ],
       failures: [{ file: "src/c.ts", error: { _tag: "BackendFailed" }, durationMs: 7, category: "agent" }],
-      summary: { pass: 1, fail: 1, skip: 0, preconditionSkip: 0, durationMs: 100 }
+      summary: { pass: 1, fail: 1, skip: 0, preconditionSkip: 0, durationMs: 100 },
+      progress: []
     };
 
     const summary = summarizeLogs([log]);

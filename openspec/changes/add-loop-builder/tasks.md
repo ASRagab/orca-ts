@@ -59,9 +59,9 @@
 
 ## 9. Observability
 
-- [ ] 9.1 Extend `WorkflowRunLog` with a per-cycle progress record (`iteration`, `measure`, `delta`, `stopReasonSoFar`, per-branch status, cumulative reported token usage or `unknown`)
-- [ ] 9.2 Derive the progress stream from the manifest projection so it stays consistent with the variant
-- [ ] 9.3 Tests: per-cycle record emitted, fan-out per-branch status recorded, flat-delta-with-rising-token-usage surfaces incipient runaway
+- [x] 9.1 Extend `WorkflowRunLog` with a per-cycle progress record (`iteration`, `measure`, `delta`, `stopReasonSoFar`, per-branch status, cumulative reported token usage or `unknown`)
+- [x] 9.2 Derive the progress stream from the manifest projection so it stays consistent with the variant
+- [x] 9.3 Tests: per-cycle record emitted, fan-out per-branch status recorded, flat-delta-with-rising-token-usage surfaces incipient runaway
 
 ## 10. CLI
 
