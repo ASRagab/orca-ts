@@ -15,7 +15,9 @@ flow back (and before the typecheck gate, when one is reachable).
    (`--backend`, …) in `process.argv`; `flowArgs()` returns only the user's task
    tokens (everything after `--`), so `orca flow.ts --backend codex -- fix bug`
    yields `["fix","bug"]`. Call accessors (`fs()`, `git()`, `llm()`, …)
-   **inside** the body, never at module scope.
+   **inside** the body, never at module scope. For `.orca/loops/<name>.ts`
+   modules, do not call `flow(...)` at module scope; export `defineLoop(...)`
+   and start work only inside `onTrigger`.
 3. **Always narrow `outcome.type`** before touching `outcome.result`. Reading
    `.result.output`/`.structured` on a non-`success` outcome is a type error and
    a runtime bug.
@@ -71,6 +73,15 @@ flow back (and before the typecheck gate, when one is reachable).
     TS repo, confirm the lint config ignores `.orca/**` (or `.orca/workflows/**`);
     if it doesn't, add it (one line in the ignores list) and note the fix in the
     runbook. This does not affect non-TS targets or untyped lint.
+14. **Loop modules are import-safe.** A `.orca/loops/<name>.ts` file may create
+    plain `Source`/`Sink` objects and export `defineLoop(...)`, but it must not
+    start a source, run a backend, emit to a sink, mutate the repo, read
+    `flowArgs()`, or prompt the user at import time. `orca loops` imports modules
+    for discovery only.
+15. **Loop module commands differ from workflow scripts.** Workflows run as
+    `orca .orca/workflows/<name>.ts --backend <tag> [-- "<args>"]`. Loop modules
+    run as `orca loops`, `ORCA_LOOP_EVENT='{}' orca run <name-or-path>`, or
+    `orca serve <name-or-path>`.
 
 ## Pre-handoff self-audit checklist
 
@@ -78,6 +89,7 @@ Before declaring a generated flow done, confirm each:
 
 - [ ] Imports come from `"orca-ts"` (no `../src/...`, no bare `neverthrow`); `ok`/`err`/`Result` from `"orca-ts"`.
 - [ ] Exactly one `flow(flowArgs())(async () => { … })`; task input read via `flowArgs()`, not `process.argv`; no accessor calls at module scope.
+- [ ] For loop modules, no top-level `flow(...)`; exactly one exported `defineLoop(...)`; no source start, backend run, sink emit, or repo mutation at import.
 - [ ] A repo-mutating flow guards the tree: clean-baseline/auto-stash, feature branch before commit/push, iteration-scoped revert, off-target detection; no auto-destructive git ops.
 - [ ] Every `awaitResult()` is followed by an `outcome.type` narrow before `.result`.
 - [ ] If `selectBackend` (or `opencode()`) is used, `selected.shutdown?.()` runs in a `finally`.
@@ -88,3 +100,4 @@ Before declaring a generated flow done, confirm each:
 - [ ] No dependency on the agent asking the operator a question (autonomous only).
 - [ ] If the target repo has no `tsconfig.json`, the runbook records the skipped-typecheck note.
 - [ ] In a typed-lint TS target, the lint config ignores `.orca/**` (else the flow's own lint gate is red at baseline).
+- [ ] Loop runbooks use `orca loops`, `orca run`, and `orca serve`, not the legacy `orca <flow.ts>` shape.

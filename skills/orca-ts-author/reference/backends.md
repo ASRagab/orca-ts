@@ -55,3 +55,7 @@ the workflow needs must be encoded as flow logic or CLI args.
 Invalid tags throw before any process starts. Prefer `selectBackend` in saved
 workflows so the same `.orca/workflows/<name>.ts` can be re-run on a different
 backend via `--backend` without editing the file.
+
+For `.orca/loops/<name>.ts` modules, call `selectBackend()` or pinned backend
+constructors inside `onTrigger`, not at module import. `orca loops` imports loop
+modules only to discover metadata, so discovery must not start a backend.

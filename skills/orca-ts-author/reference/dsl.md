@@ -82,6 +82,74 @@ Non-success types include `cancelled` and failure variants — never read
 
 ## Loop primitives
 
+### `loop()` — converge a measured state
+
+```ts
+import { loop, untilGatesGreen, type GatesState } from "orca-ts";
+
+const result = await loop<GatesState>("gate-repair")
+  .reason(selected.backend, { prompt: "Fix the next failing gate." })
+  .step("refresh-gate-state", async (state) => state)
+  .until(untilGatesGreen())
+  .guard({ maxIterations: 8, wallClockMs: 10 * 60_000, tokenBudget: 80_000 })
+  .run({ failingGates: 1 });
+```
+
+- `.reason(backend, request)` runs one autonomous backend turn per cycle.
+- `.step(name, fn)` is deterministic state transformation.
+- `.until(preset)` or `.measure(fn)` declares what converges. A loop with no
+  preset or custom measure is rejected before it runs.
+- Presets: `untilGatesGreen()`, `untilManifestComplete()`, `untilNoIssues()`,
+  `untilConfident(threshold)`, and `times(n)`.
+- `.guard(...)` adds seatbelts; guards stop as `ceiling`, `timeout`, or
+  `budget-exhausted`.
+- `.run(initial, { onCycle? })` returns `Result<LoopOutcome, LoopRunError>`.
+
+### Fan-out / fan-in
+
+```ts
+import { fanOut, fanIn } from "orca-ts";
+```
+
+Use `fanOut({ state, branches, maxConcurrency })` for bounded parallel branch
+work over isolated state copies. Use `fanIn("barrier" | "race" | "quorum" |
+"reduce", outcomes, { reducer, onPartialFailure? })` as the only recombination
+point. Branch failures are data until the chosen join policy decides whether the
+cycle can continue.
+
+### Loop state stores
+
+```ts
+import { createSnapshotStore, createSqliteStore } from "orca-ts";
+```
+
+Both adapters implement the `StateStore` port: `load`, `checkpoint`, `branch`,
+`merge`, and `history`. `createSnapshotStore({ root })` writes JSON snapshots
+under `.orca/`. `createSqliteStore({ path })` returns a `Result` because it opens
+`bun:sqlite`; use it when the loop needs WAL-backed checkpoint/history and
+lease-based crash recovery. DBOS and Dolt are not selectable.
+
+### `defineLoop()` — reusable loop modules
+
+```ts
+import { defineLoop, err, loop, ok, stdout, times, watch } from "orca-ts";
+
+export default defineLoop({
+  name: "refresh-docs",
+  source: watch({ paths: ["docs"] }),
+  sink: stdout<string>(),
+  async onTrigger(event) {
+    const outcome = await loop("refresh-docs-cycle").until(times(1)).run({});
+    if (outcome.isErr()) return err(outcome.error);
+    return ok({ outcome: outcome.value, output: `handled ${event.filename ?? "change"}` });
+  },
+});
+```
+
+Save loop modules to `.orca/loops/<name>.ts`. They must be import-safe: no
+top-level `flow(...)`, source start, backend run, sink emit, or repo mutation.
+Run with `orca loops`, `orca run <name-or-path>`, or `orca serve <name-or-path>`.
+
 ### `fixLoop` — converge a gate
 
 ```ts
