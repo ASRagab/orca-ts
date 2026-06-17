@@ -7,7 +7,7 @@ Orca TypeScript is a workflow runner for deterministic coding-agent work.
 
 Write a TypeScript flow, choose a backend such as Claude, Codex, OpenCode, or Pi, and let Orca provide the runtime pieces around it: a flow context, normalized conversation results, filesystem and git helpers, persistent plans, review loops, and a CLI runner.
 
-Start with the [quickstart](quickstart.md) if you want to run a flow. Start with [Agent Skills](../install/agent-skills.md) if you want a coding agent to author and run a saved workflow for another repository.
+Start with the [quickstart](../quickstart/) if you want to run a flow. Start with [Agent Skills](../../install/agent-skills/) if you want a coding agent to author and run a saved workflow for another repository.
 
 ## Supported boundaries
 

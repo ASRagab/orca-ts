@@ -57,7 +57,7 @@ orca --backend claude hello.ts
 
 ## Next
 
-- [Install paths](../install/binary.md)
-- [Core concepts](concepts.md)
-- [First flow guide](../guides/first-flow.md)
-- [Backend setup](../guides/backend-setup.md)
+- [Install paths](../../install/binary/)
+- [Core concepts](../concepts/)
+- [First flow guide](../../guides/first-flow/)
+- [Backend setup](../../guides/backend-setup/)

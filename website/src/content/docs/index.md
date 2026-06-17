@@ -9,11 +9,11 @@ Use Orca when you want repeatable automation around a coding agent: implement a 
 
 ## Start paths
 
-- New to Orca: read the [quickstart](start/quickstart.md), then the [concepts](start/concepts.md).
-- Installing for local use: start with the [standalone binary](install/binary.md).
-- Writing typed flows: use the [typed authoring setup](install/typed-authoring.md).
-- Creating reusable automations in another repo: install the [Agent Skills](install/agent-skills.md).
-- Building repeatable work: start with [flows](guides/first-flow.md) or [loops](guides/loops.md).
+- New to Orca: read the [quickstart](start/quickstart/), then the [concepts](start/concepts/).
+- Installing for local use: start with the [standalone binary](install/binary/).
+- Writing typed flows: use the [typed authoring setup](install/typed-authoring/).
+- Creating reusable automations in another repo: install the [Agent Skills](install/agent-skills/).
+- Building repeatable work: start with [flows](guides/first-flow/) or [loops](guides/loops/).
 
 ## What Orca gives you
 
