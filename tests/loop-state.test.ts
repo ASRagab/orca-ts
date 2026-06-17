@@ -16,6 +16,7 @@ import {
   type StateStore,
   type TaskManifest
 } from "../src/loop/state/index.ts";
+import { defaultPlanPath, recoverPlan, writePlan } from "../src/index.ts";
 
 const manifest = (tasks: { id: string; passes: boolean }[]): TaskManifest => ({ tasks });
 
@@ -74,6 +75,35 @@ describe("manifest projection (design D4)", () => {
     const bad = parseManifest({ tasks: [{ id: 1, passes: "no" }] });
     expect(bad.isErr()).toBe(true);
     expect(bad._unsafeUnwrapErr()._tag).toBe("StructuredOutputValidationFailed");
+  });
+});
+
+describe("loop manifest does not replace the persistent plan artifact (design D4)", () => {
+  test("a plan-driven loop keeps .orca/plan-<hash>.md recoverable while the manifest holds runtime progress", async () => {
+    await withRoot(async (root) => {
+      // The human plan artifact is written and recovered through the plans-and-review API.
+      const input = "ship the loop builder";
+      const planMarkdown = "# Plan\n\n- [ ] scaffold\n- [ ] wire-routes\n";
+      const planPath = (await writePlan(root, input, planMarkdown))._unsafeUnwrap();
+      expect(planPath).toBe(defaultPlanPath(root, input));
+
+      // The loop's runtime progress lives in a SEPARATE manifest snapshot, not the plan file.
+      const store = createSnapshotStore({ root });
+      const hash = (
+        await store.checkpoint(
+          manifest([
+            { id: "scaffold", passes: true },
+            { id: "wire-routes", passes: false }
+          ])
+        )
+      )._unsafeUnwrap();
+      expect(statePath(root, hash)).not.toBe(planPath);
+
+      // The plan API still recovers the human artifact verbatim — the loop manifest did not touch it.
+      expect((await recoverPlan(planPath))._unsafeUnwrap()).toBe(planMarkdown);
+      // …while the manifest store holds the runtime projection the loop engine reads.
+      expect(measure((await store.load())._unsafeUnwrap())).toBe(1);
+    });
   });
 });
 

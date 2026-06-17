@@ -88,7 +88,7 @@
 
 ## 13. Docs, examples, verification
 
-- [ ] 13.1 Add example loop flows (single-cycle preset loop; a fan-out/fan-in loop) to `examples/`
-- [ ] 13.2 Update README + AGENTS.md: `loop()` authoring, presets, StateStore adapters, `run/serve/loops`, legacy CLI compatibility, Effect-behind-facade note, DBOS/Dolt-deferred rationale
-- [ ] 13.3 Ensure every spec scenario across the 8 capabilities has a corresponding test
-- [ ] 13.4 Confirm full `bun run verify` (typecheck + tests + lint + docs:check + facade gate) passes green
+- [x] 13.1 Add example loop flows (single-cycle preset loop; a fan-out/fan-in loop) to `examples/`
+- [x] 13.2 Update README + AGENTS.md: `loop()` authoring, presets, StateStore adapters, `run/serve/loops`, legacy CLI compatibility, Effect-behind-facade note, DBOS/Dolt-deferred rationale
+- [x] 13.3 Ensure every spec scenario across the 8 capabilities has a corresponding test
+- [x] 13.4 Confirm full `bun run verify` (typecheck + tests + lint + docs:check + facade gate) passes green
