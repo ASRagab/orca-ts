@@ -179,12 +179,11 @@ export const FileSystemErrorSchema = z.object({
   message: z.string()
 });
 
-// The loop-io trigger/output seam (`Source`/`Sink`) reports failures here. `kind` is the
-// stringified SourceKind/SinkKind; modelled as a plain string so this schema stays free of any
-// loop-module dependency (model must not import loop).
+// Runtime IO seams report failures here. `kind` is modelled as a plain string so this schema stays
+// free of tool and loop-module dependencies (model must not import either).
 export const IoFailedErrorSchema = z.object({
   _tag: z.literal("IoFailed"),
-  seam: z.enum(["source", "sink"]),
+  seam: z.enum(["source", "sink", "tool"]),
   kind: z.string(),
   message: z.string()
 });

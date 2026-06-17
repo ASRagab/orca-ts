@@ -23,6 +23,6 @@ export function structuredOutputValidationFailed(
   return { _tag: "StructuredOutputValidationFailed", ...args };
 }
 
-export function ioFailed(seam: "source" | "sink", kind: string, message: string): RuntimeError {
+export function ioFailed(seam: "source" | "sink" | "tool", kind: string, message: string): RuntimeError {
   return { _tag: "IoFailed", seam, kind, message };
 }

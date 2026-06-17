@@ -218,6 +218,8 @@ Built-in source kinds:
 - `watch`
 - `webhook`
 - `queue`
+- `linearIssueSource`
+- `linearAgentSource`
 
 Built-in sink kinds:
 
@@ -226,9 +228,13 @@ Built-in sink kinds:
 - `slack`
 - `queue`
 - `stdout`
+- `linearIssueSink`
+- `linearAgentSink`
 
 The queue adapters are split into `queueSource()` and `queueSink()` because the
 source and sink share the same `queue` kind.
+Linear adapters are covered in the focused [Linear integration](linear.md)
+guide.
 
 `orca serve` owns the trigger and isolates each firing in its own child
 process. One child crash does not take down the supervisor, and stopping the
@@ -310,6 +316,14 @@ export default defineLoop({
     }),
 });
 ```
+
+### Linear Ticket Triage
+
+Use Linear sources when tickets or Agent Sessions should trigger served loop
+runs, and Linear sinks when final summaries, errors, or PR links should land
+back in Linear. See the focused [Linear integration](linear.md) guide and the
+checked [`examples/linear-ticket-triage.ts`](../examples/linear-ticket-triage.ts)
+example.
 
 ## Troubleshooting
 

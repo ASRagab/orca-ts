@@ -14,6 +14,10 @@ export function gh() {
   return currentFlowContext().gh;
 }
 
+export function linear() {
+  return currentFlowContext().linear;
+}
+
 export function terminal() {
   return currentFlowContext().terminal;
 }

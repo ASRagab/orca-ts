@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createFsTool, type FsTool } from "../tools/fs.ts";
 import { createGitTool, type GitTool } from "../tools/git.ts";
 import { createGitHubTool, type GitHubTool } from "../tools/github.ts";
+import { createLinearTool, type LinearTool } from "../tools/linear.ts";
 import { createCommandTool, type CommandTool } from "../tools/process.ts";
 import { createTerminalTool, type TerminalTool } from "../tools/terminal.ts";
 import type { LlmTool } from "../backends/index.ts";
@@ -27,6 +28,7 @@ export interface FlowContext {
   readonly fs: FsTool;
   readonly git: GitTool;
   readonly gh: GitHubTool;
+  readonly linear: LinearTool;
   readonly terminal: TerminalTool;
   readonly command: CommandTool;
   readonly llm: LlmTool;
@@ -66,6 +68,7 @@ export function createDefaultFlowContext(
     fs: overrides.fs ?? createFsTool(),
     git: overrides.git ?? createGitTool(cwd),
     gh: overrides.gh ?? createGitHubTool(cwd),
+    linear: overrides.linear ?? createLinearTool(),
     terminal: overrides.terminal ?? createTerminalTool(),
     command: overrides.command ?? createCommandTool(cwd),
     llm: overrides.llm ?? createDefaultLlmTool(),

@@ -201,6 +201,7 @@ The best way to learn the authoring model is to start with the examples.
 | `examples/implement-enhanced.ts` | Larger implementation loop shape |
 | `examples/issue-pr.ts` | Issue-to-PR style workflow |
 | `examples/issue-pr-bugfix.ts` | Bugfix-oriented issue workflow |
+| `examples/linear-ticket-triage.ts` | Linear ticket triage loop with fake Linear and Slack IO |
 | `examples/multi-backend-compare.ts` | Comparing backend behavior |
 | `examples/epic.ts` | Structured output with a Zod schema and a directly pinned `codex()` backend |
 | `examples/loop-single-cycle.ts` | A single-cycle preset loop (`loop()` + `untilManifestComplete()`), runnable with no real backend |
