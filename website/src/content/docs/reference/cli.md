@@ -28,4 +28,19 @@ orca --version
 
 Valid backend tags are `claude`, `codex`, `opencode`, and `pi`.
 
+## Loop exit codes
+
+`orca run` and `orca serve` map each loop stop reason to a process exit code via `exitCodeForStop(reason)` (defined in `src/loop/serve.ts`). A build or runtime error that prevents the loop from running exits `70`.
+
+| Stop reason | Exit code | Meaning |
+| --- | --- | --- |
+| `converged` | `0` | Termination condition met. |
+| `unfixable` | `1` | The loop concluded the issue cannot be fixed. |
+| `stuck` | `2` | No progress across cycles. |
+| `timeout` | `3` | Wall-clock guard expired. |
+| `ceiling` | `4` | Iteration ceiling reached without convergence. |
+| `budget-exhausted` | `5` | Token budget guard exhausted. |
+| `cancelled` | `6` | Cancelled via signal or `cancel()`. |
+| (build/runtime error) | `70` | The loop failed to run at all. |
+
 Durable service-backed loop flags such as `--durable`, `--postgres-url`, and `--state dbos` are parsed but rejected because DBOS is deferred.

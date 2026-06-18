@@ -44,6 +44,7 @@ export default defineConfig({
             { label: "Backend Setup", slug: "guides/backend-setup" },
             { label: "Loops", slug: "guides/loops" },
             { label: "Served Loops", slug: "guides/served-loops" },
+            { label: "Linear Integration", slug: "guides/linear" },
             { label: "Monitoring And Recovery", slug: "guides/monitoring-recovery" }
           ]
         },
@@ -52,9 +53,12 @@ export default defineConfig({
           items: [
             { label: "CLI", slug: "reference/cli" },
             { label: "Public API", slug: "reference/api" },
+            { label: "Errors and Results", slug: "reference/errors-and-results" },
+            { label: "Runtime Errors", slug: "reference/runtime-errors" },
             { label: "Backend Matrix", slug: "reference/backends" },
             { label: "Loop API", slug: "reference/loop-api" },
             { label: "State Stores", slug: "reference/state-stores" },
+            { label: "Tools", slug: "reference/tools" },
             { label: "Agent Skills", slug: "reference/agent-skills" },
             { label: "Examples", slug: "reference/examples" },
             { label: "Distribution And Release", slug: "reference/distribution-release" }

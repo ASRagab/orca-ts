@@ -16,5 +16,6 @@ description: Checked examples and what each one demonstrates.
 | `examples/loop-fanout.ts` | Fan-out and fan-in with bounded concurrency. |
 | `examples/loop-persisted-state.ts` | Snapshot store checkpoint, history, branch, and merge. |
 | `examples/loop-served-trigger.ts` | Import-safe `defineLoop()` module. |
+| `examples/linear-ticket-triage.ts` | Linear ticket source, progress comment, triage loop, final update, optional Slack. |
 
 Inside this repository, examples may import from local source paths. Package consumers should import from `orca-ts`.
