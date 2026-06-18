@@ -9,6 +9,8 @@ Run the backend doctor through the setup skill or directly from a checked-out sk
 bash skills/orca-ts-setup/scripts/orca-doctor.sh --backend codex
 ```
 
+The doctor script is byte-identical in two skill directories — `skills/orca-ts-setup/scripts/orca-doctor.sh` and `skills/orca-ts-flow/scripts/orca-doctor.sh`. Either path works; prefer the `orca-ts-setup` copy (the canonical location) and keep the two in sync if you edit one.
+
 Status meanings:
 
 | Status | Meaning |

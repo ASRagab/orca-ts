@@ -43,12 +43,13 @@
     "docs:site:build": "cd website && bun install --frozen-lockfile && bun run build",
     "docs:site:preview": "cd website && bun run preview",
     "docs:check": "bun run scripts/check-doc-links.ts",
+    "docs:symbols": "bun run scripts/check-doc-symbols.ts",
     "check:facade-gate": "bun run scripts/check-facade-gate.ts",
     "test:integration:real": "ORCA_REAL_BACKEND_SMOKE=1 bun test tests/integration/real-backend-smoke.test.ts",
     "validate:fixtures": "bun run scripts/validate-fixtures.ts && bun run scripts/validate-adr-matrix.ts",
     "validate:release": "bun run scripts/validate-release.ts",
     "smoke:binary": "bun run scripts/smoke-binary.ts",
-    "verify": "bun run typecheck && bun test && bun run docs:site:build && bun run docs:check && bun run validate:fixtures && bun run validate:release && bun run build:types && bun run check:facade-gate && bun run smoke:binary"
+    "verify": "bun run typecheck && bun test && bun run docs:site:build && bun run docs:check && bun run docs:symbols && bun run validate:fixtures && bun run validate:release && bun run build:types && bun run check:facade-gate && bun run smoke:binary"
   },
   "dependencies": {
     "effect": "^3.21.3",

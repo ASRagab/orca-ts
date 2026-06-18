@@ -218,8 +218,8 @@ Built-in source kinds:
 - `watch`
 - `webhook`
 - `queue`
-- `linearIssueSource`
-- `linearAgentSource`
+- `linear-issue` — via `linearIssueSource()`
+- `linear-agent` — via `linearAgentSource()`
 
 Built-in sink kinds:
 
@@ -228,8 +228,8 @@ Built-in sink kinds:
 - `slack`
 - `queue`
 - `stdout`
-- `linearIssueSink`
-- `linearAgentSink`
+- `linear-issue` — via `linearIssueSink()`
+- `linear-agent` — via `linearAgentSink()`
 
 The queue adapters are split into `queueSource()` and `queueSink()` because the
 source and sink share the same `queue` kind.

@@ -66,4 +66,4 @@ Every loop needs a stop rule from a preset or custom `.measure()`.
 
 Add `.guard({ maxIterations, wallClockMs, tokenBudget })` for seatbelts. A cyclic loop with no preset and no custom measure is rejected before it runs.
 
-Read the reference pages for the [loop API](../../reference/loop-api/) and [state stores](../../reference/state-stores/).
+Read the reference pages for the [loop API](../../reference/loop-api/) — the full `LoopBuilder<S>` signatures, stop reasons, and exit codes — and [state stores](../../reference/state-stores/) — the `StateStore<S>` port and the snapshot/sqlite adapters, all `Result`-typed over `RuntimeError`.
