@@ -31,30 +31,34 @@ flow back (and before the typecheck gate, when one is reachable).
 6. **`fixLoop` issue shape.** The issue type must have `fixable: boolean`.
    Return `ok([])` from `evaluate` to converge; return `ok(issues)` with at
    least one `fixable: true` to trigger a fix round. Provide a `stalled`
-   detector to stop on no-progress (rule 8).
+   detector to stop on no-progress (rule 9).
 7. **`Result` discipline.** Tool/loop calls return a `Result`; use
    `.isErr()` / `.isOk()` / `.value` / `.error`, or `ok(...)`/`err(...)` to
    build them. Import `ok`/`err` (and the `Result` type) **from `"orca-ts"`** —
    never from `"neverthrow"` directly. The standalone binary embeds only the
    `orca-ts` surface; a bare `neverthrow` import crashes a flow in a target repo
    that doesn't happen to have `node_modules/neverthrow`.
-8. **No-progress detection.** A `stalled` callback owns its own history (a
+8. **No new legacy task wrappers.** `implementTaskLoop` and
+   `runReviewAndFixLoop` are deprecated compatibility wrappers that emit
+   `ORCA_DEP_LOOP_COLLAPSE`. New artifacts should walk tasks explicitly with
+   `fixLoop` per task, or use `loop()` with an `.until(...)` strategy.
+9. **No-progress detection.** A `stalled` callback owns its own history (a
    `Set` of normalized failure signatures). Returning `true` stops the loop as
    `stuck`. Normalize signatures (strip line numbers/paths) so a re-emitted
    identical failure is recognized — see `makeStallDetector` in
    `workflows/ai-slop-cleanup.ts`.
-9. **Verification gates are commands.** Wire the target repo's real test/lint
+10. **Verification gates are commands.** Wire the target repo's real test/lint
    commands through `command().run({ command, args })` and treat
    `result.type !== "success"` as failure. Never hardcode `bun`/`npm` — slot in
    the commands the author skill detected for *this* repo.
-10. **Zod for non-native backends.** When a flow may run on `pi` (or OpenCode
+11. **Zod for non-native backends.** When a flow may run on `pi` (or OpenCode
     for structured output), wrap brittle fields in `z.preprocess(...)` and be
     ready to parse JSON from `outcome.result.output`.
-11. **Standalone typecheck skip.** In a repo with no `tsconfig.json`, the `orca`
+12. **Standalone typecheck skip.** In a repo with no `tsconfig.json`, the `orca`
     binary **skips** its typecheck pre-flight and warns. The flow still runs;
     correctness rides on this cookbook + the CI-gated templates. Note this in
     the runbook for non-TS targets.
-12. **Never destroy or publish unrelated work.** A flow that mutates the repo
+13. **Never destroy or publish unrelated work.** A flow that mutates the repo
     must protect the user's tree: require a clean baseline (or auto-stash and
     restore) before editing; cut a feature branch before commit/push (never
     commit on the base branch); stage only workflow-owned paths; and when
@@ -62,7 +66,7 @@ flow back (and before the typecheck gate, when one is reachable).
     off-target edits (files the agent touched but wasn't asked to). Destructive
     or irreversible ops (force-push, history rewrite, `reset --hard`, broad
     `clean -fd`) are never auto-performed — escalate to the user.
-13. **Typed-lint repos must ignore the workflow dir.** If the target repo lints
+14. **Typed-lint repos must ignore the workflow dir.** If the target repo lints
     TypeScript with type information (e.g. ESLint flat config with
     `projectService: true` / `parserOptions.project`, the `typescript-eslint`
     default), a flow saved to `.orca/workflows/*.ts` will make the repo's own
@@ -73,12 +77,12 @@ flow back (and before the typecheck gate, when one is reachable).
     TS repo, confirm the lint config ignores `.orca/**` (or `.orca/workflows/**`);
     if it doesn't, add it (one line in the ignores list) and note the fix in the
     runbook. This does not affect non-TS targets or untyped lint.
-14. **Loop modules are import-safe.** A `.orca/loops/<name>.ts` file may create
+15. **Loop modules are import-safe.** A `.orca/loops/<name>.ts` file may create
     plain `Source`/`Sink` objects and export `defineLoop(...)`, but it must not
     start a source, run a backend, emit to a sink, mutate the repo, read
     `flowArgs()`, or prompt the user at import time. `orca loops` imports modules
     for discovery only.
-15. **Loop module commands differ from workflow scripts.** Workflows run as
+16. **Loop module commands differ from workflow scripts.** Workflows run as
     `orca .orca/workflows/<name>.ts --backend <tag> [-- "<args>"]`. Loop modules
     run as `orca loops`, `ORCA_LOOP_EVENT='{}' orca run <name-or-path>`, or
     `orca serve <name-or-path>`.
@@ -96,6 +100,7 @@ Before declaring a generated flow done, confirm each:
 - [ ] Verification commands are the **detected target-repo** commands, not `bun`/`npm` assumptions.
 - [ ] At least one test gate **and** one lint gate are wired (the skill refuses an ungated flow).
 - [ ] `fixLoop` issues carry `fixable`; a `stalled` detector is supplied for repair loops.
+- [ ] No new use of deprecated `implementTaskLoop` or `runReviewAndFixLoop` wrappers.
 - [ ] Any Zod schema used with `pi`/OpenCode tolerates off-shape output (`z.preprocess`).
 - [ ] No dependency on the agent asking the operator a question (autonomous only).
 - [ ] If the target repo has no `tsconfig.json`, the runbook records the skipped-typecheck note.

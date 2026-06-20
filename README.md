@@ -27,14 +27,14 @@ Documentation website: <https://ASRagab.github.io/orca-ts/>
 Use this when you want to run a flow on a unix-y machine without creating a package first.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ASRagab/orca-ts/main/install.sh | bash
+curl -fsSL https://github.com/ASRagab/orca-ts/releases/latest/download/install.sh | bash
 ```
 
 Pin a version or change the install directory with environment variables:
 
 ```bash
 ORCA_VERSION=0.1.0 ORCA_INSTALL_DIR="$HOME/.local/bin" \
-  bash <(curl -fsSL https://raw.githubusercontent.com/ASRagab/orca-ts/main/install.sh)
+  bash <(curl -fsSL https://github.com/ASRagab/orca-ts/releases/download/v0.1.0/install.sh)
 ```
 
 The binary can run a flow that imports from `orca-ts` even when the flow project has no `node_modules`. If the project has its own `orca-ts` Git/source dependency, that project copy wins. In a zero-project directory with no `tsconfig.json`, the standalone binary skips the typecheck guard and emits a warning before running. Project typechecking needs a local `typescript` dependency, a `tsconfig.json`, and a local `orca-ts` Git/source dependency.
@@ -71,7 +71,7 @@ bun install --frozen-lockfile
 bun run verify
 ```
 
-`bun run verify` runs typecheck, unit tests, doc-link checking, fixture validation, release metadata validation, declaration generation, and a compiled binary smoke test. It does not require live backend credentials.
+`bun run verify` runs typecheck, unit tests, docs site build, doc-link checking, fixture validation, release metadata validation, declaration generation, the facade gate, and a compiled binary smoke test. It does not require live backend credentials.
 
 ## Write Your First Flow
 
@@ -115,7 +115,7 @@ Orca normalizes backend output into one `Conversation` model, but each backend s
 | --- | --- | --- |
 | Claude | `claude()` | `claude` CLI on `PATH` and authenticated |
 | Codex | `codex()` | `codex` CLI on `PATH` and authenticated |
-| OpenCode | `opencode()` | `opencode` CLI on `PATH`; Orca manages `opencode serve` |
+| OpenCode | `opencode()` | `opencode` CLI on `PATH` and authenticated; Orca manages `opencode serve` |
 | Pi | `pi()` | `pi` CLI on `PATH` and authenticated |
 
 Autonomous conversations are intended to complete without asking the human for input. If a backend needs credentials, approvals, or login setup, configure that backend before running the flow.
@@ -129,7 +129,7 @@ const selected = selectBackend({
   default: "codex",
   perBackend: {
     codex: { approvalPolicy: "never" },
-    opencode: { model: "openai/gpt-5.5" }
+    opencode: { model: "provider/model" }
   }
 });
 ```
@@ -316,7 +316,7 @@ The package metadata exposes these entry points:
 | `orca-ts` | Root flow authoring API |
 | `orca-ts/model` | Shared model types and schemas |
 | `orca-ts/testing` | Test helpers |
-| `bin.orca` | CLI entry point at `./bin/orca` |
+| `bin.orca` | Source-checkout Bun CLI shim at `./bin/orca`; release installs use the compiled standalone binary |
 
 ## Development Commands
 

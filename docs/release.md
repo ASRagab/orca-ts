@@ -33,7 +33,7 @@ Releases are tag-driven. A `vX.Y.Z` tag runs `.github/workflows/release.yml`, wh
 6. Spot-check the install path:
 
    ```bash
-   ORCA_VERSION=X.Y.Z bash <(curl -fsSL https://raw.githubusercontent.com/ASRagab/orca-ts/main/install.sh)
+   ORCA_VERSION=X.Y.Z bash <(curl -fsSL https://github.com/ASRagab/orca-ts/releases/download/vX.Y.Z/install.sh)
    orca --version
    ```
 

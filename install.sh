@@ -31,7 +31,8 @@ esac
 
 asset="orca-${os}-${arch}.tar.gz"
 if [[ -n "${ORCA_VERSION:-}" ]]; then
-  base_url="https://github.com/ASRagab/orca-ts/releases/download/v${ORCA_VERSION}"
+  version="${ORCA_VERSION#v}"
+  base_url="https://github.com/ASRagab/orca-ts/releases/download/v${version}"
 else
   base_url="https://github.com/ASRagab/orca-ts/releases/latest/download"
 fi
