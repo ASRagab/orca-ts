@@ -21,8 +21,9 @@ the *target* repo's toolchain rather than assume a Node/TS stack.
   under `skills/`, that compose into a setup → author → run pipeline:
   - **`orca-ts-setup`**: install the `orca` binary, then verify that at least
     one supported backend (`claude`/`codex`/`opencode`/`pi`) is on `PATH`,
-    authenticated, and usable — asking the user which backend(s) to enable —
-    and troubleshoot install/auth/config failures.
+    ready or explicitly `unverified` when auth cannot be cheaply proven — asking
+    the user which backend(s) to enable — and troubleshoot install/auth/config
+    failures.
   - **`orca-ts-author`**: read the target repository to detect its stack and
     real verification commands, interview the user (adaptively, one decision at
     a time on hosts without structured prompts) to fix the workflow shape, help
@@ -38,11 +39,11 @@ the *target* repo's toolchain rather than assume a Node/TS stack.
   `orca` binary (which embeds the API and skips the project typecheck guard in
   non-TS repos), and ship with a runbook plus an optional thin shell wrapper —
   no dependency on the target repo's package manager.
-- Bundle a reusable backend doctor used by both `orca-ts-setup` (preflight) and
-  `orca-ts-flow` (runtime re-verification/healing).
-- Bundle TypeScript flow templates (archetypes) plus a reference cookbook (DSL,
-  backend matrix, codegen gotchas, recipes) so generated flows typecheck on the
-  first try.
+- Bundle byte-identical backend doctor script copies used by `orca-ts-setup`
+  (preflight) and `orca-ts-flow` (runtime re-verification/healing).
+- Bundle TypeScript templates (archetypes) plus a reference cookbook (DSL,
+  backend matrix, codegen gotchas, recipes) so generated artifacts typecheck on
+  the first try.
 - Add a CI check that typecheck-gates the bundled templates so they cannot drift
   from the runtime API they target.
 
@@ -66,15 +67,16 @@ the *target* repo's toolchain rather than assume a Node/TS stack.
 ## Impact
 
 - **New**: `skills/orca-ts-setup/`, `skills/orca-ts-author/`,
-  `skills/orca-ts-flow/` (each with `SKILL.md`, bundled `scripts/`, `assets/`,
-  and `reference/` as needed). A shared backend-doctor script. A CI test
-  (e.g. `tests/skill-templates.test.ts`) that typecheck-gates bundled templates.
+  `skills/orca-ts-flow/` (each with `SKILL.md` and its own bundled resources as
+  needed). `orca-doctor.sh` is duplicated into the setup and flow skills and kept
+  byte-identical by a CI test; `tests/skill-templates.test.ts` also typecheck-gates
+  bundled templates.
 - **Convention**: target repos gain an `.orca/workflows/` directory for saved
   flows (alongside the existing `.orca/plan-*.md` and `.orca/monitoring/`).
 - **Consumes (unchanged)**: the standalone-binary embedded-import path and
   typecheck-skip behavior (`distribution`), the backend SPI and
   `selectBackend()` (`conversation-backends`, `shared-backend-config`), the flow
-  DSL (`flow-runtime`), and `--monitor`/`.orca/monitoring` plus
+  DSL (`flow-runtime`), and `WorkflowMonitor`/`.orca/monitoring` plus
   `scripts/summarize-run.ts` (`execution-observability`).
 - **Docs**: README/AGENTS gain a short pointer to the skills; detailed skill
   guidance stays inside each `SKILL.md`.

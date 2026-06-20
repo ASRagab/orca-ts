@@ -37,7 +37,7 @@ The Claude backend spawns `claude --print --input-format stream-json --output-fo
 
 ## OpenCode
 
-The OpenCode backend drives a shared `opencode serve` process over HTTP/SSE (`opencode-run.ts`). The server is started lazily and reused across conversations through `createOpenCodeServerManager`; `opencode().shutdown()` stops it (orca-ts has no global scope hook, so the backend owner drives teardown). Each turn opens the `GET /event` SSE stream first, then starts the turn with `POST /session/{id}/prompt_async`, and reads to a terminal `session.idle`/`session.error`. Parity notes:
+The OpenCode backend drives a shared `opencode serve` process over HTTP/SSE (`opencode-run.ts`). Configure `opencode` and its auth outside Orca first. The server is started lazily and reused across conversations through `createOpenCodeServerManager`; `opencode().shutdown()` stops it (orca-ts has no global scope hook, so the backend owner drives teardown). Each turn opens the `GET /event` SSE stream first, then starts the turn with `POST /session/{id}/prompt_async`, and reads to a terminal `session.idle`/`session.error`. Parity notes:
 
 - Backend config travels in the message body: model (`{providerID, modelID}`), system prompt, per-tool gate (autonomous disables `question`; read-only disables `write`/`edit`/`bash`/`patch`).
 - Structured output: schema sent as `format: {type: "json_schema", schema}`; the server-enforced `structured` payload is surfaced on the result.
@@ -62,7 +62,7 @@ const selected = selectBackend({
   default: "codex",
   config: { readOnly: true },
   perBackend: {
-    opencode: { model: "openai/gpt-5.5" }
+    opencode: { model: "provider/model" }
   }
 });
 ```

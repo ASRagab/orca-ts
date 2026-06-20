@@ -173,21 +173,14 @@ const loop = await fixLoop<MyIssue>(
 - Depth is **not** bounded by a stingy count — convergence, the no-progress
   signature, and the wall-clock backstop are the real stops.
 
-### `implementTaskLoop` — walk a task list
+### Deprecated task/review wrappers
 
-```ts
-import { implementTaskLoop, backendFailed } from "orca-ts";
-
-const result = await implementTaskLoop(tasks, async (task) => {
-  // task: { id: string; description: string }
-  // … implement task.description …
-  return ok(undefined);            // or: err(backendFailed("codex", "…"))
-});
-// result: Result<{ completed: string[] }, RuntimeError>
-```
-
-Stops at the first task that returns `err`. Pair with `fixLoop` per task for a
-review/repair inner loop (see `templates/persistent-multitask.ts`).
+`implementTaskLoop` and `runReviewAndFixLoop` remain exported for legacy flows
+for one release, but each call emits `DeprecationWarning`
+`ORCA_DEP_LOOP_COLLAPSE`. Do not generate new artifacts with them. Walk task
+lists explicitly and pair each task with `fixLoop`, as shown in
+`templates/persistent-multitask.ts`, or use `loop()` with an `.until(...)`
+strategy when the state is naturally cyclic.
 
 ## Tools (accessors)
 

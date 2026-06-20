@@ -14,7 +14,7 @@
 # Live smoke also runs when ORCA_REAL_BACKEND_SMOKE=1 is set in the environment.
 #
 # Per-backend status is one of:
-#   ready       CLI on PATH, --version ok, and auth confirmed (or unverifiable)
+#   ready       CLI on PATH, --version ok, and auth confirmed or credentials found
 #   unauth      CLI present but not authenticated
 #   missing     CLI not on PATH
 #   misconfig   CLI present but --version failed (broken install)

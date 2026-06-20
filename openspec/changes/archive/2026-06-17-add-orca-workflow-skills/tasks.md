@@ -1,35 +1,35 @@
 ## 1. Shared scaffolding and reference cookbook
 
-- [x] 1.1 Create `skills/` with subdirs `orca-ts-setup/`, `orca-ts-author/`, `orca-ts-flow/`, each with `SKILL.md`, and a shared `skills/_shared/` (or per-skill copies — resolve the packaging question from design Open Questions) for `reference/` and `scripts/`
+- [x] 1.1 Create `skills/` with self-contained subdirs `orca-ts-setup/`, `orca-ts-author/`, `orca-ts-flow/`, each with `SKILL.md` and the bundled `scripts/`, `reference/`, templates it invokes
 - [x] 1.2 Write `reference/dsl.md` — orca-ts flow verbs and types from the public API (`flow`, `llm().autonomous`, `selectBackend`, `plan`, `review`, `fixLoop`, `implementTaskLoop`, `fs`/`git`/`gh`/`terminal`/`command`, `z`), with the `await flow(process.argv.slice(2))(async () => {…})` shape and `.awaitResult()` outcome handling
 - [x] 1.3 Write `reference/backends.md` — backend matrix (claude/codex/opencode/pi): CLI, readiness/auth probe, models, autonomous-only `ask_user`, OpenCode managed-process shutdown, `selectBackend()` precedence and env overrides
 - [x] 1.4 Write `reference/gotchas.md` — TS codegen rules + a pre-handoff self-audit checklist (imports from `orca-ts`, outcome `.type` narrowing, `selectBackend` vs pinned backend, OpenCode shutdown, schema/`z` usage, standalone-binary typecheck-skip note)
 - [x] 1.5 Write `reference/recipes.md` — the archetypes mapped to templates, each as a complete, explained example
 - [x] 1.6 Author bundled TS templates under `assets/templates/` (one per archetype: single-change, persistent-multitask, issue-to-pr, bugfix, cleanup-sweep, multi-backend-compare), each parameterized for stack-agnostic verification command slots and importing from `orca-ts`
-- [x] 1.7 Write the shared backend-doctor script (`scripts/orca-doctor.sh`): probe each chosen backend for CLI-on-`PATH`, non-spending readiness, and auth; classify failures (missing/unauth/misconfig/network); support an opt-in `ORCA_REAL_BACKEND_SMOKE` live check
+- [x] 1.7 Write duplicated backend-doctor script copies under the setup and flow skills: probe each chosen backend for CLI-on-`PATH`, non-spending readiness, and auth; classify failures (missing/unauth/misconfig/network); support an opt-in `ORCA_REAL_BACKEND_SMOKE` live check; keep copies byte-identical by test
 
 ## 2. orca-ts-setup skill
 
 - [x] 2.1 Write `orca-ts-setup/SKILL.md` frontmatter (name, description, triggers, host/stack-agnostic compatibility note) and the install → choose-backend → verify → troubleshoot flow
 - [x] 2.2 Implement/locate-or-install the `orca` binary step: prefer on-`PATH`, else run the documented installer, honor `ORCA_VERSION`/install-dir, confirm with `orca --version`
-- [x] 2.3 Wire the backend selection prompt (host-agnostic) and call the shared doctor (1.7) to verify ≥1 chosen backend; fail loudly if none pass
+- [x] 2.3 Wire the backend selection prompt (host-agnostic) and call the setup skill's doctor copy (1.7) to verify ≥1 chosen backend; fail loudly if none pass
 - [x] 2.4 Implement troubleshooting branches mapping each failure class to a concrete next step (install CLI, backend-specific login, manual installer download/verify)
 - [x] 2.5 Make the skill re-runnable as a doctor (re-verify without reinstall on a healthy environment)
 
 ## 3. orca-ts-author skill
 
-- [x] 3.1 Write `orca-ts-author/SKILL.md` frontmatter and the read-repo → interview → generate → gate → save flow, referencing the shared cookbook
+- [x] 3.1 Write `orca-ts-author/SKILL.md` frontmatter and the read-repo → interview → generate → gate → save flow, referencing its bundled cookbook
 - [x] 3.2 Implement target-repo stack/command discovery: probe `package.json` scripts, `Makefile`/`justfile`, `pyproject.toml`/pytest, `Cargo.toml`, `go.mod`, `build.sbt`, `.pre-commit-config.yaml`, CI workflows; propose detected test/lint/format/build commands and confirm with the user
 - [x] 3.3 Implement the adaptive, host-agnostic interview (archetype first → archetype-specific sub-decisions, each with a default; `AskUserQuestion` on Claude Code, one-at-a-time elsewhere; "defaults" fast-path)
 - [x] 3.4 Implement template selection + slot-fill for the chosen archetype, slotting in the confirmed verification commands and backend selection
 - [x] 3.5 Implement the verification-gate enforcement: wire test+lint (minimum) into the per-task loop; refuse to emit a flow with no gate
-- [x] 3.6 Implement the typecheck gate with fallback: typecheck the generated flow when a TS toolchain is reachable (scratch tsconfig + embedded orca-ts shim + `tsc --noEmit`); otherwise run the self-audit and add the skipped-typecheck note to the runbook
+- [x] 3.6 Implement the typecheck gate with fallback: typecheck the generated artifact when a TS toolchain is reachable (scratch tsconfig + embedded orca-ts shim + `tsc --noEmit`); otherwise run the self-audit and add the skipped-typecheck note to the runbook
 - [x] 3.7 Implement stack-agnostic save: write `.orca/workflows/<name>.ts`, emit `<name>.run.md` runbook with the exact `orca` trigger + prerequisites, and an optional thin POSIX `<name>.sh` wrapper; confirm target directory before writing
 
 ## 4. orca-ts-flow skill
 
 - [x] 4.1 Write `orca-ts-flow/SKILL.md` frontmatter and the run → monitor → diagnose → heal flow
-- [x] 4.2 Implement workflow execution via the `orca` binary with `--monitor` enabled and optional backend override against the confirmed target repo
+- [x] 4.2 Implement workflow execution via the `orca` binary with optional backend override against the confirmed target repo; report the new monitor log only when the workflow emits one
 - [x] 4.3 Implement progress-based stall detection: tail `.orca/monitoring/<runId>.json`, persistent plan checkboxes, and `git log`; flag a stall only on no-progress beyond a tunable window past the inactivity watchdog
 - [x] 4.4 Implement failure classification (backend crash, expired/missing auth, validation/gate failure, non-convergence, stall) from runtime signals + monitoring
 - [x] 4.5 Implement bounded, safety-gated healing: environment → doctor + guided re-auth + resume from persistent plan; non-convergence → bounded retry with adjusted prompt/backend then escalate; crash → resume; hard-stop and escalate on any destructive/irreversible action

@@ -40,9 +40,13 @@ for definitive auth proof on claude/pi.
 ## `ask_user`
 
 Autonomous conversations reject human interaction (`canAskUser=false`) on every
-backend. Do not author a flow that depends on the running agent asking the
-operator a question — that interactivity is intentionally not ported. Decisions
-the workflow needs must be encoded as flow logic or CLI args.
+backend, and live approval prompts remain a reserved compatibility seam. An
+explicit interactive Codex conversation can use Orca's `ask_user` bridge, but
+the bundled templates generate autonomous, replayable artifacts. Do not author a
+default mutating workflow or loop that depends on the running agent asking the
+operator a question. Decisions the artifact needs must be encoded as flow logic,
+CLI args, or trigger event data. `Plan.interactive` is unsupported because live
+answers cannot be replayed after crash recovery.
 
 ## Selecting at run time
 

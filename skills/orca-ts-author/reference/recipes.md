@@ -47,10 +47,10 @@ default backend. Leaves changes in place on non-convergence for inspection.
 
 ## persistent-multitask (default)
 A planning turn emits a JSON task list (validated by `PlanSchema`); the plan is
-written to `.orca/plan-<hash>.md` via `writePlan`. `implementTaskLoop` walks the
-tasks; each task implements then converges `GATE` in its own `fixLoop`. A task
-that can't converge fails the loop (returns `backendFailed`). **Each converged
-task is checked off (`[x]`) in the persisted plan and re-running recovers it**
+written to `.orca/plan-<hash>.md` via `writePlan`. The template walks pending
+tasks explicitly; each task implements then converges `GATE` in its own
+`fixLoop`. A task that can't converge fails the run. **Each converged task is
+checked off (`[x]`) in the persisted plan and re-running recovers it**
 (`recoverPlan`), skipping done tasks — this is the crash-resume path
 `orca-ts-flow` relies on. The template instantiates `WorkflowMonitor` (from
 `orca-ts`) and writes `.orca/monitoring/<runId>.json` (per-task verdict,

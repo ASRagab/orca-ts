@@ -72,6 +72,12 @@ const INSTALL_DIR_DOCS: ReadonlyArray<string> = [
   "skills/orca-ts-setup/scripts/orca-setup.sh",
   "skills/orca-ts-setup/SKILL.md",
   "README.md",
+  "docs/distribution.md",
+];
+const INSTALL_SCRIPT_URL_DOCS: ReadonlyArray<string> = [
+  "README.md",
+  "docs/distribution.md",
+  "docs/release.md",
 ];
 
 describe("install dir default agreement", () => {
@@ -82,6 +88,23 @@ describe("install dir default agreement", () => {
       // Match a literal `$HOME/bin` used as an install dir (followed by a
       // quote or slash boundary), without flagging `$HOME/.local/bin`.
       expect(text).not.toMatch(/\$HOME\/bin(?=["/\s])/);
+    });
+  }
+});
+
+describe("release installer documentation", () => {
+  test("install.sh accepts plain or v-prefixed ORCA_VERSION values", () => {
+    const text = readFileSync("install.sh", "utf8");
+
+    expect(text).toContain('version="${ORCA_VERSION#v}"');
+  });
+
+  for (const path of INSTALL_SCRIPT_URL_DOCS) {
+    test(`${path} uses release installer assets instead of main branch script`, () => {
+      const text = readFileSync(path, "utf8");
+
+      expect(text).not.toContain("raw.githubusercontent.com/ASRagab/orca-ts/main/install.sh");
+      expect(text).toContain("github.com/ASRagab/orca-ts/releases/");
     });
   }
 });

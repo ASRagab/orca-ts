@@ -1,7 +1,7 @@
 ## Context
 
 Orca TypeScript ships a runtime (flow DSL, four backends, persistent plans,
-review loops, `--monitor` observability) and a standalone `orca` binary that can
+review loops, `WorkflowMonitor` observability) and a standalone `orca` binary that can
 run a `.ts` flow even in a repository that has no `node_modules` or
 `tsconfig.json`. What it lacks is a guided, agent-facing path from intent to a
 saved, self-validating workflow.
@@ -26,7 +26,7 @@ the *target* repo's toolchain and never assume a Node/TS layout.
   setup → author → run: `orca-ts-setup`, `orca-ts-author`, `orca-ts-flow`.
 - A coding agent in an arbitrary repo can install Orca, prove a backend works,
   author a verification-gated workflow, save it, and re-run/monitor/heal it.
-- Generated flows typecheck on the first try (template + cookbook + gate).
+- Generated artifacts typecheck on the first try (template + cookbook + gate).
 - Saved workflows are re-runnable with no dependency on the target repo's stack.
 - Verification gates (minimum: the target repo's tests and linters) are
   mandatory in every authored workflow.
@@ -85,8 +85,8 @@ MUST carry at least a test gate and a lint gate; if none can be detected, the
 skill prompts the user to supply commands and refuses to emit an ungated flow.
 This is the "vibes → productized" mechanism.
 
-### D5: Typecheck-gate generated flows when a TS toolchain is reachable; otherwise rely on CI-gated templates + self-audit
-In a TS-capable environment the author skill validates the generated flow in a
+### D5: Typecheck-gate generated artifacts when a TS toolchain is reachable; otherwise rely on CI-gated templates + self-audit
+In a TS-capable environment the author skill validates the generated artifact in a
 scratch context (temp `tsconfig.json` + `typescript` + the binary's embedded
 orca-ts shim, then `tsc --noEmit`). In a non-TS repo with no reachable TS
 toolchain, it falls back to: (a) the bundled templates are correct-by-
@@ -95,12 +95,12 @@ checklist (ported from orca-flow's gotchas). It then emits a runbook note that
 the runtime typecheck guard will be skipped. *Rationale*: the CI template gate
 is what makes slot-filled output high-confidence even without a local gate.
 
-### D6: Shared backend doctor, used by setup (preflight) and flow (runtime healing)
-A single bundled script/procedure probes each backend cheaply: CLI on `PATH`,
-a non-spending readiness probe (version/auth-status per CLI), and an optional
-opt-in live smoke (`ORCA_REAL_BACKEND_SMOKE=1`). `orca-ts-setup` runs it to
-enable ≥1 backend; `orca-ts-flow` reuses it when a run fails with a backend/auth
-error, to diagnose and guide re-auth before resuming.
+### D6: Backend doctor, used by setup (preflight) and flow (runtime healing)
+Byte-identical per-skill script copies probe each backend cheaply: CLI on
+`PATH`, a non-spending readiness probe (version/auth-status per CLI), and an
+optional opt-in live smoke (`ORCA_REAL_BACKEND_SMOKE=1`). `orca-ts-setup` runs
+its copy to enable ≥1 backend; `orca-ts-flow` runs its copy when a run fails with
+a backend/auth error, to diagnose and guide re-auth before resuming.
 
 ### D7: Stall detection is progress-based and tuned to runtime watchdogs
 The runtime already bounds a single turn (120s inactivity watchdog, 600s
@@ -130,7 +130,7 @@ persistent-plan archetype with detected verification gates slotted in.
 
 - **Template drift from the runtime API** → CI test typecheck-gates every
   bundled template against the in-repo orca-ts on each change.
-- **Cannot runtime-typecheck generated flows in a non-TS repo** → rely on
+- **Cannot runtime-typecheck generated artifacts in a non-TS repo** → rely on
   CI-gated templates + self-audit; warn in the runbook (D5). Residual risk:
   hand-edited slot fills can still break; mitigated by keeping templates
   parameterized and slots small.
@@ -144,9 +144,10 @@ persistent-plan archetype with detected verification gates slotted in.
   actions escalate to the user (D8).
 - **OpenCode leaves a managed `opencode serve` process** → runner must own
   shutdown (`opencode().shutdown()`); the runbook and templates make this explicit.
-- **Three skills increase install/maintenance surface** → mitigated by a shared
-  bundled doctor and a shared reference cookbook; the three `SKILL.md` files stay
-  thin and point into shared `reference/`.
+- **Three skills increase install/maintenance surface** → mitigated by
+  self-contained skill directories and drift tests for duplicated scripts;
+  `orca-ts-author` owns the reference cookbook and templates, while each skill
+  carries the scripts it invokes.
 
 ## Migration Plan
 
@@ -163,10 +164,12 @@ directory only when a user saves a workflow there.
   auth-status check, so the doctor verifies presence + `--version` and reports
   `unverified` (credentials-file/token-env best-effort), with the opt-in live
   smoke (`--smoke` / `ORCA_REAL_BACKEND_SMOKE=1`) as the definitive proof.
-- ~~Shared vs per-skill `reference/`.~~ **Resolved at apply**: one shared
-  `skills/_shared/{reference,scripts,assets/templates}`, referenced by all three
-  `SKILL.md` files; the three skills install together as a set. Avoids 3×
-  duplication and is the anti-drift mechanism alongside the CI template gate.
+- ~~Shared vs per-skill `reference/`.~~ **Resolved at apply**: each skill is a
+  self-contained install directory because the `skills` CLI copies each
+  `skills/<name>/` independently and ignores non-skill siblings. There is no
+  `skills/_shared/`; `orca-ts-author` carries `reference/` and
+  `assets/templates/`, and duplicated `orca-run.sh` / `orca-doctor.sh` copies are
+  kept byte-identical by `tests/skill-templates.test.ts`.
 - Whether to later sync the canonical in-repo skills out to personal-skills via
   the `npx skills` CLI (deferred; not in this change).
 

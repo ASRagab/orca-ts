@@ -13,14 +13,11 @@
 //   - GATE      : detected target-repo verification commands (>=1 test, >=1 lint)
 //   - default backend
 import {
-  backendFailed,
   command,
   defaultPlanPath,
-  err,
   fixLoop,
   flow,
   flowArgs,
-  implementTaskLoop,
   llm,
   ok,
   recoverPlan,
@@ -75,7 +72,8 @@ await flow(flowArgs())(async () => {
       `Plan: ${String(tasks.length)} task(s), ${String(pending.length)} pending -> ${planPath}`,
     );
 
-    const result = await implementTaskLoop(pending, async (task) => {
+    let completedThisRun = 0;
+    for (const task of pending) {
       console.log(`▶ ${task.id}: ${task.description}`);
       const taskStart = Date.now();
       const impl = await llm()
@@ -88,7 +86,7 @@ await flow(flowArgs())(async () => {
           durationMs: Date.now() - taskStart,
           category: "environment",
         });
-        return err(backendFailed(selected.tag, `${task.id} implementation failed: ${impl.type}`));
+        throw new Error(`${task.id} implementation failed: ${impl.type}`);
       }
 
       const seen = new Set<string>();
@@ -123,14 +121,14 @@ await flow(flowArgs())(async () => {
             ? { iterations: loop.value.iterations, regressedReason: regressedReasonFor(loop.value.stop) }
             : {}),
         });
-        return err(backendFailed(selected.tag, `${task.id} did not converge: ${why}`));
+        throw new Error(`${task.id} did not converge: ${why}`);
       }
 
       // Persist progress: check this task off so a crash/re-run skips it.
       markDone(tasks, task.id);
       const written = await writePlan(cwd, OBJECTIVE, renderPlanMarkdown(tasks));
       if (written.isErr()) {
-        return err(backendFailed(selected.tag, `failed to persist plan: ${JSON.stringify(written.error)}`));
+        throw new Error(`failed to persist plan: ${JSON.stringify(written.error)}`);
       }
       monitor.recordOutcome({
         file: task.id,
@@ -139,13 +137,12 @@ await flow(flowArgs())(async () => {
         smellsRemoved: [],
         iterations: loop.value.iterations,
       });
-      return ok(undefined);
-    });
+      completedThisRun += 1;
+    }
 
-    if (result.isErr()) throw new Error(`task loop failed: ${JSON.stringify(result.error)}`);
     const completed = tasks.filter((task) => task.done).length;
     console.log(
-      `Completed ${String(result.value.completed.length)} task(s) this run; ${String(completed)}/${String(tasks.length)} total.`,
+      `Completed ${String(completedThisRun)} task(s) this run; ${String(completed)}/${String(tasks.length)} total.`,
     );
   } finally {
     await monitor.writeLog(MONITOR_DIR);

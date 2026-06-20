@@ -4,8 +4,10 @@
 
 Define the behavior of the `orca-ts-setup` skill: install the `orca` binary and
 verify that at least one user-chosen backend is authenticated, configured, and
-usable, troubleshooting install/auth/config failures along the way. The skill is
-host-agnostic and stack-agnostic - it works on any machine and in any repository.
+usable, or explicitly marked `unverified` when that backend has no safe
+non-spending auth probe, troubleshooting install/auth/config failures along the
+way. The skill is host-agnostic and stack-agnostic - it works on any machine and
+in any repository.
 
 ## Requirements
 
@@ -35,8 +37,10 @@ require Bun, Node, or the JVM to be present for binary-only use.
 
 The skill SHALL ask the user which of the supported backends (`claude`,
 `codex`, `opencode`, `pi`) to enable, then verify each chosen backend's CLI is on
-`PATH`, authenticated, and usable. It SHALL NOT report success until at least one
-chosen backend passes verification.
+`PATH` and passes the cheapest safe readiness probe available for that backend.
+It SHALL NOT report success until at least one chosen backend is `ready` or
+`unverified`; `unverified` is allowed only for backends whose authentication
+cannot be proven without a live smoke.
 
 #### Scenario: User selects a backend to enable
 
@@ -48,9 +52,14 @@ chosen backend passes verification.
 - **WHEN** a chosen backend's CLI is on `PATH`, passes a readiness probe, and is authenticated
 - **THEN** the skill marks that backend ready and records the backend tag
 
+#### Scenario: Auth cannot be cheaply proven
+
+- **WHEN** a chosen backend's CLI is on `PATH` and passes `--version`, but the backend has no safe non-spending auth-status probe
+- **THEN** the skill marks that backend `unverified`, explains the limitation, and points to the gated live smoke for definitive proof
+
 #### Scenario: No chosen backend is functional
 
-- **WHEN** every chosen backend fails verification
+- **WHEN** every chosen backend is `missing`, `unauth`, or `misconfig`
 - **THEN** the skill reports failure with the per-backend reason and does not declare setup complete
 
 #### Scenario: Optional live smoke is gated

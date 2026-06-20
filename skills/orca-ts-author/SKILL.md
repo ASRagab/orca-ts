@@ -80,8 +80,9 @@ accept a bare answer. Never dump all axes at once.
    - the prompt/objective/title/pathspec for the archetype.
 4. Apply every `gotchas.md` rule as you fill: import from `"orca-ts"`; narrow
    `outcome.type`; `selected.shutdown?.()` in a `finally`; `fixLoop` issues carry
-   `fixable`; a `stalled` detector is supplied; loop modules stay import-safe;
-   Zod tolerant for pi/OpenCode.
+   `fixable`; a `stalled` detector is supplied; deprecated task/review wrappers
+   are not used in new artifacts; loop modules stay import-safe; Zod tolerant for
+   pi/OpenCode.
 
 ## 4. Typecheck the flow (when a TS toolchain is reachable)
 

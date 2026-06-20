@@ -3,22 +3,31 @@
 ## Purpose
 
 Define the behavior of the `orca-ts-flow` skill: execute a saved or just-authored
-workflow, monitor it for real progress (detecting stalls and stuck loops), and
-diagnose, resolve, and where safe self-heal runtime failures. The skill is
-host-agnostic and operates against any git-backed repository.
+workflow script or loop module, monitor it for real progress (detecting stalls
+and stuck loops), and diagnose, resolve, and where safe self-heal runtime
+failures. The skill is host-agnostic and operates against any git-backed
+repository.
 
 ## Requirements
 
-### Requirement: Skill executes a saved or just-authored workflow
+### Requirement: Skill executes a saved or just-authored artifact
 
-The skill SHALL run a workflow through the `orca` binary against the target
-repository, selecting the backend per the workflow or the user's override, and
-SHALL enable monitoring output for the run.
+The skill SHALL run a workflow script through the `orca` binary or a loop module
+through the loop CLI (`orca loops`, `orca run`, or `orca serve`) against the
+target repository, selecting the backend per the artifact or the user's
+override. The skill SHALL surface monitoring output when the artifact emits it
+and otherwise monitor progress through loop state, the persistent plan, and git
+history. It SHALL NOT assume a `--monitor` CLI flag exists.
 
 #### Scenario: Run a saved workflow
 
 - **WHEN** the user triggers a saved `.orca/workflows/<name>.ts`
-- **THEN** the skill runs it via the `orca` binary with monitoring enabled and against the confirmed target repo
+- **THEN** the skill runs it via the `orca` binary against the confirmed target repo and reports any new monitor log emitted by the workflow
+
+#### Scenario: Run a loop module
+
+- **WHEN** the user triggers a saved `.orca/loops/<name>.ts`
+- **THEN** the skill uses `orca loops`, `orca run`, or `orca serve` as appropriate instead of the legacy `orca <flow.ts>` command shape
 
 #### Scenario: Backend override
 
@@ -27,14 +36,15 @@ SHALL enable monitoring output for the run.
 
 ### Requirement: Skill monitors progress and detects stalls
 
-The skill SHALL judge flow-level progress from the run's monitoring output, the
-persistent plan's checkbox state, and `git` history, and SHALL flag a stall only
-when no stage, file, task, or commit progress occurs across a tunable window
-beyond the runtime's inactivity watchdog - not on backend slowness alone.
+The skill SHALL judge run-level progress from the run's monitoring output when
+present, loop state history, the persistent plan's checkbox state, and `git`
+history. It SHALL flag a stall only when no stage, file, task, loop-state, or
+commit progress occurs across a tunable window beyond the runtime's inactivity
+watchdog - not on backend slowness alone.
 
 #### Scenario: Healthy slow run is not flagged
 
-- **WHEN** a backend turn is slow but the plan and monitoring show continued progress
+- **WHEN** a backend turn is slow but the plan, loop state, monitoring, or git history shows continued progress
 - **THEN** the skill does not flag a stall
 
 #### Scenario: Stuck run is flagged
@@ -45,9 +55,9 @@ beyond the runtime's inactivity watchdog - not on backend slowness alone.
 ### Requirement: Skill diagnoses runtime failures
 
 On failure the skill SHALL classify the cause (backend crash, expired or missing
-authentication, validation/gate failure, non-convergence, or stall) using the
-runtime's failure signals and monitoring output, and report the classification
-with the relevant evidence.
+authentication, validation/gate failure, non-convergence, stall, or served-child
+failure) using the runtime's failure signals and available monitoring output,
+and report the classification with the relevant evidence.
 
 #### Scenario: Backend/auth failure classified
 
@@ -62,17 +72,17 @@ with the relevant evidence.
 ### Requirement: Skill resolves and heals failures within safety bounds
 
 The skill SHALL attempt bounded, safety-gated recovery: for environment failures
-run the shared backend doctor and guide re-authentication, then resume via the
-persistent plan; for non-convergence retry with an adjusted prompt or backend a
-bounded number of times before escalating; for a crash resume from the persistent
-plan. The skill SHALL NOT auto-perform destructive or irreversible repository
-actions (for example force-push, history rewrite, or destructive resets) and
-SHALL escalate those to the user.
+run the backend doctor and guide re-authentication, then resume via the
+persistent plan or loop state; for non-convergence retry with an adjusted prompt
+or backend a bounded number of times before escalating; for a crash resume from
+the persistent plan or loop state. The skill SHALL NOT auto-perform destructive
+or irreversible repository actions (for example force-push, history rewrite, or
+destructive resets) and SHALL escalate those to the user.
 
 #### Scenario: Heal expired authentication and resume
 
 - **WHEN** a run fails on expired backend authentication
-- **THEN** the skill runs the doctor, guides re-auth, and resumes the workflow from the persistent plan
+- **THEN** the skill runs the doctor, guides re-auth, and resumes the artifact from the persistent plan or loop state
 
 #### Scenario: Bounded non-convergence retry
 
