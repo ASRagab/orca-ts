@@ -58,7 +58,7 @@ describe("loop engine — boundary bridge (Result ⟷ Effect)", () => {
   });
 });
 
-describe("loop engine — recurrence with variant stop (Schedule)", () => {
+describe("loop engine — recurrence with variant stop", () => {
   test("drives the variant to its floor and reports converged", async () => {
     const result = await runToResult(
       runRecurrence<Countdown>({
@@ -89,6 +89,22 @@ describe("loop engine — recurrence with variant stop (Schedule)", () => {
     expect(outcome.measure).toBe(2);
   });
 
+  test("runs the body once even when the ceiling is zero", async () => {
+    const result = await runToResult(
+      runRecurrence<Countdown>({
+        initial: { remaining: 5 },
+        iterate: (state) => Effect.succeed({ remaining: state.remaining - 1 }),
+        measure: (state) => state.remaining,
+        maxIterations: 0,
+      }),
+    );
+    const outcome = result._unsafeUnwrap();
+    expect(outcome.stopReason).toBe("ceiling");
+    expect(outcome.iterations).toBe(1);
+    expect(outcome.measure).toBe(4);
+    expect(outcome.state.remaining).toBe(4);
+  });
+
   test("a failing iteration surfaces as err at the boundary", async () => {
     const result = await runToResult(
       runRecurrence<Countdown>({
@@ -102,6 +118,32 @@ describe("loop engine — recurrence with variant stop (Schedule)", () => {
     );
     expect(result.isErr()).toBe(true);
     expect(result._unsafeUnwrapErr().message).toBe("iteration failed");
+  });
+
+  test("iterate keeps access to the ambient Effect context", async () => {
+    const fakeFs: FsTool = {
+      readText: () => Promise.resolve(ok("override")),
+      writeText: () => Promise.resolve(ok(undefined)),
+      exists: () => Promise.resolve(true),
+    };
+
+    await flow([], { fs: fakeFs })(async () => {
+      const result = await runToResult(
+        withAmbientFlowContext(
+          runRecurrence({
+            initial: { remaining: 1, sawOverride: false },
+            iterate: (state) =>
+              engineFs.pipe(
+                Effect.map((fs) => ({ remaining: state.remaining - 1, sawOverride: fs === fakeFs })),
+              ),
+            measure: (state) => state.remaining,
+          }),
+        ),
+      );
+
+      expect(result.isOk()).toBe(true);
+      expect(result._unsafeUnwrap().state.sawOverride).toBe(true);
+    });
   });
 });
 
@@ -181,6 +223,44 @@ describe("loop engine — structured cancellation", () => {
     const converged: EngineOutcome<null> = { state: null, stopReason: "converged", iterations: 1, measure: 0 };
     const result = await runToResult(runCancellable(Effect.succeed(converged), () => converged));
     expect(result._unsafeUnwrap().stopReason).toBe("converged");
+  });
+
+  test("cancellation interrupts an in-flight recurrence iteration", async () => {
+    let interrupted = 0;
+    const started = Promise.withResolvers<undefined>();
+    const controller = new AbortController();
+    const cancelled: EngineOutcome<Countdown> = {
+      state: { remaining: 1 },
+      stopReason: "cancelled",
+      iterations: 0,
+      measure: 1,
+    };
+
+    const work = runRecurrence<Countdown>({
+      initial: { remaining: 1 },
+      iterate: () =>
+        Effect.sync(() => {
+          started.resolve(undefined);
+        }).pipe(
+          Effect.zipRight(Effect.never),
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              interrupted += 1;
+            }),
+          ),
+        ),
+      measure: (state) => state.remaining,
+    });
+
+    void started.promise.then(() => {
+      controller.abort();
+    });
+
+    const result = await runToResult(runCancellable(work, () => cancelled, controller.signal));
+
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap().stopReason).toBe("cancelled");
+    expect(interrupted).toBe(1);
   });
 });
 

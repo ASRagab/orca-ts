@@ -39,7 +39,7 @@ export interface OffloadStore {
 
 /** The short reference injected into context in place of an offloaded payload. */
 export function offloadRef(pointer: OffloadPointer): string {
-  return `⟦offloaded ${String(pointer.bytes)}B → ${pointer.path}⟧`;
+  return `⟦offloaded ${String(pointer.bytes)}B → ${offloadDisplayPath(pointer.path)}⟧`;
 }
 
 export function createOffloadStore(options: OffloadOptions): OffloadStore {
@@ -54,7 +54,7 @@ export function createOffloadStore(options: OffloadOptions): OffloadStore {
       }
       const hash = createHash("sha256").update(output).digest("hex").slice(0, 16);
       const path = join(root, ".orca", "scratch", `offload-${hash}.txt`);
-      const written = await fsTool.writeText(path, output);
+      const written = await fsTool.writeText(path, output, { mode: 0o600 });
       if (written.isErr()) {
         return err(written.error);
       }
@@ -66,4 +66,14 @@ export function createOffloadStore(options: OffloadOptions): OffloadStore {
       return fsTool.readText(pointer.path);
     },
   };
+}
+
+function offloadDisplayPath(path: string): string {
+  const normalized = path.replaceAll("\\", "/");
+  const marker = "/.orca/scratch/";
+  const index = normalized.lastIndexOf(marker);
+  if (index >= 0) {
+    return `.orca/scratch/${normalized.slice(index + marker.length)}`;
+  }
+  return normalized.split("/").at(-1) ?? "offload";
 }

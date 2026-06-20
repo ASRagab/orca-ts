@@ -5,7 +5,8 @@ import type { TaskManifest } from "./manifest.ts";
 // The StateStore port is the single seam for loop state (design D4). Loop code
 // targets this interface; swapping the adapter (snapshot -> sqlite -> ...) never
 // changes the loop definition. branch/merge/history are first-class operations:
-// fan-out = branch, fan-in = merge, monitoring = history.
+// fan-out = branch, fan-in = merge, monitoring = history. Store-backed fan-out
+// additionally requires BranchWritableStateStore for non-history branch saves.
 
 /** Content hash identifying a per-cycle state snapshot. */
 export type StateHash = string;
@@ -19,8 +20,8 @@ export type StateAdapterId = "snapshot" | "sqlite";
 export type StateReducer<S> = (states: readonly S[]) => S;
 
 /**
- * StateStore port — `load / checkpoint / branch / merge / history`, all
- * Result-typed over `RuntimeError`. Default state is the {@link TaskManifest}.
+ * StateStore port — `load / checkpoint / branch / merge / history`, all Result-typed
+ * over `RuntimeError`. Default state is the {@link TaskManifest}.
  */
 export interface StateStore<S = TaskManifest> {
   /** Read a snapshot by hash, or the most recent checkpoint when omitted. */
@@ -33,4 +34,10 @@ export interface StateStore<S = TaskManifest> {
   merge(branches: readonly StateHash[], reducer: StateReducer<S>): Promise<Result<S, RuntimeError>>;
   /** Monitoring: the ordered hashes of prior cycle snapshots. */
   history(): Promise<Result<readonly StateHash[], RuntimeError>>;
+}
+
+/** Store capability required only by store-backed fan-out branch result persistence. */
+export interface BranchWritableStateStore<S = TaskManifest> extends StateStore<S> {
+  /** Persist isolated branch state without appending to the cycle history. */
+  saveBranch(branch: StateHash, state: S): Promise<Result<StateHash, RuntimeError>>;
 }

@@ -18,6 +18,8 @@ orca --version
 | `serve <loop>` | Host a loop trigger and spawn one child process per firing. |
 | `loops` | Discover loops from `.orca/loops/` without firing them. |
 
+`orca run` and served child execution share the same firing contract: event decoding, `defineLoop().run(event)`, sink emission, diagnostics, and stop-reason exit-code mapping. `ORCA_LOOP_EVENT` is the CLI/supervisor envelope for reproducing one firing; custom Source and Sink adapters should not read it directly.
+
 | Option | Meaning |
 | --- | --- |
 | `--backend <name>` | Validates the backend tag and sets `ORCA_BACKEND`. |
@@ -30,7 +32,7 @@ Valid backend tags are `claude`, `codex`, `opencode`, and `pi`.
 
 ## Loop exit codes
 
-`orca run` and `orca serve` map each loop stop reason to a process exit code via `exitCodeForStop(reason)` (defined in `src/loop/serve.ts`). A build or runtime error that prevents the loop from running exits `70`.
+`orca run` and `orca serve` map each loop stop reason to a process exit code via `exitCodeForStop(reason)`, exported from the loop surface. A build or runtime error that prevents the loop from running exits `70`.
 
 | Stop reason | Exit code | Meaning |
 | --- | --- | --- |

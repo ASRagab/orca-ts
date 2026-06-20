@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { Usage } from "../model/index.ts";
 import { TokenBudgetCounter, type TokenUsageSummary } from "../loop/termination.ts";
 import type { LoopStopReason } from "../loop/builder/types.ts";
+import type { LoopContextPressure } from "../loop/execution.ts";
 
 export type StageStatus = "completed" | "failed";
 /** Discriminated cleanup verdict. `clean`/`repaired` are safe improvements
@@ -101,6 +102,8 @@ export interface CycleProgress {
   readonly branches?: readonly BranchProgress[];
   /** Cumulative reported usage across cycles; `unknown` (not zero) once any cycle reports none. */
   readonly cumulativeUsage: TokenUsageSummary;
+  /** Context pressure evidence from loop execution when offload or compaction ran. */
+  readonly contextPressure?: LoopContextPressure;
 }
 
 /** A single branch of a fan-out cycle as observed by the caller; `usage` omitted ⇒ `unknown`. */
@@ -124,6 +127,8 @@ export interface CycleObservation {
   readonly stopReason?: LoopStopReason;
   /** Convergence floor for the derived stop status; default `0` (the loop builder's floor). */
   readonly floor?: number;
+  /** Context pressure evidence emitted by loop execution for this cycle. */
+  readonly contextPressure?: LoopContextPressure;
 }
 
 export interface WorkflowRunLog {
@@ -208,6 +213,7 @@ export class WorkflowMonitor {
         ? {}
         : { branches: observation.branches.map(toBranchProgress) }),
       cumulativeUsage: this.#cumulativeUsage.summary(),
+      ...(observation.contextPressure === undefined ? {} : { contextPressure: observation.contextPressure }),
     });
   }
 

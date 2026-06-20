@@ -140,4 +140,29 @@ describe("loop progress stream (tasks 9.1-9.3)", () => {
     if (second === undefined) throw new Error("expected a progress record");
     expect(second.cumulativeUsage).toEqual({ kind: "unknown", knownTotal: 600 });
   });
+
+  test("context pressure evidence is recorded with cycle progress", () => {
+    const monitor = new WorkflowMonitor("codex");
+
+    monitor.recordCycle({
+      iteration: 1,
+      measure: 1,
+      contextPressure: {
+        offloadCount: 2,
+        compactionStages: ["mask", "prune"],
+        tokensBefore: 500,
+        tokensAfter: 80,
+        observationCount: 4,
+      },
+    });
+
+    const record = monitor.toJson().progress[0];
+    expect(record?.contextPressure).toEqual({
+      offloadCount: 2,
+      compactionStages: ["mask", "prune"],
+      tokensBefore: 500,
+      tokensAfter: 80,
+      observationCount: 4,
+    });
+  });
 });

@@ -18,6 +18,10 @@ interface StateStore<S = TaskManifest> {
   merge(branches: readonly StateHash[], reducer: StateReducer<S>): Promise<Result<S, RuntimeError>>;
   history(): Promise<Result<readonly StateHash[], RuntimeError>>;
 }
+
+interface BranchWritableStateStore<S = TaskManifest> extends StateStore<S> {
+  saveBranch(branch: StateHash, state: S): Promise<Result<StateHash, RuntimeError>>;
+}
 ```
 
 | Method | Returns | Behavior / errors |
@@ -28,19 +32,19 @@ interface StateStore<S = TaskManifest> {
 | `merge(branches, reducer)` | `Result<S, RuntimeError>` | Loads each branch state and folds them with `reducer` into one `S`. |
 | `history()` | `Result<readonly StateHash[], RuntimeError>` | Returns the committed hash lineage. |
 
-`StateHash` is a content-addressed string (a truncated hash of the state). `StateReducer<S>` folds multiple branch states into one during a merge.
+`StateHash` is a content-addressed string (a truncated hash of the state). `StateReducer<S>` folds multiple branch states into one during a merge. `BranchWritableStateStore<S>` is the additional capability used by store-backed fan-out when branch results must be persisted without appending to cycle history.
 
 ## Shipped adapters
 
 | Store | Signature | Use it when | Behavior |
 | --- | --- | --- | --- |
-| `createSnapshotStore` | `(options: SnapshotStoreOptions) => StateStore` | You want the simplest default. | Writes one human-readable JSON snapshot per cycle. |
+| `createSnapshotStore` | `(options: SnapshotStoreOptions) => BranchWritableStateStore` | You want the simplest default. | Writes one human-readable JSON snapshot per cycle. |
 | `createSqliteStore` | `(options: SqliteStoreOptions) => Result<SqliteStore, RuntimeError>` | You need crash recovery or longer-lived history. | Writes a local WAL database and can resume from committed history. |
 
 **`createSqliteStore` returns `Result`, not a bare `SqliteStore`.** Construction can fail — it returns `Err(RuntimeError)` on file/lease problems rather than throwing. Always handle the `Result` before using the store:
 
 ```ts
-import { createSqliteStore } from "orca";
+import { createSqliteStore } from "orca-ts";
 
 const made = createSqliteStore({ path: ".orca/state.db" });
 if (made.isErr()) {
@@ -52,6 +56,6 @@ const store = made.value;
 const loaded = await store.load();
 ```
 
-`branch(from)` creates an isolated copy of a checkpoint. `merge(branches, reducer)` folds branch summaries back into one state.
+`branch(from)` creates an isolated copy of a checkpoint. `BranchWritableStateStore.saveBranch(branch, state)` writes a branch result by hash without changing `history()` or the default `load()` head. `merge(branches, reducer)` folds branch snapshots back into one state. Store-backed loop fan-out starts from a checkpoint hash, calls `branch()` once per branch, saves successful branch states, then calls `merge()` exactly once at fan-in through the selected reducer. Pure `fanOut`/`fanIn` remains available when only bounded summaries need to stay in memory.
 
 DBOS and Dolt are deferred and are not selectable adapters in this release.

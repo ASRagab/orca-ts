@@ -38,6 +38,7 @@ interface LoopBuilder<S = unknown> {
 interface LoopRunOptions {
   readonly args?: readonly string[];
   readonly overrides?: FlowOverrides;
+  readonly context?: LoopExecutionContextOptions;
   readonly onCycle?: (cycle: LoopCycleReport) => void;
 }
 
@@ -45,12 +46,13 @@ interface LoopCycleReport {
   readonly iteration: number;
   readonly measure: number;
   readonly usage?: Usage;
+  readonly contextPressure?: LoopContextPressure;
 }
 
 type LoopRunError = RuntimeError | TerminationContractError;
 ```
 
-`onCycle` fires after each cycle with the iteration index, the current measure, and optional token usage. `LoopRunError` is either a `RuntimeError` (see [Runtime Errors](../runtime-errors/)) or a `TerminationContractError` (a violated termination contract).
+`onCycle` fires after each cycle with the iteration index, the current measure, optional token usage, and context-pressure evidence when offload or compaction ran. Providing `context` enables managed loop context and tunes the aggressive default compaction/offload thresholds. Without `context`, loop execution does not capture raw step observations. Loop execution owns recurrence, guards, stop evaluation, progress, and context pressure; direct `executeLoop` is internal and not exported from the package root. `LoopRunError` is either a `RuntimeError` (see [Runtime Errors](../runtime-errors/)) or a `TerminationContractError` (a violated termination contract).
 
 ### Outcome
 
@@ -75,7 +77,7 @@ type LoopStopReason =
   | "cancelled";
 ```
 
-`orca run` and `orca serve` map each stop reason to a process exit code via `exitCodeForStop(reason)` (defined in `src/loop/serve.ts`). A build/runtime error exits `70`.
+`orca run` and `orca serve` map each stop reason to a process exit code via `exitCodeForStop(reason)`, exported from the loop surface. A build/runtime error exits `70`.
 
 | Stop reason | Exit code | Meaning |
 | --- | --- | --- |
@@ -102,7 +104,7 @@ type LoopStopReason =
 
 ## Distribution
 
-`defineLoop({ name, source, sink, onTrigger })` packages a loop module. Put it under `.orca/loops/`, export it, then use `orca loops`, `orca run`, or `orca serve`. See the [Served Loops guide](../../guides/served-loops/) for the supervisor isolation contract and `ORCA_LOOP_EVENT` payload.
+`defineLoop({ name, source, sink, onTrigger })` packages a loop module. Put it under `.orca/loops/`, export it, then use `orca loops`, `orca run`, or `orca serve`. `orca run` and served children share one firing contract for event decoding, `definition.run(event)`, sink emission, diagnostics, and exit-code mapping. See the [Served Loops guide](../../guides/served-loops/) for the supervisor isolation contract and `ORCA_LOOP_EVENT` payload.
 
 Built-in source kinds: `manual`, `cron`, `watch`, `webhook`, `queue`, `linear-issue`, `linear-agent`.
 
@@ -112,4 +114,4 @@ The `linear-issue` and `linear-agent` kinds are provided by `linearIssueSource` 
 
 ### State
 
-Loops checkpoint state through a `StateStore<S>` port — see [State Stores](../state-stores/). Every store method is `Result`-typed over `RuntimeError`; `createSqliteStore` returns `Result` and can fail at construction.
+Loops checkpoint state through a `StateStore<S>` port — see [State Stores](../state-stores/). Store-backed fan-out uses `StateStore.branch()` plus non-history `BranchWritableStateStore.saveBranch()` for each branch and `StateStore.merge()` at fan-in; pure `fanOut`/`fanIn` remains available for summary-only in-memory work. Every store method is `Result`-typed over `RuntimeError`; `createSqliteStore` returns `Result` and can fail at construction.

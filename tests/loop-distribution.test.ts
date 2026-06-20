@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { err, ok } from "neverthrow";
 
@@ -21,9 +24,18 @@ import {
   type LoopStopReason,
   type ModuleImporter
 } from "../src/index.ts";
+import {
+  buildChildProcessSpec,
+  createLoopChildSpec,
+  decodeLoopEvent,
+  encodeLoopEvent,
+  LOOP_EVENT_ENV,
+  runLoopFiring
+} from "../src/loop/firing.ts";
 import { fakeSink, fakeSource } from "../src/test-utils/index.ts";
 import { parseCliArgs } from "../src/cli/args.ts";
 import { deferredDurableError } from "../src/cli/main.ts";
+import { runQuiet } from "../src/tools/process.ts";
 
 // L11 acceptance (spec distribution, design D8, tasks 10.1-10.5). The CLI gains run/serve/loops
 // while the legacy `orca <flow.ts>` path is preserved; `serve` is a thin supervisor that spawns an
@@ -147,6 +159,159 @@ describe("stop-reason exit status", () => {
     expect(exitCodeForRun(ok(outcomeOf("converged")))).toBe(0);
     expect(exitCodeForRun(ok(outcomeOf("ceiling")))).toBe(exitCodeForStop("ceiling"));
     expect(exitCodeForRun(err(ioFailed("sink", "stdout", "boom")))).toBe(70);
+  });
+});
+
+describe("loop firing contract", () => {
+  test("encodes and decodes trigger events with missing-event and raw-string compatibility", () => {
+    const event = { issueId: "LIN-123", attempt: 2 };
+    const encoded = encodeLoopEvent(event);
+
+    expect(encoded).toBe(JSON.stringify(event));
+    expect(decodeLoopEvent({ [LOOP_EVENT_ENV]: encoded })).toEqual(event);
+    expect(decodeLoopEvent({})).toBeUndefined();
+    expect(decodeLoopEvent({ [LOOP_EVENT_ENV]: "not json" })).toBe("not json");
+  });
+
+  test("constructs child process args and event environment from a loop target", () => {
+    const spec = createLoopChildSpec("./loops/triage.ts", { issueId: "LIN-123" });
+
+    expect(spec).toEqual({ loop: "./loops/triage.ts", event: { issueId: "LIN-123" } });
+
+    const child = buildChildProcessSpec(spec, {
+      argv: ["bun", "/repo/bin/orca"],
+      env: { PATH: "/bin" },
+      execPath: "/runtime/bun"
+    });
+    expect(child.command).toBe("/runtime/bun");
+    expect(child.args).toEqual(["/repo/bin/orca", "run", "--no-typecheck", "./loops/triage.ts"]);
+    expect(child.env.PATH).toBe("/bin");
+    expect(child.env[LOOP_EVENT_ENV]).toBe(JSON.stringify({ issueId: "LIN-123" }));
+  });
+
+  test("constructs child process args when no CLI entrypoint is present", () => {
+    const child = buildChildProcessSpec(createLoopChildSpec("registered-loop", undefined), {
+      argv: ["bun"],
+      env: {},
+      execPath: "/runtime/bun"
+    });
+
+    expect(child.args).toEqual(["run", "--no-typecheck", "registered-loop"]);
+    expect(child.env[LOOP_EVENT_ENV]).toBeUndefined();
+  });
+
+  test("constructs child process args for a compiled orca binary already running serve", () => {
+    const child = buildChildProcessSpec(createLoopChildSpec("registered-loop", { n: 1 }), {
+      argv: ["/dist/orca", "serve", "registered-loop"],
+      env: {},
+      execPath: "/dist/orca"
+    });
+
+    expect(child.args).toEqual(["run", "--no-typecheck", "registered-loop"]);
+    expect(child.env[LOOP_EVENT_ENV]).toBe(JSON.stringify({ n: 1 }));
+  });
+
+  test("runs a loaded loop once, emits diagnostics, and maps the stop reason to an exit code", async () => {
+    const diagnostics: string[] = [];
+    let seenEvent: unknown;
+    const sink = fakeSink();
+    const definition = defineLoop({
+      name: "fire-once",
+      source: fakeSource(),
+      sink,
+      onTrigger: (event) => {
+        seenEvent = event;
+        return Promise.resolve(ok({ outcome: { state: event, stopReason: "converged", iterations: 2 }, output: event }));
+      }
+    });
+    const event = { issueId: "LIN-123" };
+
+    const fired = await runLoopFiring(definition, event, { writeDiagnostic: (message) => diagnostics.push(message) });
+
+    expect(fired.result._unsafeUnwrap().stopReason).toBe("converged");
+    expect(fired.exitCode).toBe(0);
+    expect(fired.diagnostic).toBe('orca: loop "fire-once" stopped (converged) after 2 iteration(s)\n');
+    expect(diagnostics).toEqual([fired.diagnostic]);
+    expect(seenEvent).toEqual(event);
+    expect(sink.emitted()).toEqual([event]);
+  });
+
+  test("bin orca run passes ORCA_LOOP_EVENT through the shared firing path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "orca-loop-firing-"));
+    const outputPath = join(root, "event.json");
+    const loopPath = join(root, "event-loop.ts");
+    await writeFile(
+      loopPath,
+      `import { writeFile } from "node:fs/promises";
+import { defineLoop, ok } from "orca-ts";
+
+const source = {
+  kind: "manual",
+  start: async () => ok({ stop: async () => ok(undefined) })
+};
+
+const sink = {
+  kind: "stdout",
+  emit: async (value) => {
+    await writeFile(${JSON.stringify(outputPath)}, JSON.stringify(value));
+    return ok(undefined);
+  }
+};
+
+export default defineLoop({
+  name: "cli-event",
+  source,
+  sink,
+  onTrigger: async (event) => ok({
+    outcome: { state: event, stopReason: "converged", iterations: 1 },
+    output: event
+  })
+});
+`,
+    );
+    const previous = process.env[LOOP_EVENT_ENV];
+    process.env[LOOP_EVENT_ENV] = JSON.stringify({ issueId: "LIN-123" });
+    try {
+      const result = await runQuiet("bun", ["./bin/orca", "run", "--no-typecheck", loopPath], {
+        cwd: process.cwd()
+      });
+
+      const proc = result._unsafeUnwrap();
+      expect(proc.exitCode).toBe(0);
+      expect(proc.stderr).toContain('orca: loop "cli-event" stopped (converged) after 1 iteration(s)');
+      expect(JSON.parse(await readFile(outputPath, "utf8"))).toEqual({ issueId: "LIN-123" });
+    } finally {
+      if (previous === undefined) {
+        process.env[LOOP_EVENT_ENV] = undefined;
+      } else {
+        process.env[LOOP_EVENT_ENV] = previous;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("maps loop failures and sink failures to diagnostic exit code 70", async () => {
+    const loopFailure = defineLoop<unknown, string>({
+      name: "loop-fails",
+      source: fakeSource<unknown>(),
+      sink: fakeSink<string>(),
+      onTrigger: () => Promise.resolve(err(ioFailed("source", "loop", "boom")))
+    });
+
+    const failedLoop = await runLoopFiring(loopFailure, undefined);
+    expect(failedLoop.exitCode).toBe(70);
+    expect(failedLoop.diagnostic).toBe('orca: loop "loop-fails" failed: boom\n');
+
+    const sinkFailure = defineLoop<unknown, string>({
+      name: "sink-fails",
+      source: fakeSource<unknown>(),
+      sink: fakeSink<string>({ failWith: ioFailed("sink", "stdout", "no") }),
+      onTrigger: () => Promise.resolve(ok({ outcome: outcomeOf("converged"), output: "done" }))
+    });
+
+    const failedSink = await runLoopFiring(sinkFailure, undefined);
+    expect(failedSink.exitCode).toBe(70);
+    expect(failedSink.diagnostic).toBe('orca: loop "sink-fails" failed: no\n');
   });
 });
 

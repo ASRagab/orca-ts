@@ -104,11 +104,11 @@ describe("sqlite adapter (escalate-for-durability, design D4)", () => {
         expect((await store.load(branchA))._unsafeUnwrap()).toEqual(base);
         expect((await store.load(branchB))._unsafeUnwrap()).toEqual(base);
 
-        const aHash = (await store.checkpoint(manifest([
+        const aHash = (await store.saveBranch(branchA, manifest([
           { id: "a", passes: true },
           { id: "b", passes: false }
         ])))._unsafeUnwrap();
-        const bHash = (await store.checkpoint(manifest([
+        const bHash = (await store.saveBranch(branchB, manifest([
           { id: "a", passes: false },
           { id: "b", passes: true }
         ])))._unsafeUnwrap();
@@ -134,7 +134,8 @@ describe("sqlite adapter (escalate-for-durability, design D4)", () => {
       const store = createSqliteStore({ path })._unsafeUnwrap();
       try {
         const h1 = (await store.checkpoint(manifest([{ id: "a", passes: false }])))._unsafeUnwrap();
-        await store.branch(h1); // fan-out copy — not a cycle
+        const branch = (await store.branch(h1))._unsafeUnwrap(); // fan-out copy — not a cycle
+        await store.saveBranch(branch, manifest([{ id: "a", passes: true }]));
         const h2 = (await store.checkpoint(manifest([{ id: "a", passes: true }])))._unsafeUnwrap();
         expect((await store.history())._unsafeUnwrap()).toEqual([h1, h2]);
       } finally {

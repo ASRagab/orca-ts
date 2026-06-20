@@ -40,11 +40,11 @@ The full tool interfaces (`FsTool`, `GitTool`, `GitHubTool`, `LinearTool`, `Comm
 
 ## Loops
 
-`loop<S>(name)` returns a `LoopBuilder<S>`; `defineLoop()` packages a loop module; `serve()` runs the supervisor. See [Loop API](../loop-api/) and [State Stores](../state-stores/). The loop surface is Effect-free by mandate; Effect never crosses the facade.
+`loop<S>(name)` returns a `LoopBuilder<S>` backed by loop execution; `defineLoop()` packages a loop module; `serve()` runs the supervisor. See [Loop API](../loop-api/) and [State Stores](../state-stores/). The loop surface is Effect-free by mandate; Effect never crosses the facade. Direct `executeLoop` is internal; public convergence goes through `loop()` or `fixLoop`.
 
 ## Review and fix
 
-`review().run(options)` runs a review loop; `fixLoop(evaluate, fix, options?)` runs a generic fix loop over fixable issues; `reviewAndFixStrategy(options)` combines both. `runReviewAndFixLoop` and `implementTaskLoop` are deprecated (`ORCA_DEP_LOOP_COLLAPSE`) — migrate to `reviewAndFixStrategy` and `sequentialTaskStrategy`. Full signatures live in `docs/review.md` and `docs/plans.md`.
+`review().run(options)` runs a review loop; `fixLoop(evaluate, fix, options?)` remains the public generic convergence primitive; `reviewAndFixStrategy(options)` and `sequentialTaskStrategy(tasks, implement)` run over loop execution. `runReviewAndFixLoop` and `implementTaskLoop` are deprecated (`ORCA_DEP_LOOP_COLLAPSE`) — migrate to the strategies. Full signatures live in `docs/review.md` and `docs/plans.md`.
 
 ## Monitoring
 
