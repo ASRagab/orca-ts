@@ -2,6 +2,8 @@ import { err, ok, type Result } from "neverthrow";
 
 import type { JoinPolicy } from "./builder/types.ts";
 import { runBoundedBranches } from "./engine/index.ts";
+import type { RuntimeError, Usage } from "../model/index.ts";
+import type { BranchWritableStateStore, StateHash, StateReducer, StateStore } from "./state/index.ts";
 
 // Opt-in fan-out / fan-in combinators (spec loop-builder "Bounded fan-out and join-policy fan-in
 // are opt-in combinators"; design D9; tasks 6.1–6.4). Effect-FREE by mandate (design D2 facade
@@ -44,6 +46,7 @@ export type BranchOutcome<D = unknown> =
   | { readonly index: number; readonly ok: false; readonly error: BranchFailure; readonly elapsedMs: number };
 
 type SuccessOutcome<D> = Extract<BranchOutcome<D>, { ok: true }>;
+type SelectableSuccess<D> = { readonly ok: true; readonly summary: BranchSummary<D>; readonly elapsedMs: number };
 
 export interface FanOutSpec<S, D> {
   /** Shared input state; each branch receives an isolated `structuredClone`, never the original. */
@@ -94,6 +97,58 @@ export type FanInError =
   | { readonly kind: "no-quorum"; readonly required: number; readonly largestAgreement: number }
   | { readonly kind: "misconfigured"; readonly reason: string };
 
+export interface StoreBackedBranchContext {
+  readonly index: number;
+  readonly branchHash: StateHash;
+}
+
+export interface StoreBackedBranchResult<S, D = unknown> {
+  readonly state: S;
+  readonly summary?: BranchSummary<D>;
+  readonly usage?: Usage;
+}
+
+export type StoreBackedBranch<S, D = unknown> = (
+  state: S,
+  context: StoreBackedBranchContext,
+) => Promise<StoreBackedBranchResult<S, D>> | StoreBackedBranchResult<S, D>;
+
+export interface StoreBackedFanOutSpec<S, D = unknown> {
+  readonly store: BranchWritableStateStore<S>;
+  readonly from: StateHash;
+  readonly branches: readonly StoreBackedBranch<S, D>[];
+  readonly maxConcurrency: number;
+  readonly summaryBudgetChars?: number;
+  readonly signal?: AbortSignal;
+}
+
+export type StoreBackedBranchOutcome<D = unknown> =
+  | {
+      readonly index: number;
+      readonly ok: true;
+      readonly branchHash: StateHash;
+      readonly stateHash: StateHash;
+      readonly summary: BranchSummary<D>;
+      readonly elapsedMs: number;
+      readonly usage?: Usage;
+    }
+  | {
+      readonly index: number;
+      readonly ok: false;
+      readonly branchHash?: StateHash;
+      readonly error: BranchFailure;
+      readonly elapsedMs: number;
+      readonly usage?: Usage;
+    };
+
+export interface StoreBackedFanInOptions<S, D = unknown> {
+  readonly store: StateStore<S>;
+  readonly reducer: StateReducer<S>;
+  readonly onPartialFailure?: PartialFailurePolicy;
+  readonly quorum?: number;
+  readonly agreeBy?: (summary: BranchSummary<D>) => unknown;
+}
+
 /**
  * Bounded fan-out (tasks 6.1, 6.3). Runs each branch over an isolated `structuredClone` of `state`
  * (copy-on-fanout: no shared-mutable across branches) with at most `maxConcurrency` running at
@@ -131,6 +186,88 @@ export async function fanOut<S, D = unknown>(
     return err({ kind: "cancelled", reason: collected.error.message });
   }
   return ok(collected.value);
+}
+
+export async function storeBackedFanOut<S, D = unknown>(
+  spec: StoreBackedFanOutSpec<S, D>,
+): Promise<Result<readonly StoreBackedBranchOutcome<D>[], FanOutError>> {
+  if (spec.branches.length === 0) {
+    return err({ kind: "misconfigured", reason: "storeBackedFanOut requires at least one branch" });
+  }
+  if (!Number.isFinite(spec.maxConcurrency) || spec.maxConcurrency < 1) {
+    return err({
+      kind: "misconfigured",
+      reason: `storeBackedFanOut maxConcurrency must be a finite integer >= 1 (got ${String(spec.maxConcurrency)})`,
+    });
+  }
+  const budget = spec.summaryBudgetChars ?? DEFAULT_SUMMARY_BUDGET_CHARS;
+
+  const thunks = spec.branches.map((branch, index) => async (): Promise<StoreBackedBranchOutcome<D>> => {
+    const start = Date.now();
+    let branchHash: StateHash | undefined;
+    try {
+      const branched = await spec.store.branch(spec.from);
+      if (branched.isErr()) {
+        return branchFailure(index, start, runtimeErrorMessage(branched.error));
+      }
+      branchHash = branched.value;
+      const loaded = await spec.store.load(branchHash);
+      if (loaded.isErr()) {
+        return branchFailure(index, start, runtimeErrorMessage(loaded.error), branchHash);
+      }
+      const result = await branch(loaded.value, { index, branchHash });
+      const saved = await spec.store.saveBranch(branchHash, result.state);
+      if (saved.isErr()) {
+        return branchFailure(index, start, runtimeErrorMessage(saved.error), branchHash, result.usage);
+      }
+      return {
+        index,
+        ok: true,
+        branchHash,
+        stateHash: saved.value,
+        summary: condense(result.summary ?? { summary: `branch ${String(index)} completed` }, budget),
+        elapsedMs: Date.now() - start,
+        ...(result.usage === undefined ? {} : { usage: result.usage }),
+      };
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      return branchFailure(index, start, message, branchHash);
+    }
+  });
+
+  const collected = await runBoundedBranches(thunks, Math.floor(spec.maxConcurrency), spec.signal);
+  if (collected.isErr()) {
+    return err({ kind: "cancelled", reason: collected.error.message });
+  }
+  return ok(collected.value);
+}
+
+export async function storeBackedFanIn<S, D = unknown>(
+  policy: JoinPolicy,
+  outcomes: readonly StoreBackedBranchOutcome<D>[],
+  options: StoreBackedFanInOptions<S, D>,
+): Promise<Result<S, FanInError | RuntimeError>> {
+  const successes = outcomes.filter((outcome): outcome is Extract<StoreBackedBranchOutcome<D>, { ok: true }> => outcome.ok);
+  const failures = outcomes.flatMap((outcome) => (outcome.ok ? [] : [outcome.error]));
+
+  const gate = applyPartialFailurePolicy(policy, successes.length, failures, options.onPartialFailure, options.quorum);
+  if (gate.isErr()) {
+    return err(gate.error);
+  }
+
+  const selected = selectByPolicy(policy, successes, options.quorum, options.agreeBy);
+  if (selected.isErr()) {
+    return err(selected.error);
+  }
+
+  const merged = await options.store.merge(
+    selected.value.map((outcome) => outcome.stateHash),
+    options.reducer,
+  );
+  if (merged.isErr()) {
+    return err(merged.error);
+  }
+  return ok(merged.value);
 }
 
 /**
@@ -203,12 +340,12 @@ function defaultPartialFailure(policy: JoinPolicy, quorum: number | undefined): 
 }
 
 /** Which successful branches the reducer folds — guaranteed non-empty by the partial-failure gate. */
-function selectByPolicy<D>(
+function selectByPolicy<D, T extends SelectableSuccess<D>>(
   policy: JoinPolicy,
-  successes: readonly SuccessOutcome<D>[],
+  successes: readonly T[],
   quorum: number | undefined,
   agreeBy: ((summary: BranchSummary<D>) => unknown) | undefined,
-): Result<readonly SuccessOutcome<D>[], FanInError> {
+): Result<readonly T[], FanInError> {
   switch (policy) {
     case "barrier":
     case "reduce":
@@ -221,16 +358,16 @@ function selectByPolicy<D>(
 }
 
 /** Self-consistency vote (design D9): the first group of `quorum` branches to agree wins. */
-function selectQuorum<D>(
-  successes: readonly SuccessOutcome<D>[],
+function selectQuorum<D, T extends SelectableSuccess<D>>(
+  successes: readonly T[],
   quorum: number | undefined,
   agreeBy: ((summary: BranchSummary<D>) => unknown) | undefined,
-): Result<readonly SuccessOutcome<D>[], FanInError> {
+): Result<readonly T[], FanInError> {
   if (quorum === undefined || quorum < 1) {
     return err({ kind: "misconfigured", reason: "quorum policy requires options.quorum >= 1" });
   }
   const keyOf = agreeBy ?? ((summary: BranchSummary<D>) => (summary.data === undefined ? summary.summary : summary.data));
-  const groups = new Map<string, SuccessOutcome<D>[]>();
+  const groups = new Map<string, T[]>();
   let largestAgreement = 0;
   for (const outcome of successes) {
     const key = stableKey(keyOf(outcome.summary));
@@ -243,6 +380,46 @@ function selectQuorum<D>(
     }
   }
   return err({ kind: "no-quorum", required: quorum, largestAgreement });
+}
+
+function branchFailure<D>(
+  index: number,
+  start: number,
+  message: string,
+  branchHash?: StateHash,
+  usage?: Usage,
+): StoreBackedBranchOutcome<D> {
+  return {
+    index,
+    ok: false,
+    error: { message },
+    elapsedMs: Date.now() - start,
+    ...(branchHash === undefined ? {} : { branchHash }),
+    ...(usage === undefined ? {} : { usage }),
+  };
+}
+
+function runtimeErrorMessage(error: RuntimeError): string {
+  switch (error._tag) {
+    case "BackendFailed":
+    case "FileSystemError":
+    case "IoFailed":
+      return error.message;
+    case "UnsupportedFeature":
+      return error.reason;
+    case "CommandFailed":
+      return error.stderr || error.stdout || `${error.command} failed`;
+    case "TypecheckFailed":
+      return error.stderr || error.stdout || "typecheck failed";
+    case "PushRejected":
+      return error.stderr;
+    case "BranchAlreadyExists":
+      return `branch already exists: ${error.branch}`;
+    case "NothingToCommit":
+      return "nothing to commit";
+    case "StructuredOutputValidationFailed":
+      return error.issues.join("; ");
+  }
 }
 
 /** Order-independent serialization of an agreement key, so object field order never splits a vote. */

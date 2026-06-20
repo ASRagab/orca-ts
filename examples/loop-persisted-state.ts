@@ -29,7 +29,7 @@ if (branchA.isErr()) throw new Error(JSON.stringify(branchA.error));
 const branchB = await store.branch(base.value);
 if (branchB.isErr()) throw new Error(JSON.stringify(branchB.error));
 
-const wroteGuide = await store.checkpoint({
+const wroteGuide = await store.saveBranch(branchA.value, {
   tasks: [
     { id: "write-guide", passes: true },
     { id: "check-links", passes: false },
@@ -37,7 +37,7 @@ const wroteGuide = await store.checkpoint({
 });
 if (wroteGuide.isErr()) throw new Error(JSON.stringify(wroteGuide.error));
 
-const checkedLinks = await store.checkpoint({
+const checkedLinks = await store.saveBranch(branchB.value, {
   tasks: [
     { id: "write-guide", passes: false },
     { id: "check-links", passes: true },

@@ -178,12 +178,12 @@ describe("snapshot adapter (zero-config default)", () => {
       expect((await store.load(branchA))._unsafeUnwrap()).toEqual(base);
       expect((await store.load(branchB))._unsafeUnwrap()).toEqual(base);
 
-      // Branch A flips a, branch B flips b — independent checkpoints.
-      const aHash = (await store.checkpoint(manifest([
+      // Branch A flips a, branch B flips b — independent branch snapshots.
+      const aHash = (await store.saveBranch(branchA, manifest([
         { id: "a", passes: true },
         { id: "b", passes: false }
       ])))._unsafeUnwrap();
-      const bHash = (await store.checkpoint(manifest([
+      const bHash = (await store.saveBranch(branchB, manifest([
         { id: "a", passes: false },
         { id: "b", passes: true }
       ])))._unsafeUnwrap();
@@ -215,7 +215,8 @@ describe("snapshot adapter (zero-config default)", () => {
     await withRoot(async (root) => {
       const store = createSnapshotStore({ root });
       const h1 = (await store.checkpoint(manifest([{ id: "a", passes: false }])))._unsafeUnwrap();
-      await store.branch(h1); // fan-out copy — not a cycle
+      const branch = (await store.branch(h1))._unsafeUnwrap(); // fan-out copy — not a cycle
+      await store.saveBranch(branch, manifest([{ id: "a", passes: true }]));
       const h2 = (await store.checkpoint(manifest([{ id: "a", passes: true }])))._unsafeUnwrap();
       expect((await store.history())._unsafeUnwrap()).toEqual([h1, h2]);
     });

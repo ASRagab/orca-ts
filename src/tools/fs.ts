@@ -1,11 +1,11 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { err, ok, type Result } from "neverthrow";
 import type { RuntimeError } from "../model/index.ts";
 
 export interface FsTool {
   readText(path: string): Promise<Result<string, RuntimeError>>;
-  writeText(path: string, content: string): Promise<Result<void, RuntimeError>>;
+  writeText(path: string, content: string, options?: { readonly mode?: number }): Promise<Result<void, RuntimeError>>;
   exists(path: string): Promise<boolean>;
 }
 
@@ -18,10 +18,15 @@ export function createFsTool(): FsTool {
         return err({ _tag: "FileSystemError", path, message: String(error) });
       }
     },
-    async writeText(path, content) {
+    async writeText(path, content, options) {
       try {
         await mkdir(dirname(path), { recursive: true });
-        await writeFile(path, content);
+        if (options?.mode === undefined) {
+          await writeFile(path, content);
+        } else {
+          await writeFile(path, content, { mode: options.mode });
+          await chmod(path, options.mode);
+        }
         return ok(undefined);
       } catch (error) {
         return err({ _tag: "FileSystemError", path, message: String(error) });

@@ -4,7 +4,8 @@ import type { AutonomousRequest, LlmBackend } from "../../backends/index.ts";
 import type { Outcome } from "../../conversation/index.ts";
 import { flow, llm } from "../../flow/index.ts";
 import { backendFailed, type BackendTag, type RuntimeError, type Usage } from "../../model/index.ts";
-import { fixLoop, type FixLoopAction } from "../../review/index.ts";
+import type { Observation } from "../context/index.ts";
+import { executeLoop, type LoopExecutionAction, type LoopExecutionStepResult } from "../execution.ts";
 import { analyzeGraph, type Edge } from "../graph/index.ts";
 import { measure as manifestMeasure, type TaskManifest } from "../state/index.ts";
 import { enforceTerminationContract, type TerminationContractError } from "../termination-contract.ts";
@@ -22,8 +23,8 @@ import type {
 
 export * from "./types.ts";
 
-// The loop() builder lowers a declarative loop onto flow() + the generic fixLoop convergence
-// primitive (spec loop-builder / flow-runtime, design D1+D3). Effect lives in src/loop/engine;
+// The loop() builder lowers a declarative loop onto flow() + loop execution
+// (spec loop-builder / flow-runtime, design D1+D3). Effect lives in src/loop/engine;
 // this surface never touches it, so the single-cycle case reads like a guarded `while`.
 
 /** One body node: a deterministic `.step()` transform or the single `.reason()` LLM verb. */
@@ -48,10 +49,11 @@ interface Probe<S> {
 interface BodyResult<S> {
   readonly state: S;
   readonly usage?: Usage;
+  readonly observations: readonly Observation[];
 }
 
 /** A constant cycle action: the fingerprint guard is disabled, so its identity never matters. */
-const CYCLE_ACTION: FixLoopAction = { identity: "loop-cycle", inputs: null };
+const CYCLE_ACTION: LoopExecutionAction = { identity: "loop-cycle", inputs: null };
 
 class LoopBuilderImpl<S> implements LoopBuilder<S> {
   private readonly items: BodyItem<S>[] = [];
@@ -105,16 +107,16 @@ class LoopBuilderImpl<S> implements LoopBuilder<S> {
     const variant = this.resolveVariant();
     const guards = this.resolveGuards();
 
-    // 2. Lower onto flow() + fixLoop(); accessors (and test overrides) resolve from this context.
+    // 2. Lower onto flow() + loop execution; accessors/test overrides resolve from this context.
     return await flow<Result<LoopOutcome<S>, LoopRunError>>(options.args ?? [], options.overrides ?? {})(async () => {
       let current = initial as S;
       let cycle = 0;
 
-      const summary = await fixLoop<Probe<S>>({
+      const summary = await executeLoop<Probe<S>>({
         evaluate: async () => ok({ state: current, measure: await variant(current, cycle) }),
         converged: (probe) => probe.measure <= 0,
         nextAction: (probe) => (probe.measure <= 0 ? undefined : CYCLE_ACTION),
-        fix: async () => {
+        execute: async () => {
           const body = await this.runBody(current);
           if (body.isErr()) {
             return err(body.error);
@@ -123,20 +125,31 @@ class LoopBuilderImpl<S> implements LoopBuilder<S> {
           cycle += 1;
           // Post-cycle measure from the SAME variant the loop converges on, so the emitted
           // progress stream cannot drift from the termination variant (spec execution-observability).
-          if (options.onCycle !== undefined) {
-            const measure = await variant(current, cycle);
-            options.onCycle({
-              iteration: cycle,
-              measure,
-              ...(body.value.usage === undefined ? {} : { usage: body.value.usage }),
-            });
-          }
-          return ok(body.value.usage === undefined ? {} : { usage: body.value.usage });
+          const measure = await variant(current, cycle);
+          const stepResult: LoopExecutionStepResult = {
+            ...(body.value.usage === undefined ? {} : { usage: body.value.usage }),
+            observations: body.value.observations,
+            measure,
+            ...(measure <= 0 ? { stopReason: "converged" } : {}),
+          };
+          return ok(stepResult);
         },
         fingerprint: false,
-        ...(guards.maxIterations === undefined ? {} : { maxIterations: guards.maxIterations }),
+        maxIterations: guards.maxIterations ?? 10,
         ...(guards.wallClockMs === undefined ? {} : { wallClockMs: guards.wallClockMs }),
         ...(guards.tokenBudget === undefined ? {} : { tokenBudget: guards.tokenBudget }),
+        ...(options.context === undefined ? {} : { context: options.context }),
+        onCycle: (progress) => {
+          if (options.onCycle === undefined || progress.measure === undefined) {
+            return;
+          }
+          options.onCycle({
+            iteration: progress.iteration,
+            measure: progress.measure,
+            ...(progress.usage === undefined ? {} : { usage: progress.usage }),
+            ...(progress.contextPressure === undefined ? {} : { contextPressure: progress.contextPressure }),
+          });
+        },
       });
 
       if (summary.isErr()) {
@@ -155,9 +168,11 @@ class LoopBuilderImpl<S> implements LoopBuilder<S> {
   private async runBody(state: S): Promise<Result<BodyResult<S>, RuntimeError>> {
     let current = state;
     let usage: Usage | undefined;
+    const observations: Observation[] = [];
     for (const item of this.items) {
       if (item.kind === "step") {
         current = await item.body(current);
+        observations.push({ id: item.name, content: stringifyObservation(current) });
         continue;
       }
       const outcome = await item.run();
@@ -171,8 +186,9 @@ class LoopBuilderImpl<S> implements LoopBuilder<S> {
       if (reported !== undefined) {
         usage = usage === undefined ? reported : addUsage(usage, reported);
       }
+      observations.push({ id: `reason:${item.tag}`, content: stringifyObservation(outcome.result.output) });
     }
-    return ok(usage === undefined ? { state: current } : { state: current, usage });
+    return ok(usage === undefined ? { state: current, observations } : { state: current, usage, observations });
   }
 
   /** The loop has a variant iff a custom measure or a termination (preset/variant) was supplied. */
@@ -266,6 +282,17 @@ function addUsage(a: Usage, b: Usage): Usage {
   const reasoning = (a.reasoning ?? 0) + (b.reasoning ?? 0);
   const base = { input: a.input + b.input, output: a.output + b.output };
   return reasoning > 0 ? { ...base, reasoning } : base;
+}
+
+function stringifyObservation(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 /** Entry point for the declarative loop builder (task 5.1). */

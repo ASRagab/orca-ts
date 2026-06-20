@@ -1,9 +1,9 @@
 import type { CompactionConfig } from "./types.ts";
 
-// Automatic, aggressive-default staged context compaction (design D10; task 7.1). Compaction runs
-// by TOKEN PRESSURE with NO author opt-in — the "small windows = smart agents" principle: a tight
-// working window forces sharper agent behaviour and cheaper turns. As pressure rises past the small
-// working window, the same observation history is compacted in escalating stages, IN ORDER:
+// Aggressive-default staged context compaction (design D10; task 7.1). Once managed context is
+// enabled, compaction runs by TOKEN PRESSURE — the "small windows = smart agents" principle: a
+// tight working window forces sharper agent behaviour and cheaper turns. As pressure rises past the
+// small working window, the same observation history is compacted in escalating stages, IN ORDER:
 //
 //   mask      → keep every observation record but drop its body to a short stub (cheapest, lowest
 //               information loss): the agent still sees that the step happened.
@@ -30,8 +30,9 @@ const PRUNE_TO_SUMMARIZE_FRACTION = 0.5;
 const MASK_TOKENS = estimateTokens(MASK_PLACEHOLDER);
 
 /**
- * Aggressive defaults applied with NO author configuration (design D10): a small working window and
- * an aggressive offload threshold. Authors MAY raise these, but get tight defaults out of the box.
+ * Aggressive defaults applied once managed context is enabled (design D10): a small working window
+ * and an aggressive offload threshold. Authors MAY raise these, but enabled context gets tight
+ * defaults out of the box.
  */
 export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   workingWindowTokens: 2000,

@@ -64,6 +64,14 @@ function fakeConversation<B extends BackendTag>(tag: B): Conversation<B> {
 const fakeBackend: LlmBackend<"codex"> = { tag: "codex", autonomous: () => fakeConversation("codex") };
 
 describe("loop() builder — single-cycle lowering (tasks 5.1, 5.3)", () => {
+  test("loop().run does not route recurrence through the review module", async () => {
+    const source = await Bun.file(`${import.meta.dir}/../src/loop/builder/index.ts`).text();
+
+    expect(source).not.toContain("../../review");
+    expect(source).not.toMatch(/\bfixLoop\s*\(/);
+    expect(source).toContain("executeLoop");
+  });
+
   test("a minimal single-cycle loop runs and returns a Result with a stop reason", async () => {
     const result = await loop<Countdown>("countdown")
       .step("decrement", decrement)

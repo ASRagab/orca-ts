@@ -66,4 +66,6 @@ Every loop needs a stop rule from a preset or custom `.measure()`.
 
 Add `.guard({ maxIterations, wallClockMs, tokenBudget })` for seatbelts. A cyclic loop with no preset and no custom measure is rejected before it runs.
 
+Loop execution owns recurrence, cycle progress, and context pressure. When managed context is enabled, oversized reason/step outputs are offloaded to scratch and compacted before they enter the model-visible context; durable state checkpoints remain exact. Use pure `fanOut`/`fanIn` for summary-only branch work, and store-backed fan-out when branches should isolate and merge state through a `StateStore`.
+
 Read the reference pages for the [loop API](../../reference/loop-api/) — the full `LoopBuilder<S>` signatures, stop reasons, and exit codes — and [state stores](../../reference/state-stores/) — the `StateStore<S>` port and the snapshot/sqlite adapters, all `Result`-typed over `RuntimeError`.

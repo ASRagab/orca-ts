@@ -65,7 +65,7 @@ async function sequentialTaskStrategy(
 ): Promise<Result<PlanLoopResult, RuntimeError>>;
 ```
 
-`sequentialTaskStrategy` drives the pending-task count to zero, implementing one task per cycle and stopping at the first typed failure. It is built on the generic `fixLoop` (design D7; see [Review Automation](review.md)). On success it returns `{ completed }` — the IDs of tasks that ran. On the first `implement` failure it returns `Err(RuntimeError)`; later tasks are not attempted.
+`sequentialTaskStrategy` drives the pending-task count to zero through loop execution, implementing one task per cycle and stopping at the first typed failure. On success it returns `{ completed }` — the IDs of tasks that ran. On the first `implement` failure it returns `Err(RuntimeError)`; later tasks are not attempted.
 
 ## Deprecated: `implementTaskLoop`
 

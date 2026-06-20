@@ -4,11 +4,11 @@
 TBD - created by archiving change add-loop-builder. Update Purpose after archive.
 ## Requirements
 ### Requirement: Declarative loop builder lowers to the existing engine
-The system SHALL provide a declarative `loop()` builder as the authoring front door that lowers to `flow()` plus the shared `fixLoop` convergence primitive, introducing no new public runtime. `fixLoop` SHALL be expanded from its current issue-list shape into a generic convergence primitive while preserving the existing issue-list overload for current callers. A single-cycle loop SHALL be authorable without graph, fan-out, or Effect knowledge.
+The system SHALL provide a declarative `loop()` builder as the authoring front door that lowers to `flow()` plus the loop execution module. Loop execution SHALL own recurrence, cycle body execution, guards, stop evaluation, and per-cycle progress. `fixLoop` SHALL remain a public generic convergence primitive with the existing issue-list overload preserved for current callers, but the builder SHALL NOT depend on the review module as its recurrence root. A single-cycle loop SHALL be authorable without graph, fan-out, or Effect knowledge.
 
 #### Scenario: Minimal loop is authorable and runs
 - **WHEN** an author writes `loop(name).reason(backend, request).until(pred).guard(opts)` and runs it
-- **THEN** the builder produces a `flow()` invocation whose convergence is driven by generic `fixLoop()`, and the run returns a `Result` value with a stop reason
+- **THEN** the builder produces a `flow()` invocation whose convergence is driven by loop execution, and the run returns a `Result` value with a stop reason
 
 #### Scenario: Existing fixLoop callers keep working
 - **WHEN** existing review or plan code calls `fixLoop(evaluateIssues, fixIssues, options)`
@@ -50,4 +50,3 @@ The system SHALL provide opt-in `fanOut` (with a concurrency bound) and `fanIn` 
 #### Scenario: Fan-in applies the declared join policy
 - **WHEN** branches complete under a `quorum` policy of `k`
 - **THEN** the loop proceeds once `k` branches agree and the reducer merges their results into one state
-

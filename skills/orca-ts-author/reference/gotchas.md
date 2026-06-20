@@ -30,8 +30,8 @@ flow back (and before the typecheck gate, when one is reachable).
    flows still benefit from the harmless optional-chain.
 6. **`fixLoop` issue shape.** The issue type must have `fixable: boolean`.
    Return `ok([])` from `evaluate` to converge; return `ok(issues)` with at
-   least one `fixable: true` to trigger a fix round. Provide a `stalled`
-   detector to stop on no-progress (rule 9).
+   least one `fixable: true` to trigger a fix round. Provide `stalled` or
+   `fingerprint` no-progress detection for repair loops (rule 9).
 7. **`Result` discipline.** Tool/loop calls return a `Result`; use
    `.isErr()` / `.isOk()` / `.value` / `.error`, or `ok(...)`/`err(...)` to
    build them. Import `ok`/`err` (and the `Result` type) **from `"orca-ts"`** —
@@ -42,11 +42,12 @@ flow back (and before the typecheck gate, when one is reachable).
    `runReviewAndFixLoop` are deprecated compatibility wrappers that emit
    `ORCA_DEP_LOOP_COLLAPSE`. New artifacts should walk tasks explicitly with
    `fixLoop` per task, or use `loop()` with an `.until(...)` strategy.
-9. **No-progress detection.** A `stalled` callback owns its own history (a
-   `Set` of normalized failure signatures). Returning `true` stops the loop as
-   `stuck`. Normalize signatures (strip line numbers/paths) so a re-emitted
-   identical failure is recognized — see `makeStallDetector` in
-   `workflows/ai-slop-cleanup.ts`.
+9. **No-progress detection.** Prefer the shared action `fingerprint` projection
+   when you can express the action identity and inputs. For issue-list repair
+   loops, a `stalled` callback may own its own history (for example a `Set` of
+   normalized failure signatures). Returning `true` stops as `stuck`. Normalize
+   signatures (strip line numbers/paths) so a re-emitted identical failure is
+   recognized — see `makeStallDetector` in `workflows/ai-slop-cleanup.ts`.
 10. **Verification gates are commands.** Wire the target repo's real test/lint
    commands through `command().run({ command, args })` and treat
    `result.type !== "success"` as failure. Never hardcode `bun`/`npm` — slot in
@@ -82,7 +83,15 @@ flow back (and before the typecheck gate, when one is reachable).
     start a source, run a backend, emit to a sink, mutate the repo, read
     `flowArgs()`, or prompt the user at import time. `orca loops` imports modules
     for discovery only.
-16. **Loop module commands differ from workflow scripts.** Workflows run as
+16. **Use public loop entrypoints.** Do not import or call internal
+    `executeLoop`; public artifacts use `loop()` for stateful cycles and
+    `fixLoop` for generic convergence. Direct `executeLoop` does not carry the
+    compatibility defaults that public authoring depends on.
+17. **Managed context is explicit.** A loop only captures raw observations,
+    compacts context, or offloads oversized reason/step outputs when `.run()` is
+    given `context`. Durable state snapshots are never compacted. Offload refs
+    are model-visible pointers, not absolute local paths to paste into prompts.
+18. **Loop module commands differ from workflow scripts.** Workflows run as
     `orca .orca/workflows/<name>.ts --backend <tag> [-- "<args>"]`. Loop modules
     run as `orca loops`, `ORCA_LOOP_EVENT='{}' orca run <name-or-path>`, or
     `orca serve <name-or-path>`.
@@ -99,10 +108,12 @@ Before declaring a generated flow done, confirm each:
 - [ ] If `selectBackend` (or `opencode()`) is used, `selected.shutdown?.()` runs in a `finally`.
 - [ ] Verification commands are the **detected target-repo** commands, not `bun`/`npm` assumptions.
 - [ ] At least one test gate **and** one lint gate are wired (the skill refuses an ungated flow).
-- [ ] `fixLoop` issues carry `fixable`; a `stalled` detector is supplied for repair loops.
+- [ ] `fixLoop` issues carry `fixable`; no-progress detection uses `fingerprint` or `stalled`.
 - [ ] No new use of deprecated `implementTaskLoop` or `runReviewAndFixLoop` wrappers.
+- [ ] No import or use of internal `executeLoop`; public artifacts use `loop()` or `fixLoop`.
+- [ ] Managed context is only enabled intentionally, and runbooks mention offload/compaction behavior when used.
 - [ ] Any Zod schema used with `pi`/OpenCode tolerates off-shape output (`z.preprocess`).
 - [ ] No dependency on the agent asking the operator a question (autonomous only).
 - [ ] If the target repo has no `tsconfig.json`, the runbook records the skipped-typecheck note.
 - [ ] In a typed-lint TS target, the lint config ignores `.orca/**` (else the flow's own lint gate is red at baseline).
-- [ ] Loop runbooks use `orca loops`, `orca run`, and `orca serve`, not the legacy `orca <flow.ts>` shape.
+- [ ] Loop runbooks use `orca loops`, `orca run`, and `orca serve`, not the legacy `orca <flow.ts>` shape; custom `Source`/`Sink` adapters do not read `ORCA_LOOP_EVENT` or supervisor internals.

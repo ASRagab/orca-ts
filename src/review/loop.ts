@@ -1,13 +1,13 @@
 import { err, ok, type Result } from "neverthrow";
 import {
   makeFingerprintStuckDetector,
-  TokenBudgetCounter,
   type FingerprintAction,
   type FingerprintDetectorOptions,
   type TokenUsageSummary,
 } from "../loop/termination.ts";
+import { executeLoop, type LoopExecutionStop } from "../loop/execution.ts";
 
-import type { RuntimeError, Usage } from "../model/index.ts";
+import type { RuntimeError } from "../model/index.ts";
 import type { ReviewerId, ReviewerPrompt } from "./reviewers.ts";
 import { loadReviewerPrompts, selectReviewers } from "./reviewers.ts";
 
@@ -167,73 +167,31 @@ async function runIssueFixLoop<I extends { readonly fixable: boolean }>(
 async function runGenericFixLoop<State, Action extends FixLoopAction>(
   options: GenericFixLoopOptions<State, Action>
 ): Promise<Result<GenericFixLoopSummary<State>, RuntimeError>> {
-  const maxIterations = options.maxIterations ?? 10;
-  const now = options.now ?? Date.now;
-  const startedAt = now();
-  const events: string[] = [];
-  const budget = new TokenBudgetCounter(options.tokenBudget);
-  const fingerprintStalled = genericFingerprintDetector(options.fingerprint);
-  let iterations = 0;
+  const loop = await executeLoop<State, Action>({
+    evaluate: options.evaluate,
+    converged: options.converged,
+    nextAction: options.nextAction,
+    execute: (action, state) => options.fix(action, state),
+    maxIterations: options.maxIterations ?? 10,
+    ...(options.wallClockMs === undefined ? {} : { wallClockMs: options.wallClockMs }),
+    ...(options.tokenBudget === undefined ? {} : { tokenBudget: options.tokenBudget }),
+    ...(options.now === undefined ? {} : { now: options.now }),
+    ...(options.stalled === undefined ? {} : { stalled: options.stalled }),
+    fingerprint: options.fingerprint ?? {},
+  });
 
-  for (;;) {
-    events.push("evaluate:started");
-    const evalResult = await options.evaluate();
-    if (evalResult.isErr()) return err(evalResult.error);
-    events.push("evaluate:completed");
-
-    const state = evalResult.value;
-    if (options.converged(state)) {
-      return ok(genericSummary(state, iterations, "converged", events, budget));
-    }
-
-    const action = options.nextAction(state);
-    if (action === undefined) {
-      return ok(genericSummary(state, iterations, "unfixable", events, budget));
-    }
-
-    if (options.stalled?.(state, action) || fingerprintStalled?.({ state, action })) {
-      events.push("no-progress");
-      return ok(genericSummary(state, iterations, "stuck", events, budget));
-    }
-
-    if (iterations >= maxIterations) {
-      return ok(genericSummary(state, iterations, "ceiling", events, budget));
-    }
-
-    if (options.wallClockMs !== undefined && now() - startedAt >= options.wallClockMs) {
-      return ok(genericSummary(state, iterations, "timeout", events, budget));
-    }
-
-    events.push("fix:started");
-    const fixResult = await options.fix(action, state);
-    if (fixResult.isErr()) return err(fixResult.error);
-    events.push("fix:completed");
-    iterations++;
-
-    const usage = usageFromFixResult(fixResult.value);
-    budget.record(usage);
-    if (budget.exhausted) {
-      events.push("budget:exhausted");
-      return ok(genericSummary(state, iterations, "budget-exhausted", events, budget));
-    }
+  if (loop.isErr()) {
+    return err(loop.error);
   }
-}
-
-function genericSummary<State>(
-  state: State,
-  iterations: number,
-  stop: FixLoopStop,
-  events: readonly string[],
-  budget: TokenBudgetCounter,
-): GenericFixLoopSummary<State> {
-  return {
-    iterations,
-    converged: stop === "converged",
-    stop,
-    lastEvaluation: state,
-    events,
-    ...(budget.shouldReport ? { tokenUsage: budget.summary() } : {}),
-  };
+  const summary = loop.value;
+  return ok({
+    iterations: summary.iterations,
+    converged: summary.converged,
+    stop: toFixLoopStop(summary.stop),
+    lastEvaluation: summary.lastEvaluation,
+    events: summary.events,
+    ...(summary.tokenUsage === undefined ? {} : { tokenUsage: summary.tokenUsage }),
+  });
 }
 
 function issueFingerprintDetector<I extends { readonly fixable: boolean }>(
@@ -254,46 +212,11 @@ function issueFingerprintDetector<I extends { readonly fixable: boolean }>(
   });
 }
 
-function genericFingerprintDetector<State, Action extends FixLoopAction>(
-  fingerprint: GenericFixLoopOptions<State, Action>["fingerprint"],
-): ((value: { readonly state: State; readonly action: Action }) => boolean) | undefined {
-  if (fingerprint === false) {
-    return undefined;
+function toFixLoopStop(stop: LoopExecutionStop): FixLoopStop {
+  if (stop === "cancelled") {
+    return "timeout";
   }
-
-  return makeFingerprintStuckDetector({
-    project: ({ action }) => action,
-    ...(fingerprint?.windowSize === undefined ? {} : { windowSize: fingerprint.windowSize }),
-    ...(fingerprint?.repeatThreshold === undefined ? {} : { repeatThreshold: fingerprint.repeatThreshold }),
-  });
-}
-
-function usageFromFixResult(result: unknown): Usage | undefined {
-  if (typeof result !== "object" || result === null || !("usage" in result)) {
-    return undefined;
-  }
-
-  const usage = result.usage;
-  if (typeof usage !== "object" || usage === null || !("input" in usage) || !("output" in usage)) {
-    return undefined;
-  }
-
-  const input = usage.input;
-  const output = usage.output;
-  const reasoning = "reasoning" in usage ? usage.reasoning : undefined;
-  if (
-    typeof input !== "number" ||
-    typeof output !== "number" ||
-    !Number.isInteger(input) ||
-    !Number.isInteger(output) ||
-    (reasoning !== undefined && (typeof reasoning !== "number" || !Number.isInteger(reasoning)))
-  ) {
-    return undefined;
-  }
-
-  return reasoning === undefined
-    ? { input, output }
-    : { input, output, reasoning };
+  return stop;
 }
 
 export interface ReviewIssue {
@@ -343,8 +266,8 @@ export interface ReviewAndFixOptions {
   readonly parallel?: boolean;
 }
 
-/** Review-and-fix `.until()` strategy over the generic {@link fixLoop} (design D7):
- * one review pass collects issues, then `fixLoop` drives the fixable-issue count
+/** Review-and-fix `.until()` strategy over loop execution (design D7):
+ * one review pass collects issues, then loop execution drives the fixable-issue count
  * to zero. A two-phase state runs reviewers exactly once and applies the fix at
  * most once, reproducing the single-pass review/fix behavior. */
 export async function reviewAndFixStrategy(
@@ -359,7 +282,7 @@ export async function reviewAndFixStrategy(
   let phase: "review" | "fixed" = "review";
   let fixed = false;
 
-  const loop = await fixLoop<{ readonly fixableRemaining: number }>({
+  const loop = await executeLoop<{ readonly fixableRemaining: number }>({
     evaluate: async () => {
       if (phase === "review") {
         const reviewed = await runReviewPhase(selected, options, events);
@@ -371,7 +294,7 @@ export async function reviewAndFixStrategy(
     },
     converged: (state) => state.fixableRemaining === 0,
     nextAction: (state) => (state.fixableRemaining === 0 ? undefined : REVIEW_FIX_ACTION),
-    fix: async () => {
+    execute: async () => {
       events.push("fix:started");
       const result = await options.fix(fixable);
       if (result.isErr()) return err(result.error);

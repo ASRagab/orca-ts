@@ -1,12 +1,22 @@
-import { spawn } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { err, ok, type Result } from "neverthrow";
 
 import { ioFailed, type RuntimeError } from "../model/index.ts";
-import type { LoopOutcome, LoopRunError, LoopStopReason } from "./builder/index.ts";
+import type { LoopOutcome, LoopRunError } from "./builder/index.ts";
+import { createLoopChildSpec, spawnLoopChild, type ChildHandle, type ChildSpawner } from "./firing.ts";
 import type { Sink, Source } from "./io/index.ts";
+
+export {
+  exitCodeForRun,
+  exitCodeForStop,
+} from "./firing.ts";
+export type {
+  ChildHandle,
+  ChildSpec,
+  ChildSpawner,
+} from "./firing.ts";
 
 // L11 loop distribution surface (spec distribution; design D8). A LoopDefinition binds a loop's
 // trigger Source and output Sink to a one-shot runner; `defineLoop` is the authoring front door.
@@ -239,51 +249,7 @@ export function formatLoopListing(rows: readonly LoopListing[]): string {
   return rows.map((row) => `${row.name}\tsource=${row.source}\tsink=${row.sink}`).join("\n");
 }
 
-// --- Exit status: a stop reason maps to a process code (spec distribution: status reflects stop). ---
-
-const STOP_EXIT_CODES = {
-  converged: 0,
-  unfixable: 1,
-  stuck: 2,
-  timeout: 3,
-  ceiling: 4,
-  "budget-exhausted": 5,
-  cancelled: 6,
-} as const satisfies Record<LoopStopReason, number>;
-
-/** Process exit status for a stop reason: `converged` is 0, every other stop is non-zero. */
-export function exitCodeForStop(reason: LoopStopReason): number {
-  return STOP_EXIT_CODES[reason];
-}
-
-/** Exit status for a completed run: the stop reason's code, or 70 for a build/runtime error. */
-export function exitCodeForRun(result: Result<LoopOutcome, LoopRunError>): number {
-  return result.match(
-    (outcome) => exitCodeForStop(outcome.stopReason),
-    () => 70,
-  );
-}
-
 // --- serve: a thin long-lived supervisor that spawns an ephemeral child per trigger firing (D8). ---
-
-/** What the supervisor hands the spawner for one trigger firing. */
-export interface ChildSpec {
-  /** The loop module path or registered name the child `orca run` resolves. */
-  readonly loop: string;
-  /** The trigger event, serialized to the child (default spawner forwards it via the environment). */
-  readonly event: unknown;
-}
-
-/** A spawned ephemeral child running one loop firing; independently terminable. */
-export interface ChildHandle {
-  /** OS-level termination of a runaway child (default `SIGKILL`). */
-  kill(signal?: NodeJS.Signals): void;
-  /** Resolves when the child exits with its code (null when terminated by signal). */
-  readonly exited: Promise<number | null>;
-}
-
-/** Spawns one ephemeral child per trigger firing. Injectable so tests avoid real processes. */
-export type ChildSpawner = (spec: ChildSpec) => ChildHandle;
 
 export interface ServeOptions {
   /** Spawn an ephemeral child per firing; default re-invokes `orca run <loop>` as a subprocess. */
@@ -311,12 +277,12 @@ export async function serve(
   definition: LoopDefinition,
   options: ServeOptions = {},
 ): Promise<Result<Supervisor, RuntimeError>> {
-  const spawnChild = options.spawn ?? defaultSpawner;
+  const spawnChild = options.spawn ?? spawnLoopChild;
   const loopRef = options.loopRef ?? definition.name;
   const children = new Set<ChildHandle>();
 
   const started = await definition.source.start((event: unknown) => {
-    const child = spawnChild({ loop: loopRef, event });
+    const child = spawnChild(createLoopChildSpec(loopRef, event));
     children.add(child);
     const forget = (): void => {
       children.delete(child);
@@ -339,25 +305,3 @@ export async function serve(
     },
   });
 }
-
-/** Default spawner: re-invoke this CLI as `orca run --no-typecheck <loop>` in a fresh OS process. */
-const defaultSpawner: ChildSpawner = (spec) => {
-  const entry = process.argv[1];
-  const args = entry === undefined ? ["run", "--no-typecheck", spec.loop] : [entry, "run", "--no-typecheck", spec.loop];
-  const child = spawn(process.execPath, args, {
-    stdio: "inherit",
-    env: { ...process.env, ORCA_LOOP_EVENT: JSON.stringify(spec.event) },
-  });
-  const exited = new Promise<number | null>((resolveExit, rejectExit) => {
-    child.on("error", rejectExit);
-    child.on("exit", (code) => {
-      resolveExit(code);
-    });
-  });
-  return {
-    kill(signal = "SIGKILL") {
-      child.kill(signal);
-    },
-    exited,
-  };
-};

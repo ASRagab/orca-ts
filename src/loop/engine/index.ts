@@ -5,12 +5,12 @@
 // that crosses back out goes through ./bridge.ts as a neverthrow `Result`/plain value.
 //
 // This provides the three primitives the builder (L06) and fan-out / fan-in (L07) lower onto:
-//   1. recurrence with variant-stop    — runRecurrence  (Schedule: recurUntil ∩ ceiling)
+//   1. recurrence with variant-stop    — runRecurrence  (variant floor ∩ ceiling)
 //   2. bounded structured concurrency  — runBranches    (Effect.all { concurrency })
 //   3. structured cancellation         — runCancellable (raceFirst → interrupt in-flight work)
 // plus internal Layer-based DI that resolves the plain FlowContext snapshot captured at the
 // boundary, without exposing any Effect type to the authoring accessors (design D2).
-import { Context, Effect, Layer, Ref, Schedule } from "effect";
+import { Context, Effect, Layer } from "effect";
 import type { LoopStopReason } from "../builder/types.ts";
 import type { Result } from "neverthrow";
 import { currentFlowContext, type FlowContext } from "../../flow/context.ts";
@@ -27,11 +27,11 @@ export interface EngineOutcome<S> {
 }
 
 /** One loop iteration as an internal Effect; the builder bridges plain step bodies inward via `fromResult`. */
-export type IterationStep<S> = (state: S, iteration: number) => Effect.Effect<S, Error>;
+export type IterationStep<S, R = never> = (state: S, iteration: number) => Effect.Effect<S, Error, R>;
 
-export interface RecurrenceSpec<S> {
+export interface RecurrenceSpec<S, R = never> {
   readonly initial: S;
-  readonly iterate: IterationStep<S>;
+  readonly iterate: IterationStep<S, R>;
   /** Loop variant (design D3): a measure bounded below that the loop drives toward `floor`. */
   readonly measure: (state: S) => number;
   /** Convergence floor; default 0. */
@@ -42,43 +42,29 @@ export interface RecurrenceSpec<S> {
 
 /**
  * Drive a stateful loop to convergence. The body runs at least once; the variant measure is
- * fed to a `Schedule` that recurs until the measure reaches its floor, intersected with the
- * iteration ceiling. `Schedule.intersect` continues only while BOTH sub-schedules continue, so
- * whichever limit trips first stops the loop — `converged` when the measure won, `ceiling` otherwise.
+ * checked after each iteration against the convergence floor and iteration ceiling, so whichever
+ * limit trips first stops the loop — `converged` when the measure won, `ceiling` otherwise.
  */
-export function runRecurrence<S>(spec: RecurrenceSpec<S>): Effect.Effect<EngineOutcome<S>, Error> {
+export function runRecurrence<S, R = never>(spec: RecurrenceSpec<S, R>): Effect.Effect<EngineOutcome<S>, Error, R> {
   const floor = spec.floor ?? 0;
-  const maxIterations = spec.maxIterations;
-  return Effect.gen(function* () {
-    const stateRef = yield* Ref.make(spec.initial);
-    const iterRef = yield* Ref.make(0);
+  const maxIterations =
+    spec.maxIterations === undefined || !Number.isFinite(spec.maxIterations)
+      ? Number.POSITIVE_INFINITY
+      : Math.max(0, Math.floor(spec.maxIterations));
 
-    const step = Effect.gen(function* () {
-      const iteration = yield* Ref.get(iterRef);
-      const current = yield* Ref.get(stateRef);
-      const next = yield* spec.iterate(current, iteration);
-      yield* Ref.set(stateRef, next);
-      yield* Ref.update(iterRef, (n) => n + 1);
-      return spec.measure(next);
+  const recur = (state: S, iterations: number): Effect.Effect<EngineOutcome<S>, Error, R> =>
+    Effect.suspend(() => {
+      const measure = spec.measure(state);
+      if (iterations > 0 && measure <= floor) {
+        return Effect.succeed({ state, stopReason: "converged", iterations, measure });
+      }
+      if (iterations > 0 && iterations >= maxIterations) {
+        return Effect.succeed({ state, stopReason: "ceiling", iterations, measure });
+      }
+      return spec.iterate(state, iterations).pipe(Effect.flatMap((next) => recur(next, iterations + 1)));
     });
 
-    // The effect runs once before the schedule is consulted, so N iterations == N-1 recurrences.
-    const ceiling =
-      maxIterations !== undefined && Number.isFinite(maxIterations)
-        ? Schedule.recurs(Math.max(0, Math.floor(maxIterations) - 1))
-        : Schedule.forever;
-    const schedule = Schedule.recurUntil<number>((measure) => measure <= floor).pipe(
-      Schedule.intersect(ceiling),
-    );
-
-    yield* Effect.repeat(step, schedule);
-
-    const state = yield* Ref.get(stateRef);
-    const iterations = yield* Ref.get(iterRef);
-    const measure = spec.measure(state);
-    const stopReason: LoopStopReason = measure <= floor ? "converged" : "ceiling";
-    return { state, stopReason, iterations, measure };
-  });
+  return recur(spec.initial, 0);
 }
 
 export interface BranchesSpec<A> {

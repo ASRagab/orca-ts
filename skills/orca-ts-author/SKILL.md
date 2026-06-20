@@ -80,8 +80,9 @@ accept a bare answer. Never dump all axes at once.
    - the prompt/objective/title/pathspec for the archetype.
 4. Apply every `gotchas.md` rule as you fill: import from `"orca-ts"`; narrow
    `outcome.type`; `selected.shutdown?.()` in a `finally`; `fixLoop` issues carry
-   `fixable`; a `stalled` detector is supplied; deprecated task/review wrappers
-   are not used in new artifacts; loop modules stay import-safe; Zod tolerant for
+   `fixable`; no-progress detection is explicit; deprecated task/review wrappers
+   are not used in new artifacts; loop modules stay import-safe; `loop()` and
+   `fixLoop` are used instead of internal `executeLoop`; Zod tolerant for
    pi/OpenCode.
 
 ## 4. Typecheck the flow (when a TS toolchain is reachable)
@@ -142,6 +143,8 @@ For a loop module, write:
    - one-shot run: `ORCA_LOOP_EVENT='{}' orca run <name-or-path>`;
    - served run: `orca serve <name-or-path>`;
    - prerequisites for its `Source`, `Sink`, backend, and verification gates;
+   - note that `ORCA_LOOP_EVENT` is the CLI/supervisor firing envelope; custom
+     `Source` and `Sink` adapters should not read it directly;
    - state/resume notes if the loop uses `createSnapshotStore()` or `createSqliteStore()`.
 
 Report the trigger command and hand off to `orca-ts-flow` to run and monitor it.

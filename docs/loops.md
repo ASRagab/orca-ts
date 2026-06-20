@@ -27,6 +27,10 @@ you when to stop.
 Use `loop()` inside another flow, test, or loop module. Use `defineLoop()` when
 you want a loop module that Orca can find and launch.
 
+Loop execution owns recurrence, cycle progress, guard evaluation, token budgets,
+and optional context pressure. `fixLoop` is still the public generic convergence
+primitive, but direct `executeLoop` is internal and not part of authored flows.
+
 ## Your First Loop Module
 
 Save this as `.orca/loops/countdown.ts`:
@@ -146,7 +150,7 @@ Loop state is a manifest, not the human plan file. The manifest is the runtime
 state your loop checkpoints and replays. It stays separate from
 `.orca/plan-<hash>.md`.
 
-The state seam is `StateStore`, which exposes:
+The base state seam is `StateStore`, which exposes:
 
 - `load`
 - `checkpoint`
@@ -166,8 +170,11 @@ Notes:
 - `history()` returns the ordered checkpoint hashes.
 - `branch(from)` makes an isolated copy of one checkpoint.
 - `merge(branches, reducer)` folds branch snapshots through your reducer.
-- `branch`/`merge` are the same seam fan-out and fan-in use for state
-  recombination.
+- Store-backed fan-out additionally requires `BranchWritableStateStore`,
+  whose `saveBranch(branch, state)` writes a branch result without adding a
+  cycle history entry.
+- `branch`/`merge` are the base seam fan-out and fan-in use for state
+  recombination; `saveBranch` is the extra branch-write capability.
 - The snapshot store is simplest to inspect, but it is not the right choice if
   you need automatic resume after a crash.
 - `dbos` and `dolt` are deferred and are not selectable in this release.
@@ -182,6 +189,8 @@ folded back through a reducer at fan-in.
 | --- | --- |
 | `fanOut({ state, branches, maxConcurrency })` | runs each branch with a bounded concurrency cap |
 | `fanIn(policy, outcomes, { reducer, ... })` | chooses which successful summaries count, then merges them |
+| `storeBackedFanOut({ store, from, branches, maxConcurrency })` | branches a checkpoint through `StateStore.branch()` and saves each branch result through `BranchWritableStateStore.saveBranch()` without changing cycle history |
+| `storeBackedFanIn(policy, outcomes, { store, reducer, ... })` | selects successful branch snapshots and recombines them through `StateStore.merge()` |
 
 Join policies:
 
@@ -192,8 +201,16 @@ Join policies:
 | `quorum` | enough branches must agree | continue once the quorum agrees |
 | `reduce` | fold all successful branches | tolerate failures as long as at least one branch succeeds |
 
+Use pure `fanOut`/`fanIn` for summary-only work that can stay in memory. Use
+the store-backed pair when branch state must be durable or adapter-agnostic:
+fan-out starts from a checkpoint hash, each branch receives an isolated store
+copy, and fan-in is the single reducer-backed merge point.
+
 Keep branch summaries short. Branch work should return a concise summary and
-only the structured data the reducer really needs.
+only the structured data the reducer really needs. When loop context management
+is explicitly enabled, oversized cycle observations are offloaded and compacted
+by loop execution before they enter the model-visible context; durable state
+snapshots are not compacted.
 
 See [`examples/loop-fanout.ts`](../examples/loop-fanout.ts) for a checked
 fan-out/fan-in example.
@@ -239,6 +256,11 @@ guide.
 `orca serve` owns the trigger and isolates each firing in its own child
 process. One child crash does not take down the supervisor, and stopping the
 supervisor stops the children.
+
+`orca run` and served children share one firing contract: trigger-event decoding,
+`defineLoop().run(event)`, sink emission, diagnostics, and stop-reason exit-code
+mapping. Custom `Source` and `Sink` adapters should depend only on the public
+event/output contracts, not on `ORCA_LOOP_EVENT` or supervisor internals.
 
 ## Recipes
 
@@ -348,7 +370,8 @@ example.
   path. Move to `.orca/loops/` when you want discovery, `orca run`, or
   `orca serve`.
 - If you are replacing `implementTaskLoop` or `runReviewAndFixLoop`, switch to
-  `sequentialTaskStrategy` or `reviewAndFixStrategy`.
+  `sequentialTaskStrategy` or `reviewAndFixStrategy`; both now consume loop
+  execution while the deprecated wrappers keep their warning behavior.
 - Do not try to revive `dbos` or `dolt` as selectable adapters in this release.
   Use the shipped snapshot or sqlite store instead.
 - If you only need one pass, prefer a flow. If you need repeated convergence,

@@ -96,7 +96,7 @@ function objectEntries(text: string, name: string): Array<[string, string]> {
   if (!m) throw new Error(`could not find object ${name} in source`);
   const body = m[1] ?? "";
   const entries: Array<[string, string]> = [];
-  const entryRe = /([A-Za-z0-9_-]+)\s*:\s*(\d+)/g;
+  const entryRe = /["']?([A-Za-z0-9_-]+)["']?\s*:\s*(\d+)/g;
   let em: RegExpExecArray | null;
   while ((em = entryRe.exec(body)) !== null) {
     if (em[1] !== undefined && em[2] !== undefined) entries.push([em[1], em[2]]);
@@ -114,11 +114,10 @@ const monitor = read(join(SRC, "monitor", "index.ts"));
 const builderTypes = read(join(SRC, "loop", "builder", "types.ts"));
 const sourceIo = read(join(SRC, "loop", "io", "source.ts"));
 const sinkIo = read(join(SRC, "loop", "io", "sink.ts"));
-const serve = read(join(SRC, "loop", "serve.ts"));
+const firing = read(join(SRC, "loop", "firing.ts"));
 const accessors = read(join(SRC, "flow", "accessors.ts"));
 const reviewers = read(join(SRC, "review", "reviewers.ts"));
 const select = read(join(SRC, "backends", "select.ts"));
-const main = read(join(SRC, "cli", "main.ts"));
 const persistent = read(join(SRC, "plan", "persistent.ts"));
 
 // RuntimeError _tag variants: every `_tag: z.literal("X")` in schemas.ts.
@@ -134,7 +133,7 @@ const outcomeVerdicts = literals(typeBody(monitor, "OutcomeVerdict"));
 const stopReasons = literals(typeBody(builderTypes, "LoopStopReason"));
 
 // Stop-reason -> exit-code map.
-const stopExitCodes = objectEntries(serve, "STOP_EXIT_CODES");
+const stopExitCodes = objectEntries(firing, "STOP_EXIT_CODES");
 
 // Source / sink kind unions.
 const sourceKinds = literals(typeBody(sourceIo, "SourceKind"));
@@ -158,7 +157,7 @@ const defaultReviewers = [...reviewers.matchAll(/DefaultReviewers\s*=\s*\[([\s\S
 // Env vars the docs must document. Canonical = present in src.
 const envVars = [
   { name: "ORCA_BACKEND", inSrc: select.includes("ORCA_BACKEND") },
-  { name: "ORCA_LOOP_EVENT", inSrc: main.includes("ORCA_LOOP_EVENT") },
+  { name: "ORCA_LOOP_EVENT", inSrc: firing.includes("ORCA_LOOP_EVENT") },
   { name: "ORCA_DEP_LOOP_COLLAPSE", inSrc: persistent.includes("ORCA_DEP_LOOP_COLLAPSE") },
 ];
 

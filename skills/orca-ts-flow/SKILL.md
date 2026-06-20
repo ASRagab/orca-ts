@@ -39,8 +39,10 @@ ORCA_LOOP_EVENT='{}' orca run <name-or-path>
 orca serve <name-or-path>
 ```
 
-Use `orca run` for one firing and `orca serve` for a long-lived source. `orca
-loops` is discovery-only; it must not start a source, backend, or sink.
+Use `orca run` for one firing and `orca serve` for a long-lived source. Both use
+the same firing contract for event delivery, loop execution, sink emission,
+diagnostics, and stop-reason exit status. `orca loops` is discovery-only; it must
+not start a source, backend, or sink.
 
 There is **no `--monitor` CLI flag** — an artifact opts into monitoring itself. The
 bundled persistent-multitask / cleanup templates use `WorkflowMonitor` (from
@@ -60,6 +62,8 @@ is not a stall.** Judge *flow-level* progress from three signals:
 
 - **Monitoring JSON** — new entries in `stages`/`outcomes` in the latest
   `.orca/monitoring/<runId>.json` (tail it; the workflow wrapper prints its path).
+  For loops, progress records may include stop reason, token usage when reported,
+  and `contextPressure` evidence such as offload count or compaction stages.
 - **Loop state** — new `.orca/state-<hash>.json` files or sqlite `history`
   entries when a loop uses a `StateStore`.
 - **Persistent plan** — newly checked boxes in `.orca/plan-*.md` (multitask).
@@ -80,7 +84,7 @@ On a non-zero exit or a flagged stall, classify the cause from the run's signals
 |---|---|
 | **environment** | backend crashed, or auth missing/expired (CLI error, auth/login message, non-zero before any agent output) |
 | **gate/validation** | a verification command (test/lint) failed and the fix-loop is iterating |
-| **non-convergence** | a `fixLoop` hit its guard — `regressed` outcome with `regressedReason` `stuck`/`timeout`/`ceiling` |
+| **non-convergence** | loop execution or `fixLoop` hit a guard — stop reason / `regressedReason` such as `stuck`, `timeout`, `ceiling`, or `budget-exhausted` |
 | **stall** | no flow-level progress past the watchdog window (§2) |
 | **crash** | the run died mid-flow with a recoverable partial state (plan/commits present) |
 | **served-child** | `orca serve` stays alive but a child firing exits non-zero or reports a loop stop failure |
@@ -107,7 +111,8 @@ Bounded, safety-gated recovery by class:
 - **crash** → re-run; the flow resumes from the persistent plan / committed work.
 - **served-child** → inspect the child run output and rerun the same event with
   `ORCA_LOOP_EVENT='...' orca run <name-or-path>` when possible. Do not restart
-  the supervisor unless the `Source` itself failed.
+  the supervisor unless the `Source` itself failed. Treat `ORCA_LOOP_EVENT` as
+  the reproduction envelope, not as an adapter API.
 - **gate/validation** → this is the workflow doing its job; let the in-flow
   fix-loop iterate. Only intervene if it converges to non-convergence (above).
 
@@ -121,6 +126,8 @@ action during healing — no force-push, history rewrite, `reset --hard`,
 At run end, always report:
 
 - **exit status** (the wrapper prints `orca flow exit=<n>`), and
+- **loop stop reason** when present (`converged` is zero; every other stop maps
+  to a non-zero loop exit code), and
 - **per-agent cost/usage** — from the monitoring log's `outcomes[].usage`
   / `tokens` and `summary`. (`bun run scripts/summarize-run.ts` summarizes a log
   by backend/stage/file/usage when Bun + the repo are available.)

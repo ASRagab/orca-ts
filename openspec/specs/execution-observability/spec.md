@@ -41,7 +41,7 @@ The system SHALL summarize monitor logs by backend, file, stage, verdict, failur
 - **THEN** the monitor log omits those optional fields rather than writing placeholder values
 
 ### Requirement: Loops emit a per-cycle progress stream
-The system SHALL extend the workflow run log with a per-cycle progress record containing at least `iteration`, `measure`, `delta` (change in measure from the prior cycle), `stopReasonSoFar`, per-branch status for fan-out cycles, and cumulative token usage when reported. Missing backend usage SHALL be represented as `unknown`, not as zero. The stream SHALL be derivable from the manifest projection so it stays consistent with the termination variant.
+The system SHALL extend the workflow run log with a per-cycle progress record emitted by loop execution. The record SHALL contain at least `iteration`, `measure`, `delta` (change in measure from the prior cycle), `stopReasonSoFar`, per-branch status for fan-out cycles, cumulative token usage when reported, and context pressure evidence including offload count and compaction stages when present. Missing backend usage SHALL be represented as `unknown`, not as zero. The stream SHALL be derivable from the manifest projection and loop execution state so it stays consistent with the termination variant.
 
 #### Scenario: Each cycle records progress
 - **WHEN** a loop completes a cycle
@@ -51,7 +51,10 @@ The system SHALL extend the workflow run log with a per-cycle progress record co
 - **WHEN** a cycle fans out to multiple branches
 - **THEN** the progress record includes each branch's id, status, and reported token usage or `unknown`
 
+#### Scenario: Context pressure is observable
+- **WHEN** a cycle offloads output or compacts context
+- **THEN** the progress record includes the offload count and compaction stages applied during that cycle
+
 #### Scenario: Runaway is observable from the stream
 - **WHEN** `measure` stops decreasing while cumulative reported token usage rises across cycles
 - **THEN** the progress stream reflects a flat `delta` with rising token usage, surfacing an incipient runaway before a guard fires
-

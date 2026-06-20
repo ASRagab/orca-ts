@@ -1,6 +1,27 @@
 import { describe, expect, test } from "bun:test";
+import { err, ok, type Result } from "neverthrow";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { fanIn, fanOut, loop, type Branch, type LoopVariant } from "../src/index.ts";
+import {
+  createSnapshotStore,
+  createSqliteStore,
+  fanIn,
+  fanOut,
+  isComplete,
+  loop,
+  storeBackedFanIn,
+  storeBackedFanOut,
+  type Branch,
+  type BranchWritableStateStore,
+  type LoopVariant,
+  type RuntimeError,
+  type StateHash,
+  type StateReducer,
+  type StateStore,
+  type TaskManifest,
+} from "../src/index.ts";
 
 // L07 acceptance: bounded fan-out + join-policy fan-in are OPT-IN combinators (spec loop-builder;
 // design D9; tasks 6.1-6.4). `fanOut` collects branch results under a concurrency cap with an
@@ -9,6 +30,39 @@ import { fanIn, fanOut, loop, type Branch, type LoopVariant } from "../src/index
 // from L06 unchanged.
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+const manifest = (tasks: { id: string; passes: boolean }[]): TaskManifest => ({ tasks });
+
+const mergeByPass: StateReducer<TaskManifest> = (states) => {
+  const byId = new Map<string, boolean>();
+  for (const state of states) {
+    for (const task of state.tasks) {
+      byId.set(task.id, (byId.get(task.id) ?? false) || task.passes);
+    }
+  }
+  return { tasks: [...byId].map(([id, passes]) => ({ id, passes })) };
+};
+
+async function withRoot(run: (root: string) => Promise<void>): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "orca-fanout-"));
+  try {
+    await run(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function withDbPath(run: (path: string) => Promise<void>): Promise<void> {
+  await withRoot((root) => run(join(root, "state.db")));
+}
+
+function passTask(id: string): (state: TaskManifest) => { state: TaskManifest; summary: { summary: string; data: string } } {
+  return (state) => ({
+    state: {
+      tasks: state.tasks.map((task) => (task.id === id ? { ...task, passes: true } : task)),
+    },
+    summary: { summary: `passed ${id}`, data: id },
+  });
+}
 
 describe("bounded fan-out", () => {
   test("honors the concurrency bound — at most k branches run at once", async () => {
@@ -83,6 +137,130 @@ describe("bounded fan-out", () => {
     const branch: Branch<string, never> = () => ({ summary: "x" });
     const badConcurrency = await fanOut({ state: "root", branches: [branch], maxConcurrency: 0 });
     expect(badConcurrency.isErr()).toBe(true);
+  });
+});
+
+describe("store-backed fan-out", () => {
+  function createInstrumentedStore(): BranchWritableStateStore {
+    const snapshots = new Map<StateHash, TaskManifest>();
+    const history: StateHash[] = [];
+    let nonce = 0;
+    const counters = { branch: 0, merge: 0 };
+    const store: BranchWritableStateStore & { counters: typeof counters } = {
+      counters,
+      load(hash): Promise<Result<TaskManifest, RuntimeError>> {
+        const target = hash ?? history.at(-1);
+        const found = target === undefined ? undefined : snapshots.get(target);
+        if (found === undefined) {
+          return Promise.resolve(ok(manifest([])));
+        }
+        return Promise.resolve(ok(structuredClone(found)));
+      },
+      checkpoint(state): Promise<Result<StateHash, RuntimeError>> {
+        const hash = `mem-${String(nonce++)}`;
+        snapshots.set(hash, structuredClone(state));
+        history.push(hash);
+        return Promise.resolve(ok(hash));
+      },
+      branch(from): Promise<Result<StateHash, RuntimeError>> {
+        counters.branch++;
+        const source = snapshots.get(from);
+        const hash = `branch-${String(nonce++)}`;
+        snapshots.set(hash, structuredClone(source ?? manifest([])));
+        return Promise.resolve(ok(hash));
+      },
+      saveBranch(branch, state): Promise<Result<StateHash, RuntimeError>> {
+        if (!snapshots.has(branch)) {
+          return Promise.resolve(err({ _tag: "FileSystemError", path: branch, message: "unknown branch" }));
+        }
+        const hash = `branch-result-${String(nonce++)}`;
+        snapshots.set(hash, structuredClone(state));
+        return Promise.resolve(ok(hash));
+      },
+      merge(branches, reducer): Promise<Result<TaskManifest, RuntimeError>> {
+        counters.merge++;
+        const states = branches.flatMap((hash) => {
+          const state = snapshots.get(hash);
+          return state === undefined ? [] : [state];
+        });
+        return Promise.resolve(ok(reducer(states)));
+      },
+      history(): Promise<Result<readonly StateHash[], RuntimeError>> {
+        return Promise.resolve(ok([...history]));
+      },
+    };
+    return store;
+  }
+
+  test("uses StateStore.branch per branch and StateStore.merge at fan-in", async () => {
+    const store = createInstrumentedStore() as BranchWritableStateStore & { counters: { branch: number; merge: number } };
+    const base = await store.checkpoint(manifest([
+      { id: "a", passes: false },
+      { id: "b", passes: false },
+    ]));
+
+    const out = await storeBackedFanOut({
+      store,
+      from: base._unsafeUnwrap(),
+      branches: [passTask("a"), passTask("b")],
+      maxConcurrency: 2,
+    });
+
+    expect(out.isOk()).toBe(true);
+    expect(store.counters.branch).toBe(2);
+    if (out.isOk()) {
+      const merged = await storeBackedFanIn("barrier", out.value, { store, reducer: mergeByPass });
+      expect(merged.isOk()).toBe(true);
+      if (merged.isOk()) expect(isComplete(merged.value)).toBe(true);
+    }
+    expect(store.counters.merge).toBe(1);
+  });
+
+  async function runStorePath(store: BranchWritableStateStore): Promise<void> {
+    const base = (await store.checkpoint(manifest([
+      { id: "a", passes: false },
+      { id: "b", passes: false },
+    ])))._unsafeUnwrap();
+    const out = await storeBackedFanOut({
+      store,
+      from: base,
+      branches: [passTask("a"), passTask("b")],
+      maxConcurrency: 2,
+    });
+    expect(out.isOk()).toBe(true);
+    if (out.isOk()) {
+      expect((await store.history())._unsafeUnwrap()).toEqual([base]);
+      expect((await store.load())._unsafeUnwrap()).toEqual(manifest([
+        { id: "a", passes: false },
+        { id: "b", passes: false },
+      ]));
+      for (const outcome of out.value) {
+        if (!outcome.ok) continue;
+        expect((await store.load(outcome.stateHash))._unsafeUnwrap().tasks.some((task) => task.passes)).toBe(true);
+      }
+      const merged = await storeBackedFanIn("barrier", out.value, { store, reducer: mergeByPass });
+      expect(merged.isOk()).toBe(true);
+      if (merged.isOk()) {
+        expect(merged.value).toEqual(manifest([
+          { id: "a", passes: true },
+          { id: "b", passes: true },
+        ]));
+      }
+    }
+  }
+
+  test("same fan-out path runs against snapshot and sqlite adapters", async () => {
+    await withRoot(async (root) => {
+      await runStorePath(createSnapshotStore({ root }));
+    });
+    await withDbPath(async (path) => {
+      const store = createSqliteStore({ path })._unsafeUnwrap();
+      try {
+        await runStorePath(store);
+      } finally {
+        store.close();
+      }
+    });
   });
 });
 

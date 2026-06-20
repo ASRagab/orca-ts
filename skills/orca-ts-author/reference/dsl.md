@@ -103,7 +103,11 @@ const result = await loop<GatesState>("gate-repair")
   `untilConfident(threshold)`, and `times(n)`.
 - `.guard(...)` adds seatbelts; guards stop as `ceiling`, `timeout`, or
   `budget-exhausted`.
-- `.run(initial, { onCycle? })` returns `Result<LoopOutcome, LoopRunError>`.
+- `.run(initial, { context?, onCycle? })` returns `Result<LoopOutcome, LoopRunError>`.
+- `context` is opt-in managed context. When supplied, loop execution can compact
+  model-visible observations and offload oversized reason/step outputs to
+  scratch, reporting `contextPressure` through `onCycle`. Without it, raw
+  observations are not captured.
 
 ### Fan-out / fan-in
 
@@ -123,11 +127,14 @@ cycle can continue.
 import { createSnapshotStore, createSqliteStore } from "orca-ts";
 ```
 
-Both adapters implement the `StateStore` port: `load`, `checkpoint`, `branch`,
-`merge`, and `history`. `createSnapshotStore({ root })` writes JSON snapshots
-under `.orca/`. `createSqliteStore({ path })` returns a `Result` because it opens
-`bun:sqlite`; use it when the loop needs WAL-backed checkpoint/history and
-lease-based crash recovery. DBOS and Dolt are not selectable.
+The base `StateStore` port is `load`, `checkpoint`, `branch`, `merge`, and
+`history`. Store-backed fan-out additionally requires
+`BranchWritableStateStore.saveBranch()` so branch results can be persisted
+without appending to cycle history. `createSnapshotStore({ root })` writes JSON
+snapshots under `.orca/` and implements the branch-write capability.
+`createSqliteStore({ path })` returns a `Result` because it opens `bun:sqlite`;
+use it when the loop needs WAL-backed checkpoint/history and lease-based crash
+recovery. DBOS and Dolt are not selectable.
 
 ### `defineLoop()` — reusable loop modules
 
@@ -149,6 +156,10 @@ export default defineLoop({
 Save loop modules to `.orca/loops/<name>.ts`. They must be import-safe: no
 top-level `flow(...)`, source start, backend run, sink emit, or repo mutation.
 Run with `orca loops`, `orca run <name-or-path>`, or `orca serve <name-or-path>`.
+`orca run` and served children share the firing contract: event decode,
+`definition.run(event)`, sink emission, diagnostics, and stop-reason exit codes.
+`ORCA_LOOP_EVENT` is that contract's envelope, not a custom adapter API; `Source`
+and `Sink` implementations should observe public events/outputs only.
 
 ### `fixLoop` — converge a gate
 
@@ -165,11 +176,13 @@ const loop = await fixLoop<MyIssue>(
 - `Issue` must have `fixable: boolean`. When every issue is unfixable the loop
   stops `unfixable`.
 - The third arg is `number` (bare iteration cap) **or** `FixLoopOptions`:
-  `maxIterations` (seatbelt, default 10), `wallClockMs`, `stalled` (a
-  caller-owned no-progress detector — see gotchas), `now` (test clock).
+  `maxIterations` (seatbelt, default 10), `wallClockMs`, `tokenBudget`,
+  `stalled` (caller-owned no-progress detector), `fingerprint` (shared action
+  fingerprint projection), `now` (test clock).
 - Returns `Result<FixLoopSummary, RuntimeError>`. On `loop.isOk()`:
   `summary.converged` (bool), `summary.iterations`, `summary.stop`
-  (`"converged" | "unfixable" | "stuck" | "timeout" | "ceiling"`).
+  (`"converged" | "unfixable" | "stuck" | "timeout" | "ceiling" |
+  "budget-exhausted"`).
 - Depth is **not** bounded by a stingy count — convergence, the no-progress
   signature, and the wall-clock backstop are the real stops.
 

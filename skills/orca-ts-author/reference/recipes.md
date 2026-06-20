@@ -37,7 +37,8 @@ orca serve <name-or-path>
 Loop modules differ from workflow scripts: they do **not** call `flow(...)` at
 top level. Importing the module only registers the definition for `orca loops`;
 work starts inside `onTrigger`, when `orca run` or an `orca serve` child invokes
-the definition.
+the definition. `orca run` and served children use the same firing path for event
+decode, `definition.run`, sink emission, diagnostics, and stop-reason exit codes.
 
 ## single-change
 One autonomous turn implements `TASK_PROMPT`, then a `fixLoop` re-runs `GATE`
@@ -151,4 +152,6 @@ conditional spread (`...(cond ? { iterations } : {})`) rather than passing
 - Set the `selectBackend({ default })` tag to the backend `orca-ts-setup` verified.
 - For loop modules, export `defineLoop()` and keep imports side-effect-free:
   no backend turn, source start, sink emit, or repo mutation at module import.
+  Custom `Source`/`Sink` adapters should not read `ORCA_LOOP_EVENT` or supervisor
+  internals directly.
 - Run the `gotchas.md` self-audit before saving.

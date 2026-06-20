@@ -2,7 +2,7 @@
 
 Orca TypeScript is a Bun and TypeScript workflow runner for deterministic coding-agent work.
 
-Write a direct-style TypeScript flow, choose a backend such as Claude, Codex, OpenCode, or Pi, and let Orca provide the runtime pieces around it: a flow context, normalized conversation results, filesystem and git helpers, persistent plans, review loops, fixtures, and a CLI runner.
+Write a direct-style TypeScript flow, choose a backend such as Claude, Codex, OpenCode, or Pi, and let Orca provide the runtime pieces around it: a flow context, normalized conversation results, filesystem and git helpers, persistent plans, loop execution, review loops, fixtures, and a CLI runner.
 
 Use Orca TypeScript when you want coding-agent work to be expressed as code instead of a one-off prompt.
 
@@ -157,7 +157,9 @@ const result = await loop<TaskManifest>("ralph")
 
 Presets such as `untilManifestComplete()`, `untilGatesGreen()`, `untilNoIssues()`, `untilConfident(threshold)`, and `times(n)` supply the convergence measure. Add `.guard({ maxIterations, wallClockMs, tokenBudget })` for seatbelts. A loop with no preset or custom `.measure()` fails before it runs.
 
-Distributable loops live as import-safe modules under `.orca/loops/` and export `defineLoop({ name, source, sink, onTrigger })`. Use `orca loops` to list them, `orca run <loop>` to run one firing, and `orca serve <loop>` to host the trigger.
+Loop execution owns recurrence, cycle reports, guards, token budgets, and optional context pressure. `fixLoop` remains the public generic convergence primitive over the same execution path; `executeLoop` is internal. Managed context is explicit: pass `context` to `.run()` when you want model-visible observations compacted/offloaded. Without it, raw reason/step observations are not captured.
+
+Distributable loops live as import-safe modules under `.orca/loops/` and export `defineLoop({ name, source, sink, onTrigger })`. Use `orca loops` to list them, `orca run <loop>` to run one firing, and `orca serve <loop>` to host the trigger. `orca run` and served children share one firing contract for event decoding, `defineLoop().run`, sink emission, diagnostics, and stop-reason exit codes.
 
 Start with the full guide: [Loops](docs/loops.md). It covers the first-loop tutorial, presets, custom measures, state stores, fan-out/fan-in, loop modules, `orca run/serve/loops`, recipes, troubleshooting, and migration from legacy workflow scripts.
 
@@ -175,7 +177,7 @@ orca --version
 | --- | --- |
 | `<flow.ts>` | Legacy script path: import and run a flow file (unchanged behavior) |
 | `run <loop>` | Run a loop once. `<loop>` is a loop module path or a registered loop name; exit code reflects the stop reason |
-| `serve <loop>` | Run a thin supervisor that owns the loop's trigger `Source` and spawns one isolated child process per firing |
+| `serve <loop>` | Run a thin supervisor that owns the loop's trigger `Source` and spawns one isolated child process per firing through the shared firing contract |
 | `loops` | Discover and list loops from `.orca/loops/` without firing any trigger, backend, or sink |
 
 | Option | Meaning |
@@ -221,8 +223,8 @@ pipeline:
 | Skill | Purpose |
 | --- | --- |
 | `skills/orca-ts-setup` | Install the `orca` binary and verify at least one backend (claude/codex/opencode/pi) is authenticated; re-runnable as a doctor |
-| `skills/orca-ts-author` | Detect the target repo's real test/lint commands, interview for the workflow or loop shape, generate an artifact that typechecks, and enforce verification gates |
-| `skills/orca-ts-flow` | Run a saved workflow or loop with monitoring, detect stalls (by progress, not slowness), and heal backend/auth/non-convergence failures within safety bounds |
+| `skills/orca-ts-author` | Detect the target repo's real test/lint commands, interview for the workflow or loop shape, generate an artifact that typechecks, and respect the loop execution/source/sink contracts |
+| `skills/orca-ts-flow` | Run a saved workflow or loop with monitoring, detect stalls from progress/context-pressure evidence rather than slowness, and heal backend/auth/non-convergence failures within safety bounds |
 
 ### Install The Skills
 

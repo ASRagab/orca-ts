@@ -5,7 +5,6 @@ import { FLOW_ARGS_ENV } from "../flow/args.ts";
 import { unsupportedFeature, type RuntimeError } from "../model/index.ts";
 import {
   discoverLoops,
-  exitCodeForRun,
   formatLoopListing,
   listLoops,
   loadDefinition,
@@ -13,6 +12,7 @@ import {
   type LoopRunError,
   type ModuleImporter
 } from "../loop/index.ts";
+import { decodeLoopEvent, runLoopFiring } from "../loop/firing.ts";
 import { parseCliArgs, type CliArgs } from "./args.ts";
 import { ORCA_VERSION } from "./version.ts";
 
@@ -137,15 +137,10 @@ async function runLoop(target: string): Promise<void> {
     return;
   }
   const definition = loaded.value;
-  const outcome = await definition.run(readLoopEvent());
-  if (outcome.isErr()) {
-    process.stderr.write(`orca: loop "${definition.name}" failed: ${describeError(outcome.error)}\n`);
-  } else {
-    process.stderr.write(
-      `orca: loop "${definition.name}" stopped (${outcome.value.stopReason}) after ${String(outcome.value.iterations)} iteration(s)\n`
-    );
-  }
-  process.exitCode = exitCodeForRun(outcome);
+  const firing = await runLoopFiring(definition, decodeLoopEvent(), {
+    writeDiagnostic: (message) => process.stderr.write(message),
+  });
+  process.exitCode = firing.exitCode;
 }
 
 /** `orca serve <loop>`: a thin supervisor owning the trigger, spawning a child per firing (D8). */
@@ -187,20 +182,6 @@ async function loopImporter(): Promise<ModuleImporter> {
     const module: unknown = await import(pathToFileURL(absolutePath).href);
     return module as Record<string, unknown>;
   };
-}
-
-/** A one-shot `orca run` reads its trigger event from the environment (set by the serve child). */
-function readLoopEvent(): unknown {
-  const raw = process.env.ORCA_LOOP_EVENT;
-  if (raw === undefined) {
-    return undefined;
-  }
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return parsed;
-  } catch {
-    return raw;
-  }
 }
 
 /** Resolve when the supervisor receives a termination signal. */

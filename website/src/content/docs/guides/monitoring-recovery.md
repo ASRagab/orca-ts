@@ -81,8 +81,13 @@ interface CycleProgress {
   readonly stopReasonSoFar: CycleStopStatus; // LoopStopReason | "running"
   readonly branches?: readonly BranchProgress[];
   readonly cumulativeUsage: TokenUsageSummary;
+  readonly contextPressure?: LoopContextPressure;
 }
 ```
+
+`contextPressure` records loop-execution evidence for context management: offload count,
+compaction stages, token count before/after compaction, and observation count. Missing
+backend usage is still reported as `unknown`, not zero.
 
 ### Outcome verdicts
 

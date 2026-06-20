@@ -13,3 +13,6 @@ tests/ai-slop-cleanup-workflow.test.ts
 
 # Astro generated metadata
 website/.astro/
+
+# Compound Engineering local config
+.compound-engineering/*.local.yaml

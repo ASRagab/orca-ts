@@ -3,10 +3,11 @@ import type { Result } from "neverthrow";
 import type { AutonomousRequest, LlmBackend } from "../../backends/index.ts";
 import type { FlowOverrides } from "../../flow/index.ts";
 import type { BackendTag, RuntimeError, Usage } from "../../model/index.ts";
+import type { LoopExecutionContextOptions, LoopContextPressure } from "../execution.ts";
 import type { TerminationContractError } from "../termination-contract.ts";
 
 // Declarative loop() builder — the Effect-free authoring front door (spec loop-builder).
-// Lowers to flow() + the generic fixLoop convergence primitive. No Effect type may appear
+// Lowers to flow() + loop execution. No Effect type may appear
 // here (design D2 facade gate). The single-cycle case reads like a guarded `while`: no
 // graph, fan-out, Effect, queue, or conversation symbol surfaces in authored source.
 
@@ -78,12 +79,14 @@ export interface LoopCycleReport {
   readonly iteration: number;
   readonly measure: number;
   readonly usage?: Usage;
+  readonly contextPressure?: LoopContextPressure;
 }
 
 /** Flow setup supplied to a run; `overrides` is how tests inject fake accessors (flow-runtime spec). */
 export interface LoopRunOptions {
   readonly args?: readonly string[];
   readonly overrides?: FlowOverrides;
+  readonly context?: LoopExecutionContextOptions;
   /** Optional observability hook; receives a {@link LoopCycleReport} after each completed cycle. */
   readonly onCycle?: (cycle: LoopCycleReport) => void;
 }
@@ -95,7 +98,7 @@ export type LoopRunError = RuntimeError | TerminationContractError;
  * Chainable loop builder. The single-cycle case reads like a guarded `while` and needs no
  * graph/fan-out/Effect knowledge. `.reason()` is the single LLM verb; `.step()` is a
  * deterministic transform; `.measure()`/`.until()` set the termination variant; `.guard()`
- * adds seatbelts. `.run()` lowers to `flow()` + generic `fixLoop()`.
+ * adds seatbelts. `.run()` lowers to `flow()` + loop execution.
  */
 export interface LoopBuilder<S = unknown> {
   /** The single LLM verb. Drives a backend autonomously each cycle; hides the conversation. */

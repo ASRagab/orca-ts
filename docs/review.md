@@ -52,7 +52,7 @@ async function reviewAndFixStrategy(
 ): Promise<Result<ReviewLoopSummary, RuntimeError>>;
 ```
 
-The review-and-fix `.until()` strategy over the generic `fixLoop` (design D7): one review pass collects issues, then `fixLoop` drives the fixable-issue count to zero. A two-phase state runs reviewers exactly once and applies the fix at most once.
+The review-and-fix `.until()` strategy runs over loop execution: one review pass collects issues, then the loop execution interface drives the fixable-issue count to zero. A two-phase state runs reviewers exactly once and applies the fix at most once. `fixLoop` remains public for direct convergence callers and delegates its generic recurrence through the same loop execution path.
 
 ### Result shapes
 
@@ -77,7 +77,7 @@ interface ReviewLoopSummary {
 
 `fixLoop` is the generic convergence primitive: iterate `evaluate → action → fix` until the state converges or a guard fires. It has two overloads.
 
-**Generic-state overload** (used by `sequentialTaskStrategy` and `reviewAndFixStrategy`):
+**Generic-state overload** (kept for direct callers and implemented over loop execution):
 
 ```ts
 function fixLoop<State, Action extends FixLoopAction = FixLoopAction>(

@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { err, ok, type Result } from "neverthrow";
+import { executeLoop, type LoopExecutionAction } from "../loop/execution.ts";
 import type { RuntimeError } from "../model/index.ts";
-import { fixLoop, type FixLoopAction } from "../review/index.ts";
 import { createFsTool, type FsTool } from "../tools/index.ts";
 
 export interface PlanTask {
@@ -40,9 +40,9 @@ export async function recoverPlan(
   return await fsTool.readText(path);
 }
 
-const IMPLEMENT_TASK_ACTION: FixLoopAction = { identity: "implement-task", inputs: null };
+const IMPLEMENT_TASK_ACTION: LoopExecutionAction = { identity: "implement-task", inputs: null };
 
-/** Sequential-task `.until()` strategy over the generic {@link fixLoop} (design D7):
+/** Sequential-task `.until()` strategy over loop execution (design D7):
  * drive the pending-task count to zero, implementing one task per cycle and
  * stopping at the first typed failure. */
 export async function sequentialTaskStrategy(
@@ -52,11 +52,11 @@ export async function sequentialTaskStrategy(
   const completed: string[] = [];
   let index = 0;
 
-  const loop = await fixLoop<{ readonly pending: number }>({
+  const loop = await executeLoop<{ readonly pending: number }>({
     evaluate: () => Promise.resolve(ok({ pending: tasks.length - index })),
     converged: (state) => state.pending === 0,
     nextAction: (state) => (state.pending === 0 ? undefined : IMPLEMENT_TASK_ACTION),
-    fix: async () => {
+    execute: async () => {
       const task = tasks[index];
       if (task === undefined) {
         return ok({});

@@ -4,12 +4,13 @@ import { err, ok, type Result } from "neverthrow";
 import type { RuntimeError } from "../../model/index.ts";
 import { createFsTool, type FsTool } from "../../tools/index.ts";
 import { parseManifest, type TaskManifest } from "./manifest.ts";
-import type { StateHash, StateReducer, StateStore } from "./port.ts";
+import type { BranchWritableStateStore, StateHash, StateReducer } from "./port.ts";
 
 // `snapshot` is the zero-config default adapter (design D4): the whole manifest is
 // written as JSON to `.orca/state-<hash>.json` per cycle — human-readable,
-// git-diffable, zero deps. `branch` = copy-on-fanout, `merge` = reducer (the only
-// merge point), `history` = the in-process cycle stream. The snapshot adapter
+// git-diffable, zero deps. `branch` = copy-on-fanout, `saveBranch` = non-history
+// branch result write, `merge` = reducer (the only merge point), `history` = the
+// in-process cycle stream. The snapshot adapter
 // trades durability for simplicity: an interrupt loses the current cycle, so the
 // monitor history lives in memory; finer per-step resume is the `sqlite` adapter.
 
@@ -33,7 +34,7 @@ export function statePath(root: string, hash: StateHash): string {
   return join(root, ".orca", `state-${hash}.json`);
 }
 
-export function createSnapshotStore(options: SnapshotStoreOptions): StateStore {
+export function createSnapshotStore(options: SnapshotStoreOptions): BranchWritableStateStore {
   const { root } = options;
   const fsTool = options.fsTool ?? createFsTool();
   const cycles: StateHash[] = [];
@@ -95,6 +96,18 @@ export function createSnapshotStore(options: SnapshotStoreOptions): StateStore {
         return err(written.error);
       }
       return ok(hash);
+    },
+
+    async saveBranch(branch, state) {
+      const source = await read(branch);
+      if (source.isErr()) {
+        return err(source.error);
+      }
+      const validated = parseManifest(state);
+      if (validated.isErr()) {
+        return err(validated.error);
+      }
+      return write(validated.value);
     },
 
     async merge(branches, reducer: StateReducer<TaskManifest>) {

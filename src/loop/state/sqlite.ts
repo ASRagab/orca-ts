@@ -4,7 +4,7 @@ import { err, ok, type Result } from "neverthrow";
 import type { RuntimeError } from "../../model/index.ts";
 import { parseManifest, type TaskManifest } from "./manifest.ts";
 import { stateHash } from "./snapshot.ts";
-import type { StateHash, StateReducer, StateStore } from "./port.ts";
+import type { BranchWritableStateStore, StateHash, StateReducer } from "./port.ts";
 
 // `sqlite` is the escalate-for-durability adapter (design D4): per-step checkpoints
 // to a single WAL file plus lease-based crash recovery — finer resume than
@@ -14,10 +14,10 @@ import type { StateHash, StateReducer, StateStore } from "./port.ts";
 // `snapshot`: loop code targets the port, so selecting this adapter needs no change
 // to a loop definition. State lives in three tables:
 //   - `snapshots(hash, manifest)` — content-addressed manifest JSON (checkpoints AND
-//     branch copies). Reuses `stateHash` so a manifest hashes identically across
-//     adapters; `INSERT OR REPLACE` keeps equal manifests deduplicated.
+//     branch copies/results). Reuses `stateHash` so a manifest hashes identically
+//     across adapters; `INSERT OR REPLACE` keeps equal manifests deduplicated.
 //   - `history(seq, hash, created_at)` — the ordered cycle stream (time-travel). Only
-//     `checkpoint` appends; `branch` copies do NOT, matching `snapshot` history.
+//     `checkpoint` appends; `branch`/`saveBranch` copies do NOT, matching `snapshot` history.
 //   - `lease(owner, heartbeat)` — a single advisory row for crash recovery, NOT a
 //     write lock: content-addressed snapshots + append-only history make concurrent
 //     writers safe-but-interleaved. A live foreign lease is refused at open; a stale
@@ -53,7 +53,7 @@ export interface SqliteStoreOptions {
  * extra members are NOT part of the port — loop code targets `StateStore` and never
  * sees them, so swapping `snapshot` <-> `sqlite` needs no loop-definition change.
  */
-export interface SqliteStore extends StateStore {
+export interface SqliteStore extends BranchWritableStateStore {
   /** This runner's lease owner id. */
   readonly owner: string;
   /** Refresh the lease heartbeat mid-step so a long step keeps its lease;
@@ -193,6 +193,24 @@ export function createSqliteStore(options: SqliteStoreOptions): Result<SqliteSto
       // instead of colliding with `from` under content addressing.
       const hash = createHash("sha256").update(`${from}:${randomUUID()}`).digest("hex").slice(0, 12);
       const written = writeSnapshot(hash, source.value);
+      if (written.isErr()) {
+        return Promise.resolve(err(written.error));
+      }
+      return Promise.resolve(ok(hash));
+    },
+
+    saveBranch(branch, state) {
+      const source = readSnapshot(branch);
+      if (source.isErr()) {
+        return Promise.resolve(err(source.error));
+      }
+      const validated = parseManifest(state);
+      if (validated.isErr()) {
+        return Promise.resolve(err(validated.error));
+      }
+      const manifest = validated.value;
+      const hash = stateHash(manifest);
+      const written = writeSnapshot(hash, manifest);
       if (written.isErr()) {
         return Promise.resolve(err(written.error));
       }
