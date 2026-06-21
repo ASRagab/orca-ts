@@ -9,7 +9,7 @@
 //
 // Stack-agnostic: GATE commands are whatever THIS repo uses. Trigger:
 //   orca .orca/workflows/<name>.ts --backend <tag>
-import { command, fixLoop, flow, flowArgs, llm, ok, selectBackend } from "orca-ts";
+import { command, fixLoop, flow, flowArgs, llm, ok, selectBackend } from "@twelvehart/orca-ts";
 
 interface Cmd {
   readonly command: string;

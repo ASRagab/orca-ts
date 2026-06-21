@@ -6,7 +6,7 @@ description: Build a copyable autonomous flow that selects a backend at run time
 Create `hello.ts`:
 
 ```ts
-import { flow, llm, selectBackend } from "orca-ts";
+import { flow, llm, selectBackend } from "@twelvehart/orca-ts";
 
 await flow()(async () => {
   const selected = selectBackend({

@@ -18,7 +18,7 @@ orca .orca/workflows/my-workflow.ts --backend codex -- "task input"
 Use `flowArgs()` for user input:
 
 ```ts
-import { flow, flowArgs } from "orca-ts";
+import { flow, flowArgs } from "@twelvehart/orca-ts";
 
 const task = flowArgs().join(" ");
 

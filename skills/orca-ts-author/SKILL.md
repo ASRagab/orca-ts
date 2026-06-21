@@ -78,7 +78,7 @@ accept a bare answer. Never dump all axes at once.
    - `selectBackend({ default })` tag = the verified backend;
    - the `GATE` array = the **confirmed target-repo commands** (`command` + `args`);
    - the prompt/objective/title/pathspec for the archetype.
-4. Apply every `gotchas.md` rule as you fill: import from `"orca-ts"`; narrow
+4. Apply every `gotchas.md` rule as you fill: import from `"@twelvehart/orca-ts"`; narrow
    `outcome.type`; `selected.shutdown?.()` in a `finally`; `fixLoop` issues carry
    `fixable`; no-progress detection is explicit; deprecated task/review wrappers
    are not used in new artifacts; loop modules stay import-safe; `loop()` and
@@ -92,10 +92,10 @@ bash skills/orca-ts-author/scripts/orca-typecheck-flow.sh .orca/workflows/<name>
 bash skills/orca-ts-author/scripts/orca-typecheck-flow.sh .orca/loops/<name>.ts
 ```
 
-- **OK** → the flow typechecks against `orca-ts`; proceed.
+- **OK** → the flow typechecks against `@twelvehart/orca-ts`; proceed.
 - **FAILED** → read the error, fix per `gotchas.md`, re-run (bounded retries).
   **Never hand back a flow that fails typecheck.**
-- **SKIPPED** (no `tsconfig.json`/`orca-ts` dep in the target — the common
+- **SKIPPED** (no `tsconfig.json`/`@twelvehart/orca-ts` dep in the target — the common
   non-TS case) → you cannot locally typecheck. Run the **self-audit checklist**
   at the end of `gotchas.md` instead, and record the skipped-typecheck note in
   the runbook (§6). The bundled templates are CI-typecheck-gated, so a careful

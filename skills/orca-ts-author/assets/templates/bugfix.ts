@@ -8,7 +8,7 @@
 //   - GATE       : detected target-repo verification commands (>=1 test, >=1 lint)
 //   - BUG_REPORT : the bug description / reproduction notes
 //   - default backend
-import { command, fixLoop, flow, flowArgs, llm, ok, selectBackend } from "orca-ts";
+import { command, fixLoop, flow, flowArgs, llm, ok, selectBackend } from "@twelvehart/orca-ts";
 
 interface Cmd {
   readonly command: string;

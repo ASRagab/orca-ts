@@ -36,7 +36,7 @@ primitive, but direct `executeLoop` is internal and not part of authored flows.
 Save this as `.orca/loops/countdown.ts`:
 
 ```ts
-import { defineLoop, loop, manual, ok, stdout, times } from "orca-ts";
+import { defineLoop, loop, manual, ok, stdout, times } from "@twelvehart/orca-ts";
 
 interface Countdown {
   remaining: number;
@@ -296,7 +296,7 @@ See [`examples/loop-persisted-state.ts`](../examples/loop-persisted-state.ts)
 for a checked snapshot-store branch/merge example.
 
 ```ts
-import { createSqliteStore, type TaskManifest } from "orca-ts";
+import { createSqliteStore, type TaskManifest } from "@twelvehart/orca-ts";
 
 const store = createSqliteStore({ path: "./.orca/state.db" });
 if (store.isErr()) throw store.error;
@@ -324,7 +324,7 @@ See [`examples/loop-served-trigger.ts`](../examples/loop-served-trigger.ts) for
 an import-safe module example.
 
 ```ts
-import { defineLoop, ok, stdout, watch } from "orca-ts";
+import { defineLoop, ok, stdout, watch } from "@twelvehart/orca-ts";
 
 export default defineLoop({
   name: "watch-src",

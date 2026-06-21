@@ -46,7 +46,7 @@ not start a source, backend, or sink.
 
 There is **no `--monitor` CLI flag** — an artifact opts into monitoring itself. The
 bundled persistent-multitask / cleanup templates use `WorkflowMonitor` (from
-`orca-ts`) to write `.orca/monitoring/<runId>.json` (per-task/file verdict,
+`@twelvehart/orca-ts`) to write `.orca/monitoring/<runId>.json` (per-task/file verdict,
 duration, iterations, usage when the backend reports it) and print
 `▶ monitor log: <path>` at the end. A flow authored without `WorkflowMonitor`
 writes no JSON — monitor it via the persistent plan + git instead (§2). The

@@ -146,7 +146,7 @@ run_smoke() {
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/orca-smoke.XXXXXX")"
   flow="$tmp/ping.ts"
   cat > "$flow" <<'TS'
-import { flow, selectBackend, llm } from "orca-ts";
+import { flow, selectBackend, llm } from "@twelvehart/orca-ts";
 await flow([])(async () => {
   const s = selectBackend({ default: "claude" });
   try {

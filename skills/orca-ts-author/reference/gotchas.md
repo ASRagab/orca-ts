@@ -6,11 +6,11 @@ flow back (and before the typecheck gate, when one is reachable).
 
 ## Generation rules
 
-1. **Import from `"orca-ts"`** — the package name, not a relative `../src/...`
-   path. The standalone binary resolves `orca-ts` through its embedded shim; a
+1. **Import from `"@twelvehart/orca-ts"`** — the package name, not a relative `../src/...`
+   path. The standalone binary resolves `@twelvehart/orca-ts` through its embedded shim; a
    relative path only works inside this repo. The in-repo examples import from
    `../src/index.ts`; **shipped flows must not**.
-2. **One `flow(...)` call wraps everything.** Pass `flowArgs()` (from `orca-ts`)
+2. **One `flow(...)` call wraps everything.** Pass `flowArgs()` (from `@twelvehart/orca-ts`)
    — never `process.argv`. The CLI puts the flow path and its own flags
    (`--backend`, …) in `process.argv`; `flowArgs()` returns only the user's task
    tokens (everything after `--`), so `orca flow.ts --backend codex -- fix bug`
@@ -34,9 +34,9 @@ flow back (and before the typecheck gate, when one is reachable).
    `fingerprint` no-progress detection for repair loops (rule 9).
 7. **`Result` discipline.** Tool/loop calls return a `Result`; use
    `.isErr()` / `.isOk()` / `.value` / `.error`, or `ok(...)`/`err(...)` to
-   build them. Import `ok`/`err` (and the `Result` type) **from `"orca-ts"`** —
+   build them. Import `ok`/`err` (and the `Result` type) **from `"@twelvehart/orca-ts"`** —
    never from `"neverthrow"` directly. The standalone binary embeds only the
-   `orca-ts` surface; a bare `neverthrow` import crashes a flow in a target repo
+   `@twelvehart/orca-ts` surface; a bare `neverthrow` import crashes a flow in a target repo
    that doesn't happen to have `node_modules/neverthrow`.
 8. **No new legacy task wrappers.** `implementTaskLoop` and
    `runReviewAndFixLoop` are deprecated compatibility wrappers that emit
@@ -100,7 +100,7 @@ flow back (and before the typecheck gate, when one is reachable).
 
 Before declaring a generated flow done, confirm each:
 
-- [ ] Imports come from `"orca-ts"` (no `../src/...`, no bare `neverthrow`); `ok`/`err`/`Result` from `"orca-ts"`.
+- [ ] Imports come from `"@twelvehart/orca-ts"` (no `../src/...`, no bare `neverthrow`); `ok`/`err`/`Result` from `"@twelvehart/orca-ts"`.
 - [ ] Exactly one `flow(flowArgs())(async () => { … })`; task input read via `flowArgs()`, not `process.argv`; no accessor calls at module scope.
 - [ ] For loop modules, no top-level `flow(...)`; exactly one exported `defineLoop(...)`; no source start, backend run, sink emit, or repo mutation at import.
 - [ ] A repo-mutating flow guards the tree: clean-baseline/auto-stash, feature branch before commit/push, iteration-scoped revert, off-target detection; no auto-destructive git ops.

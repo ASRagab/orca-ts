@@ -8,7 +8,7 @@ workflow or loop: pick the artifact shape, copy its template, fill the labelled
 SLOTS, run the self-audit (`gotchas.md`), then save it to `.orca/workflows/` or
 `.orca/loops/`.
 
-Every template imports from `"orca-ts"`. Mutating templates wire the **target
+Every template imports from `"@twelvehart/orca-ts"`. Mutating templates wire the **target
 repo's own** test + lint commands as a verification gate, and any template that
 may run on OpenCode shuts the managed server down in a `finally`. The trigger is
 always the standalone binary — no dependency on the target repo's package
@@ -54,7 +54,7 @@ tasks explicitly; each task implements then converges `GATE` in its own
 checked off (`[x]`) in the persisted plan and re-running recovers it**
 (`recoverPlan`), skipping done tasks — this is the crash-resume path
 `orca-ts-flow` relies on. The template instantiates `WorkflowMonitor` (from
-`orca-ts`) and writes `.orca/monitoring/<runId>.json` (per-task verdict,
+`@twelvehart/orca-ts`) and writes `.orca/monitoring/<runId>.json` (per-task verdict,
 duration, iterations) in a `finally`, so `orca-ts-flow` gets real per-run
 outcomes and `scripts/summarize-run.ts` can summarize them. Slots: `OBJECTIVE`,
 `GATE`, default backend.

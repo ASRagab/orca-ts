@@ -12,7 +12,7 @@ description: Install Orca, write a first flow, and run it with a backend.
 ## Install the binary
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ASRagab/orca-ts/main/install.sh | bash
+curl -fsSL https://github.com/ASRagab/orca-ts/releases/latest/download/install.sh | bash
 orca --version
 ```
 
@@ -20,13 +20,13 @@ Pin a release or install directory when needed:
 
 ```bash
 ORCA_VERSION=0.1.0 ORCA_INSTALL_DIR="$HOME/.local/bin" \
-  bash <(curl -fsSL https://raw.githubusercontent.com/ASRagab/orca-ts/main/install.sh)
+  bash <(curl -fsSL https://github.com/ASRagab/orca-ts/releases/download/v0.1.0/install.sh)
 ```
 
 ## Write `hello.ts`
 
 ```ts
-import { flow, llm, selectBackend } from "orca-ts";
+import { flow, llm, selectBackend } from "@twelvehart/orca-ts";
 
 await flow()(async () => {
   const selected = selectBackend({ default: "claude" });

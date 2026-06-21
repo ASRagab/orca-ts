@@ -22,8 +22,8 @@ const root = process.env.ORCA_FACADE_GATE_ROOT ?? process.cwd();
 
 // Generated declarations to scan (built by `bun run build:types`).
 const DECLARATION_TARGETS = [
-  "dist/index.d.ts", // root runtime export (orca-ts)
-  "dist/loop/index.d.ts", // explicit loop export surface (orca-ts/loop)
+  "dist/index.d.ts", // root runtime export (@twelvehart/orca-ts)
+  "dist/loop/index.d.ts", // explicit loop export surface (@twelvehart/orca-ts/loop)
 ];
 
 // Authored flow/workflow files to scan.

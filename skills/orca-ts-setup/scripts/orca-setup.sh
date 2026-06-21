@@ -11,7 +11,7 @@
 # Prints the resolved binary path and version on success.
 set -uo pipefail
 
-INSTALL_URL="https://raw.githubusercontent.com/ASRagab/orca-ts/main/install.sh"
+INSTALL_URL="https://github.com/ASRagab/orca-ts/releases/latest/download/install.sh"
 
 confirm() {
   local bin="$1" v

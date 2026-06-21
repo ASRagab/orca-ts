@@ -14,7 +14,7 @@
 //   - default backend
 //
 // Usage: orca .orca/workflows/<name>.ts -- "<task prompt or owner/repo#123>"
-import { command, fixLoop, flow, flowArgs, fs, gh, llm, ok, selectBackend } from "orca-ts";
+import { command, fixLoop, flow, flowArgs, fs, gh, llm, ok, selectBackend } from "@twelvehart/orca-ts";
 
 interface Cmd {
   readonly command: string;

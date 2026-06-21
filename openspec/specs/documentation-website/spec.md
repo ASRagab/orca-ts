@@ -58,7 +58,7 @@ troubleshooting, examples, and reference.
 #### Scenario: User installs Orca
 
 - **WHEN** a user reads installation content
-- **THEN** the website documents the standalone binary path, typed Git/source
+- **THEN** the website documents the standalone binary path, typed npm package
   authoring path, source checkout path, and Agent Skills installation path
 
 #### Scenario: User writes a flow
@@ -88,8 +88,8 @@ SHALL keep deferred or unsupported paths explicit.
 #### Scenario: User chooses an install path
 
 - **WHEN** a user reads install documentation
-- **THEN** the website does not present npm publishing, `bunx -p orca-ts`, or
-  registry tarballs as available release paths while npm publishing is deferred
+- **THEN** the website presents `@twelvehart/orca-ts` as the typed authoring
+  package and GitHub Release binaries as the zero-dependency execution path
 
 #### Scenario: User chooses a backend
 

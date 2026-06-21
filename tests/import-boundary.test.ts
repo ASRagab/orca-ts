@@ -10,8 +10,8 @@ const TestHelperExports = [
   "readJsonFixture"
 ] as const;
 
-const PackageRootSpecifier: string = "orca-ts";
-const PackageTestingSpecifier: string = "orca-ts/testing";
+const PackageRootSpecifier: string = "@twelvehart/orca-ts";
+const PackageTestingSpecifier: string = "@twelvehart/orca-ts/testing";
 
 describe("public import boundary", () => {
   test("root runtime entry does not export test helpers", async () => {

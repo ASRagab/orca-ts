@@ -1,4 +1,4 @@
-import { defineLoop, err, loop, ok, stdout, times, watch, type WatchEvent } from "orca-ts";
+import { defineLoop, err, loop, ok, stdout, times, watch, type WatchEvent } from "@twelvehart/orca-ts";
 
 interface CountState {
   readonly count: number;

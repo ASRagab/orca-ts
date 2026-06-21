@@ -1,6 +1,6 @@
 # orca-ts flow DSL — verbs, types, shapes
 
-Everything here is exported from the package root: `import { … } from "orca-ts"`.
+Everything here is exported from the package root: `import { … } from "@twelvehart/orca-ts"`.
 A flow is a TypeScript file the `orca` binary imports and runs. Author against
 this reference; the templates in `assets/templates/` are the worked examples.
 
@@ -9,7 +9,7 @@ this reference; the templates in `assets/templates/` are the worked examples.
 Every flow is one call to `flow(...)` wrapping an async body:
 
 ```ts
-import { flow, flowArgs } from "orca-ts";
+import { flow, flowArgs } from "@twelvehart/orca-ts";
 
 await flow(flowArgs())(async () => {
   // … flow body …
@@ -31,7 +31,7 @@ await flow(flowArgs())(async () => {
 ## Backends and conversations
 
 ```ts
-import { llm, selectBackend, claude, codex, opencode, pi } from "orca-ts";
+import { llm, selectBackend, claude, codex, opencode, pi } from "@twelvehart/orca-ts";
 ```
 
 Two ways to pick a backend:
@@ -85,7 +85,7 @@ Non-success types include `cancelled` and failure variants — never read
 ### `loop()` — converge a measured state
 
 ```ts
-import { loop, untilGatesGreen, type GatesState } from "orca-ts";
+import { loop, untilGatesGreen, type GatesState } from "@twelvehart/orca-ts";
 
 const result = await loop<GatesState>("gate-repair")
   .reason(selected.backend, { prompt: "Fix the next failing gate." })
@@ -112,7 +112,7 @@ const result = await loop<GatesState>("gate-repair")
 ### Fan-out / fan-in
 
 ```ts
-import { fanOut, fanIn } from "orca-ts";
+import { fanOut, fanIn } from "@twelvehart/orca-ts";
 ```
 
 Use `fanOut({ state, branches, maxConcurrency })` for bounded parallel branch
@@ -124,7 +124,7 @@ cycle can continue.
 ### Loop state stores
 
 ```ts
-import { createSnapshotStore, createSqliteStore } from "orca-ts";
+import { createSnapshotStore, createSqliteStore } from "@twelvehart/orca-ts";
 ```
 
 The base `StateStore` port is `load`, `checkpoint`, `branch`, `merge`, and
@@ -139,7 +139,7 @@ recovery. DBOS and Dolt are not selectable.
 ### `defineLoop()` — reusable loop modules
 
 ```ts
-import { defineLoop, err, loop, ok, stdout, times, watch } from "orca-ts";
+import { defineLoop, err, loop, ok, stdout, times, watch } from "@twelvehart/orca-ts";
 
 export default defineLoop({
   name: "refresh-docs",
@@ -164,7 +164,7 @@ and `Sink` implementations should observe public events/outputs only.
 ### `fixLoop` — converge a gate
 
 ```ts
-import { fixLoop } from "orca-ts";
+import { fixLoop } from "@twelvehart/orca-ts";
 
 const loop = await fixLoop<MyIssue>(
   async () => ok(issues),        // evaluate: Result<readonly Issue[], RuntimeError>; [] === converged
@@ -198,7 +198,7 @@ strategy when the state is naturally cyclic.
 ## Tools (accessors)
 
 Call inside the flow body. All return `Result`s (build/unwrap with `ok`/`err`/
-`.isErr()`, re-exported from `"orca-ts"`) except `command`/`terminal`.
+`.isErr()`, re-exported from `"@twelvehart/orca-ts"`) except `command`/`terminal`.
 
 | Accessor | Key methods | Returns |
 |---|---|---|
@@ -215,7 +215,7 @@ test/lint/build commands as verification gates. Treat a `result.type !== "succes
 ## Structured output with Zod
 
 ```ts
-import { z } from "orca-ts";
+import { z } from "@twelvehart/orca-ts";
 
 const ReviewSchema = z.object({
   issues: z.array(z.object({ message: z.string(), fixable: z.boolean() })),
@@ -230,7 +230,7 @@ output for tool-using turns may need post-hoc parsing of `outcome.result.output`
 ## Monitoring
 
 ```ts
-import { WorkflowMonitor } from "orca-ts";
+import { WorkflowMonitor } from "@twelvehart/orca-ts";
 
 const monitor = new WorkflowMonitor(selected.tag);
 await monitor.stage("setup", async () => { /* … */ });

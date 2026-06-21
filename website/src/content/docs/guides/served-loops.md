@@ -6,7 +6,7 @@ description: Host a loop trigger, isolate each firing in a child process, and pa
 `defineLoop()` packages a source, sink, and one-shot runner into a loop module. Signatures are transcribed from `src/loop/serve.ts` and verified by `bun run docs:symbols`.
 
 ```ts
-import { defineLoop, manual, stdout } from "orca-ts";
+import { defineLoop, manual, stdout } from "@twelvehart/orca-ts";
 
 export default defineLoop({
   name: "example",

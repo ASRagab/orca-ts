@@ -13,7 +13,7 @@
 //   - GATE          : detected target-repo verification commands (>=1 test, >=1 lint)
 //   - EDIT_BRIEF    : what to change in each file
 //   - default backend
-import { command, flow, flowArgs, llm, selectBackend } from "orca-ts";
+import { command, flow, flowArgs, llm, selectBackend } from "@twelvehart/orca-ts";
 
 interface Cmd {
   readonly command: string;

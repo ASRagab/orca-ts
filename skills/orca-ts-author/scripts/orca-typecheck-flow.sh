@@ -4,8 +4,9 @@
 #   orca-typecheck-flow.sh <flow.ts>
 #
 # Typechecks the flow WHEN a TypeScript toolchain is reachable — defined as: the
-# flow's repo has a tsconfig.json and resolves `orca-ts` (as a dependency, or
-# because it IS the orca-ts repo). It does so by writing a scratch tsconfig that
+# flow's repo has a tsconfig.json and resolves `@twelvehart/orca-ts` (as a
+# dependency, or because it IS this package repo). It does so by writing a
+# scratch tsconfig that
 # EXTENDS the repo's own tsconfig (inheriting its lib/types/resolution) and
 # includes only the flow, then running `tsc --noEmit`. In a target repo with no
 # TS setup (e.g. a Python/Go project using only the standalone binary) there is
@@ -42,12 +43,13 @@ while [ "$dir" != "/" ]; do
 done
 [ -z "$proj" ] && skip "no tsconfig.json in the flow's repo (TS toolchain not reachable)"
 
-# orca-ts must resolve from the repo: installed as a dep, or this IS orca-ts.
+# @twelvehart/orca-ts must resolve from the repo: installed as a dep, or this
+# is the package repo.
 resolves=0
-[ -f "$proj/node_modules/orca-ts/package.json" ] && resolves=1
+[ -f "$proj/node_modules/@twelvehart/orca-ts/package.json" ] && resolves=1
 if [ "$resolves" -eq 0 ] && [ -f "$proj/package.json" ] \
-   && grep -q '"name"[[:space:]]*:[[:space:]]*"orca-ts"' "$proj/package.json"; then resolves=1; fi
-[ "$resolves" -eq 0 ] && skip "orca-ts is not a resolvable dependency of this repo"
+   && grep -q '"name"[[:space:]]*:[[:space:]]*"@twelvehart/orca-ts"' "$proj/package.json"; then resolves=1; fi
+[ "$resolves" -eq 0 ] && skip "@twelvehart/orca-ts is not a resolvable dependency of this repo"
 
 # Scratch tsconfig in the repo root (so node_modules + self-reference resolve),
 # extending the repo's own config and checking only the flow.

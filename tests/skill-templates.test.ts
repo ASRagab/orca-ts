@@ -5,7 +5,7 @@ import { runQuiet } from "../src/tools/process.ts";
 
 // Keeps the bundled skill flow templates from drifting out of the runtime API:
 // every template under skills/**/assets/templates/ must typecheck against the
-// in-repo orca-ts (resolved via package self-reference in
+// in-repo @twelvehart/orca-ts package (resolved via package self-reference in
 // tsconfig.skill-templates.json). Mirrors the Scala orca-flow recipes test.
 
 const TEMPLATES_DIR = "skills/orca-ts-author/assets/templates";
@@ -26,7 +26,7 @@ describe("skill flow templates", () => {
     }
   });
 
-  test("all templates typecheck against orca-ts", async () => {
+  test("all templates typecheck against @twelvehart/orca-ts", async () => {
     const tsc = join("node_modules", ".bin", "tsc");
     const result = await runQuiet(tsc, ["--noEmit", "-p", "tsconfig.skill-templates.json"]);
     if (result.isErr()) {

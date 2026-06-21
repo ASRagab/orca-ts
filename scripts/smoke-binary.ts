@@ -21,12 +21,40 @@ const tempDir = await mkdtemp(join(tmpdir(), "orca-binary-smoke-"));
 try {
   await writeFile(
     join(tempDir, "flow.ts"),
-    `import { flow, currentFlowContext } from "orca-ts";\n\nawait flow()(async () => {\n  console.log(\`orca-binary-smoke-ok \${currentFlowContext().cwd}\`);\n});\n`
+    `import { flow, currentFlowContext } from "@twelvehart/orca-ts";
+import { manual } from "@twelvehart/orca-ts/loop";
+import { BackendTagSchema } from "@twelvehart/orca-ts/model";
+
+void manual;
+void BackendTagSchema;
+
+await flow()(async () => {
+  console.log(\`orca-binary-smoke-ok \${currentFlowContext().cwd}\`);
+});
+`
+  );
+  await writeFile(
+    join(tempDir, "legacy-flow.ts"),
+    `import { flow } from "orca-ts";
+import { manual } from "orca-ts/loop";
+import { BackendTagSchema } from "orca-ts/model";
+
+void manual;
+void BackendTagSchema;
+
+await flow()(async () => {
+  console.log("orca-binary-legacy-smoke-ok");
+});
+`
   );
 
   const flow = await mustRun(binary, ["flow.ts"], { cwd: tempDir });
   expectIncludes(flow.stdout, "orca-binary-smoke-ok", "compiled binary flow output");
   expectIncludes(flow.stderr, "missing project typecheck setup", "compiled binary typecheck warning");
+
+  const legacyFlow = await mustRun(binary, ["legacy-flow.ts"], { cwd: tempDir });
+  expectIncludes(legacyFlow.stdout, "orca-binary-legacy-smoke-ok", "compiled binary legacy flow output");
+  expectIncludes(legacyFlow.stderr, "missing project typecheck setup", "compiled binary legacy typecheck warning");
 } finally {
   await rm(tempDir, { recursive: true, force: true });
 }

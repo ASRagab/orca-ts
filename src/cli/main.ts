@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
+import { realpathSync } from "node:fs";
 import { runTypecheck } from "../runner/index.ts";
 import { FLOW_ARGS_ENV } from "../flow/args.ts";
 import { unsupportedFeature, type RuntimeError } from "../model/index.ts";
@@ -27,6 +28,8 @@ const USAGE = [
 const DEFERRED_DBOS_NOTE =
   "durable DBOS mode is deferred — see openspec/changes/add-loop-builder/design.md §D5 (DBOS Bun-compatibility spike). " +
   "Run without --durable/--postgres-url and without `--state dbos` to use the service-free default adapter.";
+const EMBEDDED_RESPAWN_ENV = "ORCA_EMBEDDED_RESPAWNED";
+const PREFLIGHT_DONE_ENV = "ORCA_PREFLIGHT_DONE";
 
 /** Durable DBOS mode is not selectable in this change (spec distribution; design D5). */
 export function deferredDurableError(args: CliArgs): RuntimeError | undefined {
@@ -66,6 +69,9 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   if (!(await preflight(args))) {
     return; // typecheck failed; exit code already set
   }
+  if (await respawnIfEmbeddedFallbackNeeded(args, argv)) {
+    return;
+  }
 
   if (args.command === "loops") {
     await runLoops();
@@ -80,12 +86,16 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return;
   }
   if (args.script !== undefined) {
-    await runFlowScript(args.script);
+    await runFlowScript(args.script, argv);
   }
 }
 
 /** Shared preflight for every command: typecheck (unless skipped) + backend/flow-arg env wiring. */
 async function preflight(args: CliArgs): Promise<boolean> {
+  if (process.env[PREFLIGHT_DONE_ENV] === "1") {
+    return true;
+  }
+
   const typecheck = await runTypecheck({ cwd: process.cwd(), skip: args.skipTypecheck });
   if (typecheck.isErr()) {
     const error = typecheck.error;
@@ -102,7 +112,7 @@ async function preflight(args: CliArgs): Promise<boolean> {
   if (typecheck.value.skipped) {
     if (typecheck.value.reason === "tsc-not-found") {
       process.stderr.write(
-        "orca: missing project typecheck setup; skipping typecheck. Add typescript, tsconfig.json, and a local orca-ts Git/source dependency to enable it.\n"
+        "orca: missing project typecheck setup; skipping typecheck. Add typescript, tsconfig.json, and a local @twelvehart/orca-ts package dependency to enable it.\n"
       );
     }
     process.env.ORCA_TYPECHECK_SKIPPED = "1";
@@ -166,15 +176,19 @@ async function runServe(target: string): Promise<void> {
   await supervisor.value.stop();
 }
 
-/** Legacy flow-script path — unchanged behavior. */
-async function runFlowScript(script: string): Promise<void> {
+/** Legacy flow-script path, with one respawn when the embedded fallback is needed. */
+async function runFlowScript(script: string, argv: readonly string[]): Promise<void> {
   const resolvedScript = resolve(script);
   const { ensureOrcaResolvable } = await import("./embedded.ts");
-  ensureOrcaResolvable(resolvedScript);
+  const registeredFallback = ensureOrcaResolvable(resolvedScript);
+  if (registeredFallback && process.env[EMBEDDED_RESPAWN_ENV] !== "1" && !isBunExecutable()) {
+    await respawnWithEmbeddedFallback(argv);
+    return;
+  }
   await import(pathToFileURL(resolvedScript).href);
 }
 
-/** An embedded-aware importer: register the standalone orca-ts fallback, then import the module. */
+/** An embedded-aware importer: register the standalone package fallback, then import the module. */
 async function loopImporter(): Promise<ModuleImporter> {
   const { ensureOrcaResolvable } = await import("./embedded.ts");
   return async (absolutePath) => {
@@ -182,6 +196,62 @@ async function loopImporter(): Promise<ModuleImporter> {
     const module: unknown = await import(pathToFileURL(absolutePath).href);
     return module as Record<string, unknown>;
   };
+}
+
+async function respawnIfEmbeddedFallbackNeeded(args: CliArgs, argv: readonly string[]): Promise<boolean> {
+  if (process.env[EMBEDDED_RESPAWN_ENV] === "1" || isBunExecutable()) {
+    return false;
+  }
+
+  const { ensureOrcaResolvable } = await import("./embedded.ts");
+  let registeredFallback = false;
+  if (args.script !== undefined) {
+    registeredFallback = ensureOrcaResolvable(resolve(args.script));
+  } else if (args.command === "run" || args.command === "serve") {
+    registeredFallback = ensureOrcaResolvable(loopFallbackProbe(args.loop));
+  } else if (args.command === "loops") {
+    registeredFallback = ensureOrcaResolvable(resolve(".orca", "loops", "__orca_fallback_probe__.ts"));
+  }
+
+  if (!registeredFallback) {
+    return false;
+  }
+  await respawnWithEmbeddedFallback(argv);
+  return true;
+}
+
+function loopFallbackProbe(loopRef: string | undefined): string {
+  if (loopRef !== undefined && (loopRef.includes("/") || loopRef.endsWith(".ts"))) {
+    return resolve(loopRef);
+  }
+  return resolve(".orca", "loops", "__orca_fallback_probe__.ts");
+}
+
+function isBunExecutable(): boolean {
+  const bunPath = Bun.which("bun");
+  if (bunPath === null) {
+    return false;
+  }
+  try {
+    return realpathSync(process.execPath) === realpathSync(bunPath);
+  } catch {
+    return process.execPath === bunPath;
+  }
+}
+
+async function respawnWithEmbeddedFallback(argv: readonly string[]): Promise<void> {
+  const child = Bun.spawn([process.execPath, ...argv], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      [EMBEDDED_RESPAWN_ENV]: "1",
+      [PREFLIGHT_DONE_ENV]: "1"
+    },
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit"
+  });
+  process.exitCode = await child.exited;
 }
 
 /** Resolve when the supervisor receives a termination signal. */

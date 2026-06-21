@@ -28,7 +28,7 @@ import {
   type FixLoopStop,
   type PlanTask,
   type RegressedReason,
-} from "orca-ts";
+} from "@twelvehart/orca-ts";
 
 interface Cmd {
   readonly command: string;

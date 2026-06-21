@@ -35,7 +35,7 @@ Linear requests are verified before delivery. Verification uses the exact raw bo
 Use `linearIssueSource()` for stable issue and comment webhooks.
 
 ```ts
-import { defineLoop, linearIssueSink, linearIssueSource, ok } from "orca-ts";
+import { defineLoop, linearIssueSink, linearIssueSource, ok } from "@twelvehart/orca-ts";
 
 export default defineLoop({
   name: "linear-issue-triage",
@@ -69,7 +69,7 @@ Use `linearAgentSource()` for Linear Agent Sessions. Linear's Agent APIs are Dev
 Agent events normalize created sessions, prompted sessions, activity content, related issue context, stop signals, raw payload, and `dedupeKey`.
 
 ```ts
-import { linear, linearAgentSink, linearAgentSource } from "orca-ts";
+import { linear, linearAgentSink, linearAgentSource } from "@twelvehart/orca-ts";
 
 const source = linearAgentSource({
   webhookSecret: process.env.LINEAR_WEBHOOK_SECRET ?? "",
@@ -95,7 +95,7 @@ Use `linear()` for intermediate Agent Activities or plan updates inside the loop
 Slack remains a separate sink. Compose it locally when a workflow needs both Linear and Slack:
 
 ```ts
-import { err, linearIssueSink, ok, slack, type Sink } from "orca-ts";
+import { err, linearIssueSink, ok, slack, type Sink } from "@twelvehart/orca-ts";
 
 const sink: Sink<{ linear: { issueId: string; finalSummary: string }; slack?: string }> = {
   kind: "linear-issue",

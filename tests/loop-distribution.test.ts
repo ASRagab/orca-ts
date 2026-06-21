@@ -243,7 +243,7 @@ describe("loop firing contract", () => {
     await writeFile(
       loopPath,
       `import { writeFile } from "node:fs/promises";
-import { defineLoop, ok } from "orca-ts";
+import { defineLoop, ok } from "@twelvehart/orca-ts";
 
 const source = {
   kind: "manual",

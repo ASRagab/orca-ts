@@ -21,11 +21,11 @@ remains.
 
 ```ts
 // before
-import { runReviewAndFixLoop } from "orca-ts";
+import { runReviewAndFixLoop } from "@twelvehart/orca-ts";
 const summary = await runReviewAndFixLoop(options);
 
 // after
-import { reviewAndFixStrategy } from "orca-ts";
+import { reviewAndFixStrategy } from "@twelvehart/orca-ts";
 const summary = await reviewAndFixStrategy(options);
 ```
 
@@ -39,11 +39,11 @@ converges when the pending-task count reaches zero.
 
 ```ts
 // before
-import { implementTaskLoop } from "orca-ts";
+import { implementTaskLoop } from "@twelvehart/orca-ts";
 const result = await implementTaskLoop(tasks, implement);
 
 // after
-import { sequentialTaskStrategy } from "orca-ts";
+import { sequentialTaskStrategy } from "@twelvehart/orca-ts";
 const result = await sequentialTaskStrategy(tasks, implement);
 ```
 

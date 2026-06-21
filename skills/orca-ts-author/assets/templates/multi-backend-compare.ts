@@ -7,8 +7,8 @@
 // SLOTS the author skill fills:
 //   - PROMPT   : the task to compare across backends
 //   - BACKENDS : which backends to include
-import { claude, codex, flow, flowArgs, llm, opencode, pi } from "orca-ts";
-import type { LlmBackend } from "orca-ts";
+import { claude, codex, flow, flowArgs, llm, opencode, pi } from "@twelvehart/orca-ts";
+import type { LlmBackend } from "@twelvehart/orca-ts";
 
 const PROMPT = "REPLACE_WITH_PROMPT";
 
