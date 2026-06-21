@@ -3,7 +3,7 @@ title: Distribution And Release
 description: GitHub Release binaries, installer behavior, and tag-driven releases.
 ---
 
-Orca currently ships through GitHub Release binaries. npm publishing is deferred.
+Orca currently ships through GitHub Release binaries.
 
 ## Release assets
 
@@ -32,5 +32,3 @@ Environment variables:
 ## Release process
 
 Releases are tag-driven. A `vX.Y.Z` tag runs the release workflow, verifies the repo, and publishes GitHub Release binaries plus `install.sh`.
-
-Do not add an `NPM_TOKEN` recovery path. If npm publishing returns, it should use Trusted Publishing to a private `@twelvehart` package.

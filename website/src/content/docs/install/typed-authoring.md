@@ -5,7 +5,7 @@ description: Set up a project that typechecks flow files against Orca.
 
 Use typed authoring when you are writing and versioning flows in a project.
 
-Until npm publishing is restored, install the library from Git and run flows with the standalone `orca` binary:
+Run flows with the standalone `orca` binary. Add the package as a dev dependency when the project should provide editor types and run TypeScript checks for versioned flow files:
 
 ```bash
 bun add -d git+https://github.com/ASRagab/orca-ts.git typescript

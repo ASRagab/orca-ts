@@ -5,7 +5,6 @@ Releases are tag-driven. A `vX.Y.Z` tag runs `.github/workflows/release.yml`, wh
 ## One-time setup
 
 1. Confirm the repository has GitHub Actions permission to create releases (`contents: write`).
-2. Leave npm publishing disabled until Trusted Publishing can target a private `@twelvehart` package.
 
 ## Per release
 
@@ -40,8 +39,6 @@ Releases are tag-driven. A `vX.Y.Z` tag runs `.github/workflows/release.yml`, wh
 ## Failed release at 0.x
 
 If a release workflow publishes bad GitHub assets, delete the GitHub release and tag, fix the issue, then re-tag the same version.
-
-Do not publish npm recovery packages from this workflow. Restore npm only through Trusted Publishing to a private `@twelvehart` package.
 
 ## Live backend smoke
 

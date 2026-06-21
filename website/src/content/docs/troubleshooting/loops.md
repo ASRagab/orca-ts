@@ -15,5 +15,3 @@ Read the loop stop reason before changing code:
 | `cancelled` | Check caller or supervisor shutdown. |
 
 If a loop keeps repeating, improve the measure, tighten the state transition, or switch to a purpose-built preset.
-
-DBOS and Dolt are deferred. Remove `--durable`, `--postgres-url`, or `--state dbos` and use the service-free default or sqlite adapter.

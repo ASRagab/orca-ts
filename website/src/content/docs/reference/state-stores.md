@@ -57,5 +57,3 @@ const loaded = await store.load();
 ```
 
 `branch(from)` creates an isolated copy of a checkpoint. `BranchWritableStateStore.saveBranch(branch, state)` writes a branch result by hash without changing `history()` or the default `load()` head. `merge(branches, reducer)` folds branch snapshots back into one state. Store-backed loop fan-out starts from a checkpoint hash, calls `branch()` once per branch, saves successful branch states, then calls `merge()` exactly once at fan-in through the selected reducer. Pure `fanOut`/`fanIn` remains available when only bounded summaries need to stay in memory.
-
-DBOS and Dolt are deferred and are not selectable adapters in this release.

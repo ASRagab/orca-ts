@@ -29,6 +29,6 @@ Use Orca when you want repeatable automation around a coding agent: implement a 
 
 ## Supported boundaries
 
-The current package version is `0.1.0`. The canonical install path is the GitHub Release binary. npm publishing is deferred.
+The current package version is `0.1.0`. The canonical install path is the GitHub Release binary.
 
-Supported live backend tags are `claude`, `codex`, `opencode`, and `pi`. Snapshot and sqlite loop state stores are available; DBOS and Dolt are deferred.
+Supported live backend tags are `claude`, `codex`, `opencode`, and `pi`. Snapshot and sqlite loop state stores are available.

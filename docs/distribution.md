@@ -1,14 +1,10 @@
 # Distribution
 
-Orca currently ships through GitHub Release binaries for common Unix platforms. npm publishing is deferred.
+Orca currently ships through GitHub Release binaries for common Unix platforms.
 
-## Deferred npm Publishing
+## Typed Project Authoring
 
-There is no npm install path in the release workflow right now. Do not document or rely on `bun add orca-ts`, `bunx -p orca-ts`, or registry tarballs as release artifacts.
-
-If npm publishing is restored, it should use npm Trusted Publishing to a private `@twelvehart` package. Do not add an `NPM_TOKEN` workflow path.
-
-For typed project authoring before npm publishing exists, use a Git/source dependency plus the standalone `orca` binary:
+For editor and project typecheck support in source-controlled flows, add an Orca package dependency plus TypeScript, then run with the standalone `orca` binary:
 
 ```bash
 bun add -d git+https://github.com/ASRagab/orca-ts.git typescript
