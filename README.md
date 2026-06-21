@@ -8,7 +8,7 @@ Use Orca TypeScript when you want coding-agent work to be expressed as code inst
 
 ## Status
 
-The package is version `0.1.0`. The canonical install path is the standalone `orca` binary from GitHub Releases. npm publishing is deferred.
+The package is version `0.1.0`. The canonical install path is the standalone `orca` binary from GitHub Releases.
 
 Canonical repository: <https://github.com/ASRagab/orca-ts>
 
@@ -41,7 +41,7 @@ The binary can run a flow that imports from `orca-ts` even when the flow project
 
 ### Install Option 2: Typed Project Authoring
 
-Use this when you are writing and versioning flows in a project. Until npm publishing is restored, install the library from Git and run flows with the standalone `orca` binary.
+Use this when you are writing and versioning flows in a project. Add the package as a dev dependency for editor types and TypeScript checks, then run flows with the standalone `orca` binary.
 
 ```bash
 bun add -d git+https://github.com/ASRagab/orca-ts.git typescript
@@ -190,7 +190,7 @@ orca --version
 
 Loop verbs and the legacy script path share one preflight: the typecheck guard, `--backend`, and the `--` task-arg channel apply to all of them. By default, the CLI typechecks the current project before importing when it can find project typecheck setup: `typescript`, `tsconfig.json`, and a local `orca-ts` Git/source dependency. A zero-project standalone binary flow without `tsconfig.json` skips this guard. Use `--no-typecheck` only when you intentionally want to skip it.
 
-Durable, service-backed loop modes (`--durable`, `--postgres-url`, `--state dbos`) are parsed but rejected with a pointer to the deferral rationale — see [Agent notes](AGENTS.md). The default state adapter needs no service.
+The default state adapter needs no service. Use the sqlite store when a loop needs local crash recovery or longer-lived checkpoint history.
 
 ## Examples
 

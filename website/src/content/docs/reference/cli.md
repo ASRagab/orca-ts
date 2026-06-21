@@ -44,5 +44,3 @@ Valid backend tags are `claude`, `codex`, `opencode`, and `pi`.
 | `budget-exhausted` | `5` | Token budget guard exhausted. |
 | `cancelled` | `6` | Cancelled via signal or `cancel()`. |
 | (build/runtime error) | `70` | The loop failed to run at all. |
-
-Durable service-backed loop flags such as `--durable`, `--postgres-url`, and `--state dbos` are parsed but rejected because DBOS is deferred.

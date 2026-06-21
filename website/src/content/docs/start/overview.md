@@ -13,6 +13,5 @@ Start with the [quickstart](../quickstart/) if you want to run a flow. Start wit
 
 - Package version: `0.1.0`.
 - Canonical install: standalone GitHub Release binary.
-- npm publishing: deferred.
 - Supported backend tags: `claude`, `codex`, `opencode`, and `pi`.
-- Durable loop state: snapshot and sqlite stores; DBOS and Dolt are deferred.
+- Durable loop state: snapshot and sqlite stores.

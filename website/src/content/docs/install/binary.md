@@ -31,5 +31,3 @@ In a zero-project directory with no `tsconfig.json`, the standalone binary skips
 ## Supported release artifacts
 
 Release binaries are GitHub Release tarballs for macOS and Linux on arm64 and x64. Windows and musl/Alpine users should build from source for now.
-
-npm publishing is deferred. Do not use `bunx -p orca-ts`, registry tarballs, or `bun add orca-ts` as release install paths.

@@ -177,7 +177,6 @@ Notes:
   recombination; `saveBranch` is the extra branch-write capability.
 - The snapshot store is simplest to inspect, but it is not the right choice if
   you need automatic resume after a crash.
-- `dbos` and `dolt` are deferred and are not selectable in this release.
 
 ## Fan-Out And Fan-In
 
