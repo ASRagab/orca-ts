@@ -70,7 +70,8 @@ const outcome = await conversation.awaitResult();
 
 ```ts
 if (outcome.type !== "success") {
-  throw new Error(`backend failed: ${outcome.type}`);
+  const detail = outcome.type === "failed" ? JSON.stringify(outcome.error) : (outcome.reason ?? outcome.type);
+  throw new Error(`backend failed: ${detail}`);
 }
 outcome.result.output;      // assistant text
 outcome.result.structured;  // parsed schema payload when `schema` was supplied
@@ -78,7 +79,8 @@ outcome.result.usage;       // { input: number; output: number } | undefined
 ```
 
 Non-success types include `cancelled` and failure variants — never read
-`.result` without narrowing first.
+`.result` without narrowing first. Do not throw only `outcome.type`; failure
+outcomes carry the useful backend error in `outcome.error`.
 
 ## Loop primitives
 

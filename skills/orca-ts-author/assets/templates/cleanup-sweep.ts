@@ -67,7 +67,12 @@ await flow(flowArgs())(async () => {
         continue;
       }
 
-      if (turn.type !== "success" || !entries.some((e) => e.path === file)) {
+      if (turn.type !== "success") {
+        console.log(`  ${file}: ${describeOutcome(turn)}`);
+        continue;
+      }
+
+      if (!entries.some((e) => e.path === file)) {
         console.log(`  ${file}: no change`);
         continue;
       }
@@ -125,4 +130,20 @@ async function runGate(commands: readonly Cmd[]): Promise<string | undefined> {
     if (result.type !== "success") return `${c.command} ${c.args.join(" ")}\n${result.stderr || result.stdout}`;
   }
   return undefined;
+}
+
+function describeOutcome(outcome: { readonly type: string; readonly error?: unknown; readonly reason?: string }): string {
+  if (outcome.type === "failed") return `failed: ${describeUnknown(outcome.error)}`;
+  if (outcome.type === "cancelled") return outcome.reason ? `cancelled: ${outcome.reason}` : "cancelled";
+  return outcome.type;
+}
+
+function describeUnknown(value: unknown): string {
+  if (value instanceof Error) return value.message;
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }

@@ -82,11 +82,11 @@ await flow(flowArgs())(async () => {
       if (impl.type !== "success") {
         monitor.recordFailure({
           file: task.id,
-          error: `implementation failed: ${impl.type}`,
+          error: `implementation failed: ${describeOutcome(impl)}`,
           durationMs: Date.now() - taskStart,
           category: "environment",
         });
-        throw new Error(`${task.id} implementation failed: ${impl.type}`);
+        throw new Error(`${task.id} implementation failed: ${describeOutcome(impl)}`);
       }
 
       const seen = new Set<string>();
@@ -103,7 +103,7 @@ await flow(flowArgs())(async () => {
                 .join("\n")}\nFix it without weakening the gate.`,
             })
             .awaitResult();
-          if (repair.type !== "success") throw new Error(`repair failed: ${repair.type}`);
+          if (repair.type !== "success") throw new Error(`repair failed: ${describeOutcome(repair)}`);
           return ok(undefined);
         },
         { maxIterations: 8, wallClockMs: 10 * 60_000, stalled: (i) => stalled(seen, i) },
@@ -171,8 +171,11 @@ async function loadOrPlanTasks(
       schema: PlanSchema,
     })
     .awaitResult();
-  if (outcome.type !== "success" || !outcome.result.structured) {
-    throw new Error(`planning failed: ${outcome.type}`);
+  if (outcome.type !== "success") {
+    throw new Error(`planning failed: ${describeOutcome(outcome)}`);
+  }
+  if (!outcome.result.structured) {
+    throw new Error("planning failed: missing structured result");
   }
   const { tasks } = PlanSchema.parse(outcome.result.structured);
   const tracked: TrackedTask[] = tasks.map((t) => ({ ...t, done: false }));
@@ -221,4 +224,20 @@ function stalled(seen: Set<string>, issues: readonly GateIssue[]): boolean {
   if (seen.has(signature)) return true;
   seen.add(signature);
   return false;
+}
+
+function describeOutcome(outcome: { readonly type: string; readonly error?: unknown; readonly reason?: string }): string {
+  if (outcome.type === "failed") return `failed: ${describeUnknown(outcome.error)}`;
+  if (outcome.type === "cancelled") return outcome.reason ? `cancelled: ${outcome.reason}` : "cancelled";
+  return outcome.type;
+}
+
+function describeUnknown(value: unknown): string {
+  if (value instanceof Error) return value.message;
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
