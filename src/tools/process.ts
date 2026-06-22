@@ -86,7 +86,7 @@ export async function runQuiet(
     const exitCode = await exit.promise;
     const durationMs = Date.now() - startedAt;
     const result = { stdout, stderr, exitCode, durationMs };
-    if (exitCode === 0 && timeoutMs === undefined) {
+    if (exitCode === 0 && !timeoutState.timedOut) {
       return ok(result);
     }
 

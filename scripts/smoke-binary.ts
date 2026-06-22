@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { runQuiet, type QuietProcOptions, type QuietProcResult } from "../src/tools/process.ts";
@@ -15,6 +15,30 @@ const version = await mustRun(binary, ["--version"]);
 const expectedVersion = `orca ${packageJson.version}\n`;
 if (version.stdout !== expectedVersion) {
   throw new Error(`compiled binary version mismatch: expected ${JSON.stringify(expectedVersion)}, got ${JSON.stringify(version.stdout)}`);
+}
+
+const repoFlowDir = join(process.cwd(), ".orca", `binary-smoke-${String(Date.now())}`);
+try {
+  await mkdir(repoFlowDir, { recursive: true });
+  await writeFile(
+    join(repoFlowDir, "flow.ts"),
+    `import { flow } from "@twelvehart/orca-ts";
+import { manual } from "@twelvehart/orca-ts/loop";
+import { BackendTagSchema } from "@twelvehart/orca-ts/model";
+
+void manual;
+void BackendTagSchema;
+
+await flow()(async () => {
+  console.log("orca-binary-repo-self-smoke-ok");
+});
+`
+  );
+
+  const repoFlow = await mustRun(binary, ["--no-typecheck", join(repoFlowDir, "flow.ts")]);
+  expectIncludes(repoFlow.stdout, "orca-binary-repo-self-smoke-ok", "compiled binary repo workflow output");
+} finally {
+  await rm(repoFlowDir, { recursive: true, force: true });
 }
 
 const tempDir = await mkdtemp(join(tmpdir(), "orca-binary-smoke-"));

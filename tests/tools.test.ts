@@ -80,6 +80,21 @@ describe("runtime tools", () => {
       expect(error.stderr).toBe("Command timed out after 20ms");
     }
   });
+
+  test("runQuiet returns success for a command that exits before its timeout", async () => {
+    const result = await runQuiet(
+      process.execPath,
+      ["--eval", "console.log('before-timeout')"],
+      { timeoutMs: 1000 }
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (result.isOk()) {
+      expect(result.value.exitCode).toBe(0);
+      expect(result.value.stdout).toContain("before-timeout");
+    }
+  });
+
   test("status bar renders plain output when ANSI is unavailable", () => {
     expect(
       renderStatusBar(

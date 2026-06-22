@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import * as root from "../index.ts";
 import * as loop from "../loop/index.ts";
@@ -18,7 +18,10 @@ const RuntimeExports = {
 export function ensureOrcaResolvable(scriptPath: string): boolean {
   const scriptDir = dirname(scriptPath);
   registerEmbeddedRegistry();
-  const missingPackages = [PackageName, LegacyPackageName].filter((specifier) => !hasProjectPackage(specifier, scriptDir));
+  const includeSelfReference = isBunExecutable();
+  const missingPackages = [PackageName, LegacyPackageName].filter(
+    (specifier) => !hasProjectPackage(specifier, scriptDir, includeSelfReference)
+  );
   if (missingPackages.length === 0) {
     return false;
   }
@@ -26,18 +29,30 @@ export function ensureOrcaResolvable(scriptPath: string): boolean {
   return true;
 }
 
-function hasProjectPackage(specifier: string, fromDir: string): boolean {
+function hasProjectPackage(specifier: string, fromDir: string, includeSelfReference: boolean): boolean {
   for (let dir = fromDir; ; dir = dirname(dir)) {
     if (existsSync(join(dir, "node_modules", ...specifier.split("/"), "package.json"))) {
       return true;
     }
-    if (packageJsonName(join(dir, "package.json")) === specifier) {
+    if (includeSelfReference && packageJsonName(join(dir, "package.json")) === specifier) {
       return true;
     }
     const parent = dirname(dir);
     if (parent === dir) {
       return false;
     }
+  }
+}
+
+function isBunExecutable(): boolean {
+  const bunPath = Bun.which("bun");
+  if (bunPath === null) {
+    return false;
+  }
+  try {
+    return realpathSync(process.execPath) === realpathSync(bunPath);
+  } catch {
+    return process.execPath === bunPath;
   }
 }
 
