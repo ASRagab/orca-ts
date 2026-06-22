@@ -15,7 +15,11 @@ const RuntimeExports = {
   "./model": "./model.cjs"
 } as const;
 
-export function ensureOrcaResolvable(scriptPath: string): boolean {
+interface EnsureOrcaResolvableOptions {
+  readonly cleanup?: boolean;
+}
+
+export function ensureOrcaResolvable(scriptPath: string, options: EnsureOrcaResolvableOptions = {}): boolean {
   const scriptDir = dirname(scriptPath);
   registerEmbeddedRegistry();
   const includeSelfReference = isBunExecutable();
@@ -23,9 +27,10 @@ export function ensureOrcaResolvable(scriptPath: string): boolean {
     (specifier) => !hasProjectPackage(specifier, scriptDir, includeSelfReference)
   );
   if (missingPackages.length === 0) {
+    scheduleExistingEmbeddedCleanup(scriptDir);
     return false;
   }
-  registerEmbeddedOrca(scriptDir, missingPackages);
+  registerEmbeddedOrca(scriptDir, missingPackages, options.cleanup ?? true);
   return true;
 }
 
@@ -73,7 +78,7 @@ function registerEmbeddedRegistry(): void {
   });
 }
 
-function registerEmbeddedOrca(scriptDir: string, packageNames: readonly string[]): void {
+function registerEmbeddedOrca(scriptDir: string, packageNames: readonly string[], cleanup: boolean): void {
   const nodeModulesDir = join(scriptDir, "node_modules");
   const createdNodeModules = !existsSync(nodeModulesDir);
   const packageDirs: string[] = [];
@@ -97,12 +102,15 @@ function registerEmbeddedOrca(scriptDir: string, packageNames: readonly string[]
     }
   }
 
-  scheduleCleanup(packageDirs, [...scopeDirs], nodeModulesDir, createdNodeModules);
+  if (cleanup) {
+    scheduleCleanup(packageDirs, [...scopeDirs], nodeModulesDir, createdNodeModules);
+  }
 }
 
 function packageJson(packageName: string): string {
   return JSON.stringify({
     name: packageName,
+    orcaEmbedded: true,
     main: "index.cjs",
     exports: RuntimeExports
   }, null, 2);
@@ -110,6 +118,31 @@ function packageJson(packageName: string): string {
 
 function embeddedModule(name: "root" | "loop" | "model"): string {
   return `const registry = globalThis[Symbol.for("@twelvehart/orca-ts.embedded")];\nif (!registry) throw new Error("orca embedded library is not registered");\nmodule.exports = registry.${name};\n`;
+}
+
+function scheduleExistingEmbeddedCleanup(scriptDir: string): void {
+  const nodeModulesDir = join(scriptDir, "node_modules");
+  const packageDirs = [PackageName, LegacyPackageName]
+    .map((packageName) => join(nodeModulesDir, ...packageName.split("/")))
+    .filter(isEmbeddedPackageDir);
+  if (packageDirs.length === 0) {
+    return;
+  }
+  const scopeDirs = packageDirs
+    .map((packageDir) => dirname(packageDir))
+    .filter((scopeDir) => dirname(scopeDir) === nodeModulesDir);
+  scheduleCleanup(packageDirs, scopeDirs, nodeModulesDir, true);
+}
+
+function isEmbeddedPackageDir(packageDir: string): boolean {
+  try {
+    const parsed = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8")) as {
+      orcaEmbedded?: unknown;
+    };
+    return parsed.orcaEmbedded === true;
+  } catch {
+    return false;
+  }
 }
 
 function scheduleCleanup(

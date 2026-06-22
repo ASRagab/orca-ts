@@ -180,9 +180,10 @@ async function runServe(target: string): Promise<void> {
 async function runFlowScript(script: string, argv: readonly string[]): Promise<void> {
   const resolvedScript = resolve(script);
   const { ensureOrcaResolvable } = await import("./embedded.ts");
-  const registeredFallback = ensureOrcaResolvable(resolvedScript);
-  if (registeredFallback && process.env[EMBEDDED_RESPAWN_ENV] !== "1" && !isBunExecutable()) {
-    await respawnWithEmbeddedFallback(argv);
+  const shouldRespawn = process.env[EMBEDDED_RESPAWN_ENV] !== "1" && !isBunExecutable();
+  const registeredFallback = ensureOrcaResolvable(resolvedScript, { cleanup: !shouldRespawn });
+  if (registeredFallback && shouldRespawn) {
+    respawnWithEmbeddedFallback(argv);
     return;
   }
   await import(pathToFileURL(resolvedScript).href);
@@ -206,17 +207,17 @@ async function respawnIfEmbeddedFallbackNeeded(args: CliArgs, argv: readonly str
   const { ensureOrcaResolvable } = await import("./embedded.ts");
   let registeredFallback = false;
   if (args.script !== undefined) {
-    registeredFallback = ensureOrcaResolvable(resolve(args.script));
+    registeredFallback = ensureOrcaResolvable(resolve(args.script), { cleanup: false });
   } else if (args.command === "run" || args.command === "serve") {
-    registeredFallback = ensureOrcaResolvable(loopFallbackProbe(args.loop));
+    registeredFallback = ensureOrcaResolvable(loopFallbackProbe(args.loop), { cleanup: false });
   } else if (args.command === "loops") {
-    registeredFallback = ensureOrcaResolvable(resolve(".orca", "loops", "__orca_fallback_probe__.ts"));
+    registeredFallback = ensureOrcaResolvable(resolve(".orca", "loops", "__orca_fallback_probe__.ts"), { cleanup: false });
   }
 
   if (!registeredFallback) {
     return false;
   }
-  await respawnWithEmbeddedFallback(argv);
+  respawnWithEmbeddedFallback(argv);
   return true;
 }
 
@@ -239,8 +240,8 @@ function isBunExecutable(): boolean {
   }
 }
 
-async function respawnWithEmbeddedFallback(argv: readonly string[]): Promise<void> {
-  const child = Bun.spawn([process.execPath, ...argv], {
+function respawnWithEmbeddedFallback(argv: readonly string[]): void {
+  const child = Bun.spawnSync([process.execPath, ...argv], {
     cwd: process.cwd(),
     env: {
       ...process.env,
@@ -251,7 +252,7 @@ async function respawnWithEmbeddedFallback(argv: readonly string[]): Promise<voi
     stdout: "inherit",
     stderr: "inherit"
   });
-  process.exitCode = await child.exited;
+  process.exitCode = child.exitCode;
 }
 
 /** Resolve when the supervisor receives a termination signal. */

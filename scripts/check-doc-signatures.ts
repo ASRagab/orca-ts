@@ -272,7 +272,7 @@ function buildDocIndex(files: string[]): Map<string, DocOccurrence[]> {
     for (const body of extractDocBlocks(text)) {
       const src = parse(file, body);
       for (const stmt of src.statements) {
-        let name: string | undefined;
+        let name: string;
         let sig: Sig;
         if (ts.isInterfaceDeclaration(stmt)) {
           name = stmt.name.text;
@@ -283,7 +283,6 @@ function buildDocIndex(files: string[]): Map<string, DocOccurrence[]> {
         } else {
           continue;
         }
-        if (name === undefined) continue;
         const occ: DocOccurrence = { file, sig };
         const list = index.get(name);
         if (list) list.push(occ);
@@ -440,11 +439,11 @@ function fail(name: string, detail: string): void {
 function sigSummary(sig: Sig): string {
   switch (sig.kind) {
     case "object":
-      return `${sig.fields.size} field${sig.fields.size === 1 ? "" : "s"}`;
+      return `${sig.fields.size.toString()} field${sig.fields.size === 1 ? "" : "s"}`;
     case "union":
-      return `${sig.variants.size} variant${sig.variants.size === 1 ? "" : "s"} (discriminant "${sig.discriminant}")`;
+      return `${sig.variants.size.toString()} variant${sig.variants.size === 1 ? "" : "s"} (discriminant "${sig.discriminant}")`;
     case "unionRefs":
-      return `${sig.names.length} member${sig.names.length === 1 ? "" : "s"}`;
+      return `${sig.names.length.toString()} member${sig.names.length === 1 ? "" : "s"}`;
     default:
       return "no comparable structure (primitive/function alias)";
   }
@@ -531,7 +530,7 @@ function run(): void {
     }
 
     if (allMatch) {
-      pass(`${target.type} (${target.dts}) — ${sigSummary(truth)} [${occurrences.length} doc occurrence${occurrences.length === 1 ? "" : "s"}]`);
+      pass(`${target.type} (${target.dts}) — ${sigSummary(truth)} [${occurrences.length.toString()} doc occurrence${occurrences.length === 1 ? "" : "s"}]`);
     } else {
       fail(`${target.type} (${target.dts})`, details.join("\n"));
     }

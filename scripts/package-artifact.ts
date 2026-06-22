@@ -103,10 +103,10 @@ export function runCommand(command: string, args: readonly string[], cwd = proce
   });
   if (result.status !== 0) {
     throw new Error(
-      `command failed: ${[command, ...args].join(" ")}\n${result.stdout ?? ""}${result.stderr ?? ""}`
+      `command failed: ${[command, ...args].join(" ")}\n${result.stdout}${result.stderr}`
     );
   }
-  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+  return { stdout: result.stdout, stderr: result.stderr };
 }
 
 export function npmPackJson(args: readonly string[] = [], cwd = process.cwd()): PackManifest {

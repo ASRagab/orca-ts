@@ -214,8 +214,8 @@ function executionFingerprintDetector<State, Action extends LoopExecutionAction>
 
   return makeFingerprintStuckDetector({
     project: ({ action }) => action,
-    ...(fingerprint?.windowSize === undefined ? {} : { windowSize: fingerprint.windowSize }),
-    ...(fingerprint?.repeatThreshold === undefined ? {} : { repeatThreshold: fingerprint.repeatThreshold }),
+    ...(fingerprint.windowSize === undefined ? {} : { windowSize: fingerprint.windowSize }),
+    ...(fingerprint.repeatThreshold === undefined ? {} : { repeatThreshold: fingerprint.repeatThreshold }),
   });
 }
 
@@ -370,14 +370,14 @@ function createManagedContext(options: LoopExecutionContextOptions | undefined):
     };
   }
 
-  const config = options?.config ?? DEFAULT_COMPACTION_CONFIG;
+  const config = options.config ?? DEFAULT_COMPACTION_CONFIG;
   const offloadStore =
-    options?.offloadStore ??
+    options.offloadStore ??
     createOffloadStore({
-      root: options?.root ?? process.cwd(),
+      root: options.root ?? process.cwd(),
       thresholdChars: config.offloadThresholdChars,
     });
-  let observations = [...(options?.observations ?? [])];
+  let observations = [...(options.observations ?? [])];
   let lastPressure: LoopContextPressure | undefined;
 
   return {

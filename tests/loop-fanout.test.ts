@@ -19,7 +19,6 @@ import {
   type RuntimeError,
   type StateHash,
   type StateReducer,
-  type StateStore,
   type TaskManifest,
 } from "../src/index.ts";
 
