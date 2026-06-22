@@ -34,5 +34,5 @@
 - [x] 5.1 Run focused checks for package metadata, import boundaries, embedded fallback, and package smoke.
 - [x] 5.2 Run docs gates affected by install/import text changes: `bun run docs:check`, `bun run docs:symbols`, and `bun run docs:signatures` after `bun run build:types`.
 - [x] 5.3 Run `bun run validate:release`, `bun run smoke:binary`, and `bun run verify`.
-- [ ] 5.4 Push the release change, confirm CI green on `main`, then push tag `v0.1.0`.
+- [x] 5.4 Push the release change, confirm CI green on `main`, then push tag `v0.1.0`.
 - [ ] 5.5 Post-release, verify `npm view @twelvehart/orca-ts@0.1.0`, install/import smoke from a clean project, `bunx -p @twelvehart/orca-ts@0.1.0 orca --version`, and GitHub Release binary assets.

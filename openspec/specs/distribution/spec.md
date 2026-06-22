@@ -14,15 +14,53 @@ The system SHALL produce a standalone Orca CLI binary with `bun build --compile`
 - **THEN** the binary performs the typecheck pre-flight and runs the flow
 
 ### Requirement: Npm package supports authoring
-The system SHALL publish an npm package that exposes the public TypeScript API, type declarations, package metadata, and `bunx` execution path for authoring workflows.
+The system SHALL publish a scoped public npm package named `@twelvehart/orca-ts` that exposes the public TypeScript API, type declarations, package metadata, and `bunx` execution path for authoring workflows.
 
 #### Scenario: Package exposes public types
-- **WHEN** a TypeScript project imports the Orca package
+- **WHEN** a TypeScript project imports `@twelvehart/orca-ts`
 - **THEN** the compiler resolves the public flow, backend, schema, event, and tool types
 
 #### Scenario: Package runs through bunx
-- **WHEN** a user invokes Orca through `bunx`
+- **WHEN** a user invokes Orca through `bunx -p @twelvehart/orca-ts orca`
 - **THEN** the package starts the CLI entry point with the same behavior as the local script runtime
+
+#### Scenario: Package installs for typed authoring
+- **WHEN** a user adds `@twelvehart/orca-ts` and `typescript` to a project
+- **THEN** versioned flow files can import the public package surface and pass the CLI typecheck pre-flight when the project has a `tsconfig.json`
+
+### Requirement: Npm release uses Trusted Publishing
+The system SHALL publish `@twelvehart/orca-ts` to npm from the tag-driven GitHub Actions release workflow using npm Trusted Publishing/OIDC, without long-lived npm publish tokens.
+
+#### Scenario: Trusted publisher is configured before release
+- **WHEN** a maintainer prepares the first npm release
+- **THEN** npm trust is configured for package `@twelvehart/orca-ts`, repository `ASRagab/orca-ts`, workflow file `release.yml`, and the `npm publish` action
+
+#### Scenario: Release workflow publishes scoped package
+- **WHEN** a `vX.Y.Z` tag runs the release workflow and verification passes
+- **THEN** the workflow publishes npm package `@twelvehart/orca-ts@X.Y.Z` with public access
+
+#### Scenario: Release workflow avoids publish tokens
+- **WHEN** the npm publish job runs
+- **THEN** it uses OIDC permission `id-token: write` and does not require `NPM_TOKEN` or another long-lived npm publish token
+
+### Requirement: Npm package artifact is curated and verified
+The system SHALL define and verify the npm package contents before publish so the tarball contains only the public runtime, declarations, executable, metadata, README, license, and notice files needed for package consumers.
+
+#### Scenario: Package contents are allowlisted
+- **WHEN** package validation inspects the npm tarball file list
+- **THEN** the tarball includes `package.json`, `README.md`, `LICENSE`, `NOTICE`, `bin/orca`, `src/**`, and generated declaration files under `dist/**`
+
+#### Scenario: Internal files are excluded
+- **WHEN** package validation inspects the npm tarball file list
+- **THEN** the tarball excludes tests, fixtures, website source/build output, OpenSpec archives, `.github`, local workflow files, ignored build caches, and release tarballs
+
+#### Scenario: Packed package installs in a temporary project
+- **WHEN** package smoke installs the packed tarball into a temporary TypeScript project
+- **THEN** imports from `@twelvehart/orca-ts`, `@twelvehart/orca-ts/loop`, `@twelvehart/orca-ts/model`, and `@twelvehart/orca-ts/testing` typecheck
+
+#### Scenario: Packed package exposes the CLI binary
+- **WHEN** package smoke invokes the installed package's `orca --version` binary
+- **THEN** it reports the same version as `package.json`
 
 ### Requirement: CLI documentation distinguishes package and binary names
 The system SHALL document one-shot CLI usage with the npm package name `@twelvehart/orca-ts` and the executable command name `orca` as separate names.
@@ -47,11 +85,15 @@ The package SHALL keep runtime imports free of test-only helpers while exposing 
 - **THEN** the import exposes test helper APIs without requiring those APIs to be exported from the root package
 
 ### Requirement: Standalone embedded fallback is runtime-only
-The standalone CLI fallback SHALL embed only modules needed by runtime flow execution and SHALL NOT embed the testing entry point.
+The standalone CLI fallback SHALL embed only modules needed by runtime flow execution under the scoped package name and SHALL NOT embed the testing entry point.
 
 #### Scenario: Standalone flow imports runtime package
 - **WHEN** a standalone binary runs a flow that imports `@twelvehart/orca-ts` without a local project dependency
 - **THEN** the embedded fallback resolves the runtime root package
+
+#### Scenario: Standalone flow imports loop package
+- **WHEN** a standalone binary runs a flow that imports `@twelvehart/orca-ts/loop` without a local project dependency
+- **THEN** the embedded fallback resolves the loop package
 
 #### Scenario: Standalone flow imports model package
 - **WHEN** a standalone binary runs a flow that imports `@twelvehart/orca-ts/model` without a local project dependency
