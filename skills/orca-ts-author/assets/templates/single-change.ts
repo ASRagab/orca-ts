@@ -36,7 +36,7 @@ await flow(flowArgs())(async () => {
       .autonomous(selected.backend, { prompt: TASK_PROMPT })
       .awaitResult();
     if (impl.type !== "success") {
-      throw new Error(`implementation turn failed: ${impl.type}`);
+      throw new Error(`implementation turn failed: ${describeOutcome(impl)}`);
     }
 
     const seen = new Set<string>();
@@ -53,7 +53,7 @@ await flow(flowArgs())(async () => {
           })
           .awaitResult();
         if (repair.type !== "success") {
-          throw new Error(`repair turn failed: ${repair.type}`);
+          throw new Error(`repair turn failed: ${describeOutcome(repair)}`);
         }
         return ok(undefined);
       },
@@ -88,4 +88,20 @@ function stalled(seen: Set<string>, issues: readonly GateIssue[]): boolean {
   if (seen.has(signature)) return true;
   seen.add(signature);
   return false;
+}
+
+function describeOutcome(outcome: { readonly type: string; readonly error?: unknown; readonly reason?: string }): string {
+  if (outcome.type === "failed") return `failed: ${describeUnknown(outcome.error)}`;
+  if (outcome.type === "cancelled") return outcome.reason ? `cancelled: ${outcome.reason}` : "cancelled";
+  return outcome.type;
+}
+
+function describeUnknown(value: unknown): string {
+  if (value instanceof Error) return value.message;
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }

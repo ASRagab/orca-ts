@@ -48,7 +48,7 @@ await flow(flowArgs())(async () => {
     const impl = await llm()
       .autonomous(selected.backend, { prompt: `Implement the following and keep the change focused:\n${task}` })
       .awaitResult();
-    if (impl.type !== "success") throw new Error(`implementation failed: ${impl.type}`);
+    if (impl.type !== "success") throw new Error(`implementation failed: ${describeOutcome(impl)}`);
 
     const seen = new Set<string>();
     const loop = await fixLoop<GateIssue>(
@@ -62,7 +62,7 @@ await flow(flowArgs())(async () => {
             prompt: `The verification gate failed:\n${issues.map((i) => i.message).join("\n")}\nFix it.`,
           })
           .awaitResult();
-        if (repair.type !== "success") throw new Error(`repair failed: ${repair.type}`);
+        if (repair.type !== "success") throw new Error(`repair failed: ${describeOutcome(repair)}`);
         return ok(undefined);
       },
       { maxIterations: 8, wallClockMs: 10 * 60_000, stalled: (i) => stalled(seen, i) },
@@ -156,4 +156,20 @@ function stalled(seen: Set<string>, issues: readonly GateIssue[]): boolean {
   if (seen.has(signature)) return true;
   seen.add(signature);
   return false;
+}
+
+function describeOutcome(outcome: { readonly type: string; readonly error?: unknown; readonly reason?: string }): string {
+  if (outcome.type === "failed") return `failed: ${describeUnknown(outcome.error)}`;
+  if (outcome.type === "cancelled") return outcome.reason ? `cancelled: ${outcome.reason}` : "cancelled";
+  return outcome.type;
+}
+
+function describeUnknown(value: unknown): string {
+  if (value instanceof Error) return value.message;
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }

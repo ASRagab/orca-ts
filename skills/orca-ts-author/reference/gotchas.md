@@ -105,6 +105,7 @@ Before declaring a generated flow done, confirm each:
 - [ ] For loop modules, no top-level `flow(...)`; exactly one exported `defineLoop(...)`; no source start, backend run, sink emit, or repo mutation at import.
 - [ ] A repo-mutating flow guards the tree: clean-baseline/auto-stash, feature branch before commit/push, iteration-scoped revert, off-target detection; no auto-destructive git ops.
 - [ ] Every `awaitResult()` is followed by an `outcome.type` narrow before `.result`.
+- [ ] Every non-success outcome report includes `outcome.error` or `outcome.reason`, not just `outcome.type`.
 - [ ] If `selectBackend` (or `opencode()`) is used, `selected.shutdown?.()` runs in a `finally`.
 - [ ] Verification commands are the **detected target-repo** commands, not `bun`/`npm` assumptions.
 - [ ] At least one test gate **and** one lint gate are wired (the skill refuses an ungated flow).

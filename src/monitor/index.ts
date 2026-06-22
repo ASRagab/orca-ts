@@ -143,10 +143,19 @@ export interface WorkflowRunLog {
   readonly progress: readonly CycleProgress[];
 }
 
+export interface WorkflowMonitorOptions {
+  readonly writeStatus?: (line: string) => void;
+  readonly statusIntervalMs?: number;
+}
+
+const DefaultStatusIntervalMs = 30_000;
+
 export class WorkflowMonitor {
   readonly #runId: string;
   readonly #startedAt: Date;
   readonly #backend: string;
+  readonly #writeStatus: ((line: string) => void) | undefined;
+  readonly #statusIntervalMs: number;
   readonly #stages: StageLog[] = [];
   readonly #outcomes: OutcomeLog[] = [];
   readonly #failures: FailureLog[] = [];
@@ -154,10 +163,13 @@ export class WorkflowMonitor {
   readonly #cumulativeUsage = new TokenBudgetCounter();
   #lastMeasure: number | undefined;
 
-  constructor(backend: string) {
+  constructor(backend: string, options: WorkflowMonitorOptions = {}) {
     this.#runId = randomUUID();
     this.#startedAt = new Date();
     this.#backend = backend;
+    this.#writeStatus = options.writeStatus ?? defaultStatusWriter();
+    this.#statusIntervalMs = options.statusIntervalMs ?? DefaultStatusIntervalMs;
+    this.#emitStatus(`orca: run ${this.#runId} started (backend=${backend})`);
   }
 
   get runId(): string {
@@ -167,22 +179,39 @@ export class WorkflowMonitor {
   async stage<T>(name: string, fn: () => Promise<T>): Promise<T> {
     const startedAt = new Date().toISOString();
     const start = Date.now();
+    const heartbeat = this.#startHeartbeat(name, start);
+    this.#emitStatus(`orca: stage ${name} started`);
     try {
       const result = await fn();
-      this.#stages.push({ name, startedAt, durationMs: Date.now() - start, status: "completed" });
+      const durationMs = Date.now() - start;
+      this.#stages.push({ name, startedAt, durationMs, status: "completed" });
+      this.#emitStatus(`orca: stage ${name} completed (${formatDuration(durationMs)})`);
       return result;
     } catch (error) {
-      this.#stages.push({ name, startedAt, durationMs: Date.now() - start, status: "failed" });
+      const durationMs = Date.now() - start;
+      this.#stages.push({ name, startedAt, durationMs, status: "failed" });
+      this.#emitStatus(`orca: stage ${name} failed (${formatDuration(durationMs)}): ${describeError(error)}`);
       throw error;
+    } finally {
+      if (heartbeat !== undefined) {
+        clearInterval(heartbeat);
+      }
     }
   }
 
   recordOutcome(log: OutcomeLog): void {
     this.#outcomes.push(log);
+    this.#emitStatus(
+      `orca: outcome ${log.file} ${log.verdict} (${formatDuration(log.durationMs)})${log.reason ? `: ${log.reason}` : ""}`
+    );
   }
 
   recordFailure(log: FailureLog): void {
     this.#failures.push(log);
+    const category = log.category === undefined ? "" : ` ${log.category}`;
+    this.#emitStatus(
+      `orca: failure ${log.file}${category} (${formatDuration(log.durationMs)}): ${describeError(log.error)}`
+    );
   }
 
   /** Append a per-cycle progress record. `delta` is derived against the prior cycle's `measure`
@@ -215,6 +244,9 @@ export class WorkflowMonitor {
       cumulativeUsage: this.#cumulativeUsage.summary(),
       ...(observation.contextPressure === undefined ? {} : { contextPressure: observation.contextPressure }),
     });
+    this.#emitStatus(
+      `orca: cycle ${String(observation.iteration)} measure=${String(observation.measure)} delta=${String(delta)} stop=${stopReasonSoFar}`
+    );
   }
 
   toJson(): WorkflowRunLog {
@@ -241,8 +273,61 @@ export class WorkflowMonitor {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, JSON.stringify(this.toJson(), null, 2));
   }
+
+  #startHeartbeat(name: string, start: number): ReturnType<typeof setInterval> | undefined {
+    if (this.#writeStatus === undefined || this.#statusIntervalMs <= 0) {
+      return undefined;
+    }
+    const heartbeat = setInterval(() => {
+      this.#emitStatus(`orca: stage ${name} running (${formatDuration(Date.now() - start)})`);
+    }, this.#statusIntervalMs);
+    heartbeat.unref();
+    return heartbeat;
+  }
+
+  #emitStatus(line: string): void {
+    try {
+      this.#writeStatus?.(line);
+    } catch {
+      return;
+    }
+  }
 }
 
 function toBranchProgress(branch: BranchObservation): BranchProgress {
   return { id: branch.id, status: branch.status, usage: branch.usage ?? "unknown" };
+}
+
+function defaultStatusWriter(): ((line: string) => void) | undefined {
+  if (!process.stdout.isTTY) {
+    return undefined;
+  }
+  return (line) => process.stdout.write(`${line}\n`);
+}
+
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1_000) {
+    return `${String(ms)}ms`;
+  }
+  const seconds = Math.floor(ms / 1_000);
+  if (seconds < 60) {
+    return `${String(seconds)}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${String(minutes)}m ${String(remainder)}s`;
 }

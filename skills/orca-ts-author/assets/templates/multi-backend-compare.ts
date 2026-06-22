@@ -38,7 +38,8 @@ await flow(flowArgs())(async () => {
         outcome.type === "success" && outcome.result.usage
           ? String(outcome.result.usage.input + outcome.result.usage.output)
           : "-";
-      rows.push(`${candidate.tag.padEnd(9)} ${outcome.type.padEnd(10)} ${seconds.padStart(6)}s  ${tokens} tok`);
+      const detail = outcome.type === "success" ? "" : `  ${describeOutcome(outcome)}`;
+      rows.push(`${candidate.tag.padEnd(9)} ${outcome.type.padEnd(10)} ${seconds.padStart(6)}s  ${tokens} tok${detail}`);
     }
   } finally {
     for (const candidate of candidates) {
@@ -49,3 +50,19 @@ await flow(flowArgs())(async () => {
   console.log("backend   outcome     time    usage");
   console.log(rows.join("\n"));
 });
+
+function describeOutcome(outcome: { readonly type: string; readonly error?: unknown; readonly reason?: string }): string {
+  if (outcome.type === "failed") return `failed: ${describeUnknown(outcome.error)}`;
+  if (outcome.type === "cancelled") return outcome.reason ? `cancelled: ${outcome.reason}` : "cancelled";
+  return outcome.type;
+}
+
+function describeUnknown(value: unknown): string {
+  if (value instanceof Error) return value.message;
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}

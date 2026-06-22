@@ -3,6 +3,61 @@ import { WorkflowMonitor, type WorkflowRunLog } from "../src/index.ts";
 import { summarizeLogs } from "../scripts/summarize-run.ts";
 
 describe("workflow monitor", () => {
+  test("emits human-readable status updates when a writer is configured", async () => {
+    const lines: string[] = [];
+    const monitor = new WorkflowMonitor("codex", {
+      writeStatus: (line) => lines.push(line),
+      statusIntervalMs: 0
+    });
+
+    await monitor.stage("setup", () => Promise.resolve("ok"));
+    try {
+      await monitor.stage("agent turn", () => Promise.reject(new Error("boom")));
+      throw new Error("expected agent turn to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe("boom");
+    }
+    monitor.recordOutcome({
+      file: "src/a.ts",
+      verdict: "repaired",
+      durationMs: 42,
+      smellsRemoved: [],
+      reason: "fixed",
+      iterations: 1
+    });
+    monitor.recordFailure({
+      file: "src/b.ts",
+      error: { _tag: "BackendFailed", backend: "codex", message: "stalled" },
+      durationMs: 7,
+      category: "agent"
+    });
+    monitor.recordCycle({ iteration: 2, measure: 1, usage: { input: 1, output: 2 } });
+
+    expect(lines[0]).toMatch(/^orca: run [0-9a-f-]+ started \(backend=codex\)$/);
+    expect(lines).toContain("orca: stage setup started");
+    expect(lines).toContain("orca: stage agent turn started");
+    expect(lines.some((line) => line.startsWith("orca: stage setup completed ("))).toBe(true);
+    expect(lines.some((line) => line.startsWith("orca: stage agent turn failed (") && line.endsWith(": boom"))).toBe(true);
+    expect(lines).toContain("orca: outcome src/a.ts repaired (42ms): fixed");
+    expect(lines).toContain(
+      'orca: failure src/b.ts agent (7ms): {"_tag":"BackendFailed","backend":"codex","message":"stalled"}'
+    );
+    expect(lines).toContain("orca: cycle 2 measure=1 delta=0 stop=running");
+  });
+
+  test("emits stage heartbeats while a stage is still running", async () => {
+    const lines: string[] = [];
+    const monitor = new WorkflowMonitor("codex", {
+      writeStatus: (line) => lines.push(line),
+      statusIntervalMs: 1
+    });
+
+    await monitor.stage("slow", () => new Promise((resolve) => setTimeout(resolve, 10)));
+
+    expect(lines.some((line) => line.startsWith("orca: stage slow running ("))).toBe(true);
+  });
+
   test("records stages, outcomes, failures, summary counts, and optional usage", async () => {
     const monitor = new WorkflowMonitor("codex");
 

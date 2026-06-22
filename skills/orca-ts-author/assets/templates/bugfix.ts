@@ -47,7 +47,7 @@ await flow(flowArgs())(async () => {
           `Add a single, focused test that reproduces this bug. Do NOT fix the bug yet — the test must FAIL.\n\n${BUG_REPORT}`,
       })
       .awaitResult();
-    if (repro.type !== "success") throw new Error(`repro turn failed: ${repro.type}`);
+    if (repro.type !== "success") throw new Error(`repro turn failed: ${describeOutcome(repro)}`);
 
     // Step 2 — the gate must be red now, or the repro did not capture the bug.
     if ((await runGate(GATE)) === undefined) {
@@ -70,7 +70,7 @@ await flow(flowArgs())(async () => {
               .join("\n")}`,
           })
           .awaitResult();
-        if (repair.type !== "success") throw new Error(`fix turn failed: ${repair.type}`);
+        if (repair.type !== "success") throw new Error(`fix turn failed: ${describeOutcome(repair)}`);
         return ok(undefined);
       },
       { maxIterations: 10, wallClockMs: 10 * 60_000, stalled: (i) => stalled(seen, i) },
@@ -102,4 +102,20 @@ function stalled(seen: Set<string>, issues: readonly GateIssue[]): boolean {
   if (seen.has(signature)) return true;
   seen.add(signature);
   return false;
+}
+
+function describeOutcome(outcome: { readonly type: string; readonly error?: unknown; readonly reason?: string }): string {
+  if (outcome.type === "failed") return `failed: ${describeUnknown(outcome.error)}`;
+  if (outcome.type === "cancelled") return outcome.reason ? `cancelled: ${outcome.reason}` : "cancelled";
+  return outcome.type;
+}
+
+function describeUnknown(value: unknown): string {
+  if (value instanceof Error) return value.message;
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
