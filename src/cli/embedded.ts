@@ -34,6 +34,20 @@ export function ensureOrcaResolvable(scriptPath: string, options: EnsureOrcaReso
   return true;
 }
 
+export function canResolveOrca(scriptPath: string): boolean {
+  const scriptDir = dirname(scriptPath);
+  return [PackageName, LegacyPackageName].every((specifier) => canResolveFrom(specifier, scriptDir));
+}
+
+function canResolveFrom(specifier: string, fromDir: string): boolean {
+  try {
+    Bun.resolveSync(specifier, fromDir);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function hasProjectPackage(specifier: string, fromDir: string, includeSelfReference: boolean): boolean {
   for (let dir = fromDir; ; dir = dirname(dir)) {
     if (existsSync(join(dir, "node_modules", ...specifier.split("/"), "package.json"))) {
