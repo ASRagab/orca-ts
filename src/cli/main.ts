@@ -33,8 +33,18 @@ const USAGE = [
 const DEFERRED_DBOS_NOTE =
   "durable DBOS mode is deferred — see openspec/changes/add-loop-builder/design.md §D5 (DBOS Bun-compatibility spike). " +
   "Run without --durable/--postgres-url and without `--state dbos` to use the service-free default adapter.";
+// Private parent->child handshake for the embedded-fallback respawn. The value is the
+// PARENT's pid, not a constant flag: a genuine child's process.ppid equals it, while a stale
+// value inherited from an unrelated shell or a prior orca process does not. Validating against
+// ppid keeps a leaked ORCA_EMBEDDED_RESPAWNED from making a fresh invocation skip the bootstrap
+// + respawn (which would then fail to resolve @twelvehart/orca-ts from a bare directory).
 const EMBEDDED_RESPAWN_ENV = "ORCA_EMBEDDED_RESPAWNED";
-const PREFLIGHT_DONE_ENV = "ORCA_PREFLIGHT_DONE";
+
+/** True only when this process is the embedded-fallback child spawned by THIS run's parent. */
+function isEmbeddedRespawnChild(): boolean {
+  const token = process.env[EMBEDDED_RESPAWN_ENV];
+  return token !== undefined && token === String(process.ppid);
+}
 
 /** Durable DBOS mode is not selectable in this change (spec distribution; design D5). */
 export function deferredDurableError(args: CliArgs): RuntimeError | undefined {
@@ -99,8 +109,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 
 /** Shared preflight for every command: typecheck (unless skipped) + backend/flow-arg env wiring. */
 async function preflight(args: CliArgs, reporter: RunReporter): Promise<boolean> {
-  if (process.env[PREFLIGHT_DONE_ENV] === "1") {
-    return true;
+  if (isEmbeddedRespawnChild()) {
+    return true; // the spawning parent already ran preflight; the child inherits its env
   }
 
   reporter.emit({ type: "preflight", name: "typecheck", status: "started" });
@@ -195,7 +205,7 @@ async function runServe(target: string): Promise<void> {
 async function runFlowScript(script: string, argv: readonly string[], reporter: RunReporter): Promise<void> {
   const resolvedScript = resolve(script);
   const { ensureOrcaResolvable } = await import("./embedded.ts");
-  const shouldRespawn = process.env[EMBEDDED_RESPAWN_ENV] !== "1" && !isBunExecutable();
+  const shouldRespawn = !isEmbeddedRespawnChild() && !isBunExecutable();
   const registeredFallback = ensureOrcaResolvable(resolvedScript, { cleanup: !shouldRespawn });
   if (registeredFallback && shouldRespawn) {
     respawnWithEmbeddedFallback(argv);
@@ -222,7 +232,7 @@ async function loopImporter(): Promise<ModuleImporter> {
 }
 
 async function respawnIfEmbeddedFallbackNeeded(args: CliArgs, argv: readonly string[]): Promise<boolean> {
-  if (process.env[EMBEDDED_RESPAWN_ENV] === "1" || isBunExecutable()) {
+  if (isEmbeddedRespawnChild() || isBunExecutable()) {
     return false;
   }
 
@@ -267,8 +277,8 @@ function respawnWithEmbeddedFallback(argv: readonly string[]): void {
     cwd: process.cwd(),
     env: {
       ...process.env,
-      [EMBEDDED_RESPAWN_ENV]: "1",
-      [PREFLIGHT_DONE_ENV]: "1"
+      // Stamp the handshake with our pid; the child validates it against process.ppid.
+      [EMBEDDED_RESPAWN_ENV]: String(process.pid)
     },
     stdin: "inherit",
     stdout: "inherit",

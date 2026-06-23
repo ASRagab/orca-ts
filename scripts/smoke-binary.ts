@@ -79,6 +79,15 @@ await flow()(async () => {
   const legacyFlow = await mustRun(binary, ["legacy-flow.ts"], { cwd: tempDir });
   expectIncludes(legacyFlow.stdout, "orca-binary-legacy-smoke-ok", "compiled binary legacy flow output");
   expectIncludes(legacyFlow.stderr, "missing project typecheck setup", "compiled binary legacy typecheck warning");
+
+  // Regression guard: a stale ORCA_EMBEDDED_RESPAWNED leaked into the environment must NOT
+  // make a fresh invocation skip the bootstrap + respawn. The handshake is validated against
+  // process.ppid, so a value that is not this parent's pid is treated as stale and ignored.
+  const poisoned = await withEnv({ ORCA_EMBEDDED_RESPAWNED: "1" }, () =>
+    mustRun(binary, ["flow.ts"], { cwd: tempDir })
+  );
+  expectIncludes(poisoned.stdout, "orca-binary-smoke-ok", "compiled binary flow output under stale respawn handshake");
+  expectIncludes(poisoned.stderr, "missing project typecheck setup", "compiled binary typecheck warning under stale respawn handshake");
 } finally {
   await rm(tempDir, { recursive: true, force: true });
 }
@@ -94,6 +103,25 @@ async function mustRun(
   }
 
   return result.value;
+}
+
+async function withEnv<T>(overrides: Record<string, string>, run: () => Promise<T>): Promise<T> {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(overrides)) {
+    previous.set(key, process.env[key]);
+    process.env[key] = value;
+  }
+  try {
+    return await run();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
 }
 
 function expectIncludes(actual: string, expected: string, label: string): void {
