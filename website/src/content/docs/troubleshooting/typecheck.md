@@ -18,7 +18,8 @@ orca: missing project typecheck setup; skipping typecheck.
 For typed authoring, install the project dependencies:
 
 ```bash
-bun add -d @twelvehart/orca-ts typescript
+npm i @twelvehart/orca-ts
+npm i -D typescript
 ```
 
 Use `--no-typecheck` only when you intentionally want to skip the preflight.

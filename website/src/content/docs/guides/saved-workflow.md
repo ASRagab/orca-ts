@@ -9,10 +9,10 @@ Saved one-shot workflows live in the target repository:
 .orca/workflows/<name>.ts
 ```
 
-They are self-executing flow scripts. Run them through the standalone binary:
+They are self-executing flow scripts. Run them through the Orca CLI:
 
 ```bash
-orca .orca/workflows/my-workflow.ts --backend codex -- "task input"
+npx orca --backend codex .orca/workflows/my-workflow.ts -- "task input"
 ```
 
 Use `flowArgs()` for user input:

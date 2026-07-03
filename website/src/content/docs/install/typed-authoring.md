@@ -1,16 +1,19 @@
 ---
-title: Typed Authoring
-description: Set up a project that typechecks flow files against Orca.
+title: NPM Package
+description: Install Orca from npm for local flow authoring and CLI use.
 ---
 
-Use typed authoring when you are writing and versioning flows in a project.
+Use the npm package when you are writing and versioning flows in a project.
 
-Run flows with the standalone `orca` binary. Add the package as a dev dependency when the project should provide editor types and run TypeScript checks for versioned flow files:
+Install the package and, when you want editor feedback and the CLI typecheck preflight, TypeScript:
 
 ```bash
-bun add -d @twelvehart/orca-ts typescript
-orca --version
+npm i @twelvehart/orca-ts
+npm i -D typescript
+npx orca --version
 ```
+
+Bun `>=1.3.0` must be on `PATH`; the npm package's `orca` binary is a Bun shim.
 
 Flow files import from the public package surface:
 
@@ -21,7 +24,7 @@ import { flow, flowArgs, llm, selectBackend } from "@twelvehart/orca-ts";
 Run a flow with:
 
 ```bash
-orca --backend codex .orca/workflows/my-flow.ts -- "task input"
+npx orca --backend codex .orca/workflows/my-flow.ts -- "task input"
 ```
 
 Read task input through `flowArgs()`:
@@ -33,3 +36,5 @@ const args = flowArgs();
 ```
 
 Do not read task input from `process.argv`; the CLI also uses argv for the flow path and flags.
+
+Use the [standalone binary](../binary/) only when you need an `orca` executable that can run without a local `node_modules` install.
