@@ -30,8 +30,8 @@ export default defineConfig({
         {
           label: "Install",
           items: [
+            { label: "NPM Package", slug: "install/typed-authoring" },
             { label: "Standalone Binary", slug: "install/binary" },
-            { label: "Typed Authoring", slug: "install/typed-authoring" },
             { label: "Source Checkout", slug: "install/source-checkout" },
             { label: "Agent Skills", slug: "install/agent-skills" }
           ]

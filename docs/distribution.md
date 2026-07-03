@@ -1,15 +1,18 @@
 # Distribution
 
-Orca ships a scoped public npm package for typed authoring and GitHub Release binaries for zero-dependency execution.
+Orca ships a scoped public npm package for normal project use and GitHub Release binaries for no-`node_modules` execution.
 
-## Typed Project Authoring
+## NPM Package
 
-For editor and project typecheck support in source-controlled flows, add the scoped package plus TypeScript, then run with the standalone `orca` binary:
+For source-controlled flows, install the scoped package. Add TypeScript when you want editor feedback and the CLI typecheck preflight:
 
 ```bash
-bun add -d @twelvehart/orca-ts typescript
-orca flow.ts
+npm i @twelvehart/orca-ts
+npm i -D typescript
+npx orca flow.ts
 ```
+
+The npm package provides the public TypeScript API and `bin.orca`, a Bun shim that imports `src/cli/main.ts`. Bun `>=1.3.0` must be on `PATH` when running that shim.
 
 ## Standalone Binaries
 
@@ -41,7 +44,7 @@ Environment variables:
 | `ORCA_VERSION` | Install a specific GitHub Release version, with or without the `v` prefix |
 | `ORCA_INSTALL_DIR` | Destination directory for the `orca` executable |
 
-`bin/orca` is the Bun shim used by source checkouts and npm package installs. Release installs do not execute that file; they install the compiled standalone binary built from `src/cli/main.ts`.
+Release installs do not execute `bin/orca`; they install the compiled standalone binary built from `src/cli/main.ts`.
 
 ## Embedded Library Resolution
 

@@ -10,8 +10,8 @@ Use Orca when you want repeatable automation around a coding agent: implement a 
 ## Start paths
 
 - New to Orca: read the [quickstart](start/quickstart/), then the [concepts](start/concepts/).
-- Installing for local use: start with the [standalone binary](install/binary/).
-- Writing typed flows: use the [typed authoring setup](install/typed-authoring/).
+- Installing for local use: start with the [npm package](install/typed-authoring/).
+- Need one executable with no project setup: use the [standalone binary](install/binary/).
 - Creating reusable automations in another repo: install the [Agent Skills](install/agent-skills/).
 - Building repeatable work: start with [flows](guides/first-flow/) or [loops](guides/loops/).
 
@@ -25,10 +25,10 @@ Use Orca when you want repeatable automation around a coding agent: implement a 
 | Repeat until a measured state converges | `loop()` presets and guards |
 | Package a loop for discovery and serving | `defineLoop()` + `orca run` / `orca serve` |
 | Recover long work | persistent plans and loop state stores |
-| Install in any git-backed repo | standalone `orca` binary |
+| Install in any git-backed repo | Orca CLI + Agent Skills |
 
 ## Supported boundaries
 
-The current package version is `0.1.0`. The canonical install path is the GitHub Release binary.
+The current package version is `0.1.0`. The normal install path is `npm i @twelvehart/orca-ts`.
 
 Supported live backend tags are `claude`, `codex`, `opencode`, and `pi`. Snapshot and sqlite loop state stores are available.

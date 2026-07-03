@@ -9,19 +9,15 @@ description: Install Orca, write a first flow, and run it with a backend.
 - Git.
 - At least one configured backend CLI when running live flows: Claude, Codex, OpenCode, or Pi.
 
-## Install the binary
+## Install Orca
 
 ```bash
-curl -fsSL https://github.com/ASRagab/orca-ts/releases/latest/download/install.sh | bash
-orca --version
+npm i @twelvehart/orca-ts
+npm i -D typescript
+npx orca --version
 ```
 
-Pin a release or install directory when needed:
-
-```bash
-ORCA_VERSION=0.1.0 ORCA_INSTALL_DIR="$HOME/.local/bin" \
-  bash <(curl -fsSL https://github.com/ASRagab/orca-ts/releases/download/v0.1.0/install.sh)
-```
+`typescript` enables editor feedback and the CLI typecheck preflight. Bun `>=1.3.0` must be on `PATH` because the npm CLI shim runs with Bun.
 
 ## Write `hello.ts`
 
@@ -50,14 +46,15 @@ await flow()(async () => {
 ## Run the flow
 
 ```bash
-orca --backend claude hello.ts
+npx orca --backend claude hello.ts
 ```
 
 `--backend` sets `ORCA_BACKEND`. A flow that calls `selectBackend()` honors it. A flow that calls `claude()`, `codex()`, `opencode()`, or `pi()` directly pins that backend.
 
 ## Next
 
-- [Install paths](../../install/binary/)
+- [Package install](../../install/typed-authoring/)
+- [Standalone binary](../../install/binary/)
 - [Core concepts](../concepts/)
 - [First flow guide](../../guides/first-flow/)
 - [Backend setup](../../guides/backend-setup/)

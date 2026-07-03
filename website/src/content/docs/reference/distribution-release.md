@@ -1,9 +1,19 @@
 ---
 title: Distribution And Release
-description: GitHub Release binaries, installer behavior, and tag-driven releases.
+description: npm package, GitHub Release binaries, installer behavior, and tag-driven releases.
 ---
 
-Orca ships `@twelvehart/orca-ts` for typed authoring and GitHub Release binaries for zero-dependency execution.
+Orca ships `@twelvehart/orca-ts` on npm for normal project use and GitHub Release binaries for no-`node_modules` execution.
+
+## NPM package
+
+```bash
+npm i @twelvehart/orca-ts
+npm i -D typescript
+npx orca --version
+```
+
+The package provides the public TypeScript API and a Bun-backed `orca` CLI shim.
 
 ## Release assets
 

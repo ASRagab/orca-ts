@@ -1,9 +1,9 @@
 ---
 title: Standalone Binary
-description: Install and use the release binary without a package setup.
+description: Install a release binary for no-node_modules execution.
 ---
 
-Use the standalone binary when you want to run a flow on a Unix-like machine without creating a package first.
+The normal install path is the [npm package](../typed-authoring/). Use the standalone binary only when you want to run a flow on a Unix-like machine without creating a package first.
 
 ```bash
 curl -fsSL https://github.com/ASRagab/orca-ts/releases/latest/download/install.sh | bash

@@ -7,7 +7,7 @@ The repository ships three host-agnostic Agent Skills:
 
 | Skill | Purpose |
 | --- | --- |
-| `orca-ts-setup` | Install the `orca` binary and verify at least one backend. |
+| `orca-ts-setup` | Install or verify the `orca` CLI and verify at least one backend. |
 | `orca-ts-author` | Generate a saved, verification-gated workflow or loop module. |
 | `orca-ts-flow` | Run, monitor, diagnose, and heal a saved workflow or loop. |
 

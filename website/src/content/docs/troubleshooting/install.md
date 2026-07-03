@@ -1,9 +1,23 @@
 ---
 title: Install Troubleshooting
-description: Common binary install and PATH problems.
+description: Common npm package, binary install, and PATH problems.
 ---
 
-## `orca` is not found
+## `npx orca` cannot find the local CLI
+
+Install the package in the project first:
+
+```bash
+npm i @twelvehart/orca-ts
+```
+
+Then retry from the same project directory:
+
+```bash
+npx orca --version
+```
+
+## Standalone `orca` is not found
 
 The installer defaults to `$HOME/.local/bin`. Add it to `PATH` if your shell does not already include it:
 

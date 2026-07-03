@@ -8,7 +8,13 @@ Use Orca TypeScript when you want coding-agent work to be expressed as code inst
 
 ## Status
 
-The package is version `0.1.0`. Install `@twelvehart/orca-ts` for typed authoring and use the standalone `orca` binary from GitHub Releases for zero-dependency execution.
+The package is version `0.1.0`. Install the public npm package for normal project use:
+
+```bash
+npm i @twelvehart/orca-ts
+```
+
+The package provides the TypeScript authoring API and the Bun-backed `orca` CLI shim. GitHub Release binaries remain available when you need a standalone executable with no project `node_modules`.
 
 Canonical repository: <https://github.com/ASRagab/orca-ts>
 
@@ -22,9 +28,33 @@ Documentation website: <https://ASRagab.github.io/orca-ts/>
 - Git
 - At least one configured backend CLI when running live flows
 
-### Install Option 1: Standalone Binary
+### Install
 
-Use this when you want to run a flow on a unix-y machine without creating a package first.
+Use this when you are writing and versioning flows in a project:
+
+```bash
+npm i @twelvehart/orca-ts
+npm i -D typescript
+npx orca --version
+```
+
+`typescript` is only needed for editor feedback and the CLI typecheck preflight. Bun `>=1.3.0` must be on `PATH` because the npm CLI shim runs with Bun.
+
+Flow files import from `@twelvehart/orca-ts`:
+
+```ts
+import { flow, llm, selectBackend } from "@twelvehart/orca-ts";
+```
+
+Run a flow with:
+
+```bash
+npx orca --backend claude hello.ts
+```
+
+### Optional Standalone Binary
+
+Use this when you want to run a flow on a Unix-like machine without creating a package first:
 
 ```bash
 curl -fsSL https://github.com/ASRagab/orca-ts/releases/latest/download/install.sh | bash
@@ -37,30 +67,9 @@ ORCA_VERSION=0.1.0 ORCA_INSTALL_DIR="$HOME/.local/bin" \
   bash <(curl -fsSL https://github.com/ASRagab/orca-ts/releases/download/v0.1.0/install.sh)
 ```
 
-The binary can run a flow that imports from `@twelvehart/orca-ts` even when the flow project has no `node_modules`. If the project has its own `@twelvehart/orca-ts` package dependency, that project copy wins. For one release, the standalone fallback also accepts legacy `orca-ts` runtime imports. In a zero-project directory with no `tsconfig.json`, the standalone binary skips the typecheck guard and emits a warning before running. Project typechecking needs a local `typescript` dependency, a `tsconfig.json`, and a local `@twelvehart/orca-ts` package dependency.
+The standalone binary embeds the runtime API, so it can run a flow that imports from `@twelvehart/orca-ts` even when the flow project has no `node_modules`. If the project has its own `@twelvehart/orca-ts` package dependency, that project copy wins.
 
-### Install Option 2: Typed Project Authoring
-
-Use this when you are writing and versioning flows in a project. Add the package as a dev dependency for editor types and TypeScript checks, then run flows with the standalone `orca` binary.
-
-```bash
-bun add -d @twelvehart/orca-ts typescript
-orca --version
-```
-
-Flow files import from `@twelvehart/orca-ts`:
-
-```ts
-import { flow, llm, selectBackend } from "@twelvehart/orca-ts";
-```
-
-Run a flow with:
-
-```bash
-orca --backend claude hello.ts
-```
-
-### Install Option 3: Source Checkout
+### Source Checkout
 
 Use this for contributing to Orca itself.
 
@@ -102,7 +111,7 @@ await flow()(async () => {
 Run it with the CLI:
 
 ```bash
-orca --backend claude hello.ts
+npx orca --backend claude hello.ts
 ```
 
 Inside this repository, examples import from `./src/index.ts`. Package consumers should import from `@twelvehart/orca-ts`.
@@ -188,7 +197,7 @@ orca --version
 | `--help`, `-h` | Prints usage |
 | `-- <task args>` | Everything after `--` is the flow/loop task input, read via `flowArgs()` |
 
-Loop verbs and the legacy script path share one preflight: the typecheck guard, `--backend`, and the `--` task-arg channel apply to all of them. By default, the CLI typechecks the current project before importing when it can find project typecheck setup: `typescript`, `tsconfig.json`, and a local `@twelvehart/orca-ts` package dependency. A zero-project standalone binary flow without `tsconfig.json` skips this guard. Use `--no-typecheck` only when you intentionally want to skip it.
+Loop verbs and the legacy script path share one preflight: the typecheck guard, `--backend`, and the `--` task-arg channel apply to all of them. By default, the CLI typechecks the current project before importing when it can find project typecheck setup: `typescript`, `tsconfig.json`, and a local `@twelvehart/orca-ts` package dependency. A standalone binary flow in a zero-project directory without `tsconfig.json` skips this guard. Use `--no-typecheck` only when you intentionally want to skip it.
 
 The default state adapter needs no service. Use the sqlite store when a loop needs local crash recovery or longer-lived checkpoint history.
 
@@ -222,7 +231,7 @@ pipeline:
 
 | Skill | Purpose |
 | --- | --- |
-| `skills/orca-ts-setup` | Install the `orca` binary and verify at least one backend (claude/codex/opencode/pi) is authenticated; re-runnable as a doctor |
+| `skills/orca-ts-setup` | Install or verify the `orca` CLI and verify at least one backend (claude/codex/opencode/pi) is authenticated; re-runnable as a doctor |
 | `skills/orca-ts-author` | Detect the target repo's real test/lint commands, interview for the workflow or loop shape, generate an artifact that typechecks, and respect the loop execution/source/sink contracts |
 | `skills/orca-ts-flow` | Run a saved workflow or loop with monitoring, detect stalls from progress/context-pressure evidence rather than slowness, and heal backend/auth/non-convergence failures within safety bounds |
 
@@ -259,11 +268,10 @@ npx skills add ./orca-ts --skill '*' --global
 ### Run A Saved Workflow
 
 Saved one-shot workflows live at the target repo's `.orca/workflows/<name>.ts`
-and are triggered through the standalone `orca` binary — no dependency on the
-target repo's package manager:
+and are triggered through the Orca CLI:
 
 ```bash
-orca .orca/workflows/<name>.ts --backend <tag> [-- "<task args>"]
+orca --backend <tag> .orca/workflows/<name>.ts [-- "<task args>"]
 ```
 
 Reusable loop modules live under `.orca/loops/<name>.ts` and use the loop CLI:
@@ -285,7 +293,7 @@ Detailed guidance lives in each skill's `SKILL.md`.
 | [Plans](docs/plans.md) | Persistent plan helpers under `.orca/` |
 | [Review automation](docs/review.md) | Reviewer prompts, review loops, and fix execution |
 | [Parity harness](docs/parity.md) | Fixture tiers, schema exports, and backend parity checks |
-| [Distribution](docs/distribution.md) | GitHub Release binaries, installer, and embedded import notes |
+| [Distribution](docs/distribution.md) | npm package, GitHub Release binaries, installer, and embedded import notes |
 | [Release checks](docs/release.md) | Release runbook |
 | [Project language](CONTEXT.md) | Terminology used in code, docs, and agent work |
 | [Agent notes](AGENTS.md) | Contributor and agent-facing implementation context |
@@ -318,7 +326,7 @@ The package metadata exposes these entry points:
 | `@twelvehart/orca-ts` | Root flow authoring API |
 | `@twelvehart/orca-ts/model` | Shared model types and schemas |
 | `@twelvehart/orca-ts/testing` | Test helpers |
-| `bin.orca` | Source-checkout Bun CLI shim at `./bin/orca`; release installs use the compiled standalone binary |
+| `bin.orca` | Bun CLI shim installed by the npm package and source checkouts; release installs use the compiled standalone binary |
 
 ## Development Commands
 
@@ -358,6 +366,7 @@ ORCA_REAL_BACKEND_SMOKE=1 ORCA_REAL_BACKEND=pi bun test tests/integration/real-b
 | --- | --- |
 | `bun` is missing or too old | Install Bun `>=1.3.0` for source/project workflows; standalone binaries do not need Bun |
 | CLI prints typecheck errors | Run `bun run typecheck`, fix the TypeScript errors, then rerun the flow |
+| `orca` is not found after npm install | Run it through the local package bin with `npx orca`, or add `node_modules/.bin` to your script path |
 | `orca: missing project typecheck setup` warning | Add `typescript`, `tsconfig.json`, and a local `@twelvehart/orca-ts` package dependency in the flow project to restore the typecheck guard |
 | Live flow cannot start a backend | Confirm the backend CLI is on `PATH`, authenticated, and usable outside Orca |
 | `--backend` seems to do nothing | The flow must call `selectBackend()`; direct `claude()`/`codex()` calls pin the backend |
