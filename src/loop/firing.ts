@@ -3,6 +3,7 @@ import type { Result } from "neverthrow";
 
 import type { LoopOutcome, LoopRunError, LoopStopReason } from "./builder/index.ts";
 import type { LoopDefinition } from "./serve.ts";
+import { withRunReporter, type RunReporter } from "../run-output/index.ts";
 
 export const LOOP_EVENT_ENV = "ORCA_LOOP_EVENT";
 
@@ -55,6 +56,7 @@ export interface LoopFiringResult {
 
 export interface LoopFiringOptions {
   readonly writeDiagnostic?: (message: string) => void;
+  readonly reporter?: RunReporter;
 }
 
 export function createLoopChildSpec(loop: string, event: unknown): ChildSpec {
@@ -140,8 +142,26 @@ export async function runLoopFiring(
   event: unknown,
   options: LoopFiringOptions = {},
 ): Promise<LoopFiringResult> {
-  const result = await definition.run(event);
+  options.reporter?.emit({ type: "run_started", label: definition.name });
+  const result = await withRunReporter(options.reporter, () => definition.run(event));
   const diagnostic = formatLoopFiringDiagnostic(definition.name, result);
+  result.match(
+    (outcome) =>
+      options.reporter?.emit({
+        type: "run_finished",
+        label: definition.name,
+        status: "success",
+        stopReason: outcome.stopReason,
+        iterations: outcome.iterations,
+      }),
+    (error) =>
+      options.reporter?.emit({
+        type: "run_finished",
+        label: definition.name,
+        status: "failed",
+        error: describeLoopRunError(error),
+      }),
+  );
   options.writeDiagnostic?.(diagnostic);
   return { result, exitCode: exitCodeForRun(result), diagnostic };
 }

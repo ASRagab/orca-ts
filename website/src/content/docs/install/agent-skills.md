@@ -38,3 +38,7 @@ npx skills add ./orca-ts --skill '*' --global
 ```
 
 Each skill is self-contained. Its `SKILL.md`, `scripts/`, references, and templates are installed together.
+
+Generated mutating artifacts default to baseline policy `repair`. Use
+`--baseline=strict`, `--baseline=accept-dirty`, or `ORCA_BASELINE_POLICY` only
+when you want to override that per run.

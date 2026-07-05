@@ -34,16 +34,16 @@ describe("workflow monitor", () => {
     });
     monitor.recordCycle({ iteration: 2, measure: 1, usage: { input: 1, output: 2 } });
 
-    expect(lines[0]).toMatch(/^orca: run [0-9a-f-]+ started \(backend=codex\)$/);
-    expect(lines).toContain("orca: stage setup started");
-    expect(lines).toContain("orca: stage agent turn started");
-    expect(lines.some((line) => line.startsWith("orca: stage setup completed ("))).toBe(true);
-    expect(lines.some((line) => line.startsWith("orca: stage agent turn failed (") && line.endsWith(": boom"))).toBe(true);
-    expect(lines).toContain("orca: outcome src/a.ts repaired (42ms): fixed");
+    expect(lines[0]).toMatch(/^orca \| run started: [0-9a-f-]+ \(backend=codex\)$/);
+    expect(lines).toContain("orca | stage setup started");
+    expect(lines).toContain("orca | stage agent turn started");
+    expect(lines.some((line) => line.startsWith("orca | stage setup completed ("))).toBe(true);
+    expect(lines.some((line) => line.startsWith("orca | stage agent turn failed (") && line.endsWith(": boom"))).toBe(true);
+    expect(lines).toContain("orca | outcome src/a.ts repaired (42ms): fixed");
     expect(lines).toContain(
-      'orca: failure src/b.ts agent (7ms): {"_tag":"BackendFailed","backend":"codex","message":"stalled"}'
+      'orca | failure src/b.ts agent (7ms): {"_tag":"BackendFailed","backend":"codex","message":"stalled"}'
     );
-    expect(lines).toContain("orca: cycle 2 measure=1 delta=0 stop=running");
+    expect(lines).toContain("orca | cycle 2 measure=1 delta=0 stop=running usage=input=1 output=2");
   });
 
   test("emits stage heartbeats while a stage is still running", async () => {
@@ -55,7 +55,7 @@ describe("workflow monitor", () => {
 
     await monitor.stage("slow", () => new Promise((resolve) => setTimeout(resolve, 10)));
 
-    expect(lines.some((line) => line.startsWith("orca: stage slow running ("))).toBe(true);
+    expect(lines.some((line) => line.startsWith("orca | stage slow running ("))).toBe(true);
   });
 
   test("records stages, outcomes, failures, summary counts, and optional usage", async () => {

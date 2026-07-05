@@ -119,6 +119,7 @@ const accessors = read(join(SRC, "flow", "accessors.ts"));
 const reviewers = read(join(SRC, "review", "reviewers.ts"));
 const select = read(join(SRC, "backends", "select.ts"));
 const persistent = read(join(SRC, "plan", "persistent.ts"));
+const baseline = read(join(SRC, "baseline", "index.ts"));
 
 // RuntimeError _tag variants: every `_tag: z.literal("X")` in schemas.ts.
 const runtimeErrorTags = cap1(/_tag:\s*z\.literal\("([A-Za-z]+)"\)/g, schemas);
@@ -157,6 +158,7 @@ const defaultReviewers = [...reviewers.matchAll(/DefaultReviewers\s*=\s*\[([\s\S
 // Env vars the docs must document. Canonical = present in src.
 const envVars = [
   { name: "ORCA_BACKEND", inSrc: select.includes("ORCA_BACKEND") },
+  { name: "ORCA_BASELINE_POLICY", inSrc: baseline.includes("ORCA_BASELINE_POLICY") },
   { name: "ORCA_LOOP_EVENT", inSrc: firing.includes("ORCA_LOOP_EVENT") },
   { name: "ORCA_DEP_LOOP_COLLAPSE", inSrc: persistent.includes("ORCA_DEP_LOOP_COLLAPSE") },
 ];
@@ -260,6 +262,8 @@ const contracts: Contract[] = [
     docFiles: [
       webRef("backends.md"),
       webRef("cli.md"),
+      webRef("agent-skills.md"),
+      webGuide("saved-workflow.md"),
       webGuide("served-loops.md"),
       join(DOCS, "plans.md"),
       join(DOCS, "review.md"),

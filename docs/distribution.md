@@ -60,6 +60,38 @@ The embedded shim covers runtime imports from `@twelvehart/orca-ts`, `@twelvehar
 
 Standalone zero-project flows without `tsconfig.json` skip the CLI typecheck guard. Project typechecking needs `typescript`, `tsconfig.json`, and a local `@twelvehart/orca-ts` package dependency so the flow imports and runtime APIs resolve from the same project setup.
 
+Run progress from both `orca <flow.ts>` and `orca run <loop>` is written to stderr from structured run-output events. Stdout remains reserved for explicit flow output and loop sink payloads, so scripts can capture payloads without parsing progress diagnostics.
+
+## Run Output Dogfood
+
+The black-box validation fixture can be run against any local git checkout without hard-coding the path in tests:
+
+```bash
+ORCA_VALIDATE_TARGET_REPO=/path/to/repo \
+  bun ./bin/orca run --no-typecheck tests/fixtures/repo-health-loop.ts \
+  > /tmp/orca-health.stdout \
+  2> /tmp/orca-health.stderr
+```
+
+Stdout should contain only the JSON health report: target path, discovered package scripts, check results, and `checkedAt`. Stderr should contain the operational transcript: preflight, run start, stage progress for script discovery / git status / package checks, loop cycle progress, and final summary. A healthy run exits `0`; a timeout or nonzero exit should be inspected with the captured command, exit code, signal, duration, stdout, and stderr evidence from `tests/helpers/cli-process.ts`.
+
+To validate supervisor lifecycle, run the same fixture through `serve` and stop it after the child firing prints the report:
+
+```bash
+ORCA_VALIDATE_TARGET_REPO=/path/to/repo \
+  bun ./bin/orca serve --no-typecheck tests/fixtures/repo-health-loop.ts
+```
+
+`serve` writes the supervisor startup line on stderr, then inherits the child firing's stdout report and stderr progress. Press `Ctrl-C` after the report appears; shutdown should complete without a forced kill.
+
+On this workstation, `/Users/aragab/Dev/repos/cursor-agents-sdk-ts` is a useful manual target when it exists:
+
+```bash
+test -d /Users/aragab/Dev/repos/cursor-agents-sdk-ts && \
+  ORCA_VALIDATE_TARGET_REPO=/Users/aragab/Dev/repos/cursor-agents-sdk-ts \
+  bun ./bin/orca run --no-typecheck tests/fixtures/repo-health-loop.ts
+```
+
 ## Verification
 
 `bun run smoke:binary` is the load-bearing binary distribution check. It builds `dist/orca`, checks `--help` and `--version`, then runs a flow from a temporary directory that imports `@twelvehart/orca-ts` with no project setup.

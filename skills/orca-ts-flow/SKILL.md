@@ -83,7 +83,8 @@ On a non-zero exit or a flagged stall, classify the cause from the run's signals
 | Class | Signal |
 |---|---|
 | **environment** | backend crashed, or auth missing/expired (CLI error, auth/login message, non-zero before any agent output) |
-| **gate/validation** | a verification command (test/lint) failed and the fix-loop is iterating |
+| **gate/validation** | a verification command (test/lint) failed and the main fix-loop is iterating |
+| **baseline-repair** | a generated mutating artifact is repairing red baseline gates under the default `repair` or explicit `accept-dirty` policy |
 | **non-convergence** | loop execution or `fixLoop` hit a guard — stop reason / `regressedReason` such as `stuck`, `timeout`, `ceiling`, or `budget-exhausted` |
 | **stall** | no flow-level progress past the watchdog window (§2) |
 | **crash** | the run died mid-flow with a recoverable partial state (plan/commits present) |
@@ -113,8 +114,18 @@ Bounded, safety-gated recovery by class:
   `ORCA_LOOP_EVENT='...' orca run <name-or-path>` when possible. Do not restart
   the supervisor unless the `Source` itself failed. Treat `ORCA_LOOP_EVENT` as
   the reproduction envelope, not as an adapter API.
+- **baseline-repair** → this is default workflow progress for red baseline
+  gates. Let the bounded baseline repair stage run. If it exits non-converged,
+  report the failing command, latest validation output, convergence guard, and
+  monitor log path or dirty-baseline snapshot path when available.
 - **gate/validation** → this is the workflow doing its job; let the in-flow
   fix-loop iterate. Only intervene if it converges to non-convergence (above).
+
+If a workflow refuses to start because the worktree is dirty under `repair` or
+`strict`, explain that dirty baseline acceptance is opt-in via
+`--baseline=accept-dirty` or `ORCA_BASELINE_POLICY=accept-dirty`. Do not rerun
+with `accept-dirty` unless the operator explicitly asks; that mode snapshots the
+dirty baseline before backend repair work.
 
 **Hard rule:** never auto-perform a destructive or irreversible repository
 action during healing — no force-push, history rewrite, `reset --hard`,

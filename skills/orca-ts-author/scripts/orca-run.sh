@@ -10,9 +10,9 @@
 # Everything after the flow path is forwarded verbatim to the flow (and to the
 # `orca` CLI for --backend/--no-typecheck). There is NO --monitor CLI flag; a
 # flow opts into monitoring itself (the persistent-multitask template uses
-# WorkflowMonitor to write .orca/monitoring/<runId>.json). orca prints any
-# per-agent cost/usage summary itself; this wrapper adds the exit line and, only
-# when the run produced a NEW monitor log, points at it.
+# WorkflowMonitor to write .orca/monitoring/<runId>.json). orca writes progress
+# diagnostics to stderr and preserves stdout for payloads; this wrapper adds the
+# exit line and, only when the run produced a NEW monitor log, points at it.
 set -uo pipefail
 
 [ $# -lt 1 ] && { echo "usage: orca-run.sh <flow.ts> [orca/flow args...]" >&2; exit 2; }

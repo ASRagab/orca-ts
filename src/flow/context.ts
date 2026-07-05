@@ -13,6 +13,11 @@ import {
   writePlan
 } from "../plan/index.ts";
 import { createReviewTool, type ReviewTool } from "../review/index.ts";
+import {
+  activeRunReporter,
+  createRunReporter,
+  type RunReporter,
+} from "../run-output/index.ts";
 
 export interface PlanTool {
   readonly defaultPath: typeof defaultPlanPath;
@@ -34,6 +39,7 @@ export interface FlowContext {
   readonly llm: LlmTool;
   readonly plan: PlanTool;
   readonly review: ReviewTool;
+  readonly reporter: RunReporter;
 }
 
 export type FlowOverrides = Partial<Omit<FlowContext, "args">>;
@@ -61,6 +67,7 @@ export function createDefaultFlowContext(
   overrides: FlowOverrides = {}
 ): FlowContext {
   const cwd = overrides.cwd ?? process.cwd();
+  const reporter = overrides.reporter ?? activeRunReporter() ?? createRunReporter();
 
   return {
     args,
@@ -69,11 +76,12 @@ export function createDefaultFlowContext(
     git: overrides.git ?? createGitTool(cwd),
     gh: overrides.gh ?? createGitHubTool(cwd),
     linear: overrides.linear ?? createLinearTool(),
-    terminal: overrides.terminal ?? createTerminalTool(),
+    terminal: overrides.terminal ?? createTerminalTool({ reporter }),
     command: overrides.command ?? createCommandTool(cwd),
     llm: overrides.llm ?? createDefaultLlmTool(),
     plan: overrides.plan ?? createDefaultPlanTool(),
-    review: overrides.review ?? createReviewTool()
+    review: overrides.review ?? createReviewTool(),
+    reporter
   };
 }
 

@@ -16,3 +16,5 @@ website/.astro/
 
 # Compound Engineering local config
 .compound-engineering/*.local.yaml
+
+run-output/

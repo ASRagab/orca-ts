@@ -278,7 +278,7 @@ export default defineLoop({
 
       const proc = result._unsafeUnwrap();
       expect(proc.exitCode).toBe(0);
-      expect(proc.stderr).toContain('orca: loop "cli-event" stopped (converged) after 1 iteration(s)');
+      expect(proc.stderr).toContain("orca | done: cli-event stopped (converged) after 1 iteration(s)");
       expect(JSON.parse(await readFile(outputPath, "utf8"))).toEqual({ issueId: "LIN-123" });
     } finally {
       if (previous === undefined) {

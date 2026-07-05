@@ -37,3 +37,7 @@ export function plan() {
 export function review() {
   return currentFlowContext().review;
 }
+
+export function reporter() {
+  return currentFlowContext().reporter;
+}

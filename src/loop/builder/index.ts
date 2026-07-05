@@ -2,7 +2,7 @@ import { err, ok, type Result } from "neverthrow";
 
 import type { AutonomousRequest, LlmBackend } from "../../backends/index.ts";
 import type { Outcome } from "../../conversation/index.ts";
-import { flow, llm } from "../../flow/index.ts";
+import { flow, llm, reporter as currentReporter } from "../../flow/index.ts";
 import { backendFailed, type BackendTag, type RuntimeError, type Usage } from "../../model/index.ts";
 import type { Observation } from "../context/index.ts";
 import { executeLoop, type LoopExecutionAction, type LoopExecutionStepResult } from "../execution.ts";
@@ -140,15 +140,21 @@ class LoopBuilderImpl<S> implements LoopBuilder<S> {
         ...(guards.tokenBudget === undefined ? {} : { tokenBudget: guards.tokenBudget }),
         ...(options.context === undefined ? {} : { context: options.context }),
         onCycle: (progress) => {
-          if (options.onCycle === undefined || progress.measure === undefined) {
-            return;
-          }
-          options.onCycle({
+          currentReporter().emit({
+            type: "cycle_progress",
             iteration: progress.iteration,
-            measure: progress.measure,
+            ...(progress.measure === undefined ? {} : { measure: progress.measure }),
             ...(progress.usage === undefined ? {} : { usage: progress.usage }),
             ...(progress.contextPressure === undefined ? {} : { contextPressure: progress.contextPressure }),
           });
+          if (options.onCycle !== undefined && progress.measure !== undefined) {
+            options.onCycle({
+              iteration: progress.iteration,
+              measure: progress.measure,
+              ...(progress.usage === undefined ? {} : { usage: progress.usage }),
+              ...(progress.contextPressure === undefined ? {} : { contextPressure: progress.contextPressure }),
+            });
+          }
         },
       });
 

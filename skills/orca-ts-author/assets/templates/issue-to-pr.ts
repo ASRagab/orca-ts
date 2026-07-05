@@ -2,10 +2,10 @@
 // Implement work from a prompt (or a GitHub issue reference), converge the
 // verification gate, then commit, push, and open a pull request.
 //
-// Safety: the workflow isolates its own changes. Any pre-existing uncommitted
-// work is auto-stashed up front and restored at the end, so only
-// workflow-produced changes are committed; it never commits/pushes directly on
-// the base branch (it cuts a feature branch first).
+// Safety: the default baseline policy requires a clean worktree. With explicit
+// accept-dirty, the workflow snapshots and stashes user-owned dirty work before
+// baseline repair, then restores it after opening the PR. Only workflow-produced
+// changes are committed; it never commits/pushes directly on the base branch.
 //
 // SLOTS the author skill fills:
 //   - GATE      : detected target-repo verification commands (>=1 test, >=1 lint)
@@ -14,7 +14,20 @@
 //   - default backend
 //
 // Usage: orca .orca/workflows/<name>.ts -- "<task prompt or owner/repo#123>"
-import { command, fixLoop, flow, flowArgs, fs, gh, llm, ok, selectBackend } from "@twelvehart/orca-ts";
+import {
+  command,
+  captureDirtyBaselineSnapshot,
+  fixLoop,
+  flow,
+  flowArgs,
+  fs,
+  gh,
+  llm,
+  ok,
+  resolveBaselinePolicy,
+  runBaselineGate,
+  selectBackend,
+} from "@twelvehart/orca-ts";
 
 interface Cmd {
   readonly command: string;
@@ -30,6 +43,7 @@ const GATE: readonly Cmd[] = [
 const PR_TITLE = "REPLACE_WITH_PR_TITLE";
 const BASE = "main";
 const PR_BODY_PATH = ".orca/issue-to-pr-body.md";
+const ACCEPTED_DIRTY_SNAPSHOT_KEY = "orca-baselines";
 
 interface GateIssue {
   readonly message: string;
@@ -37,12 +51,37 @@ interface GateIssue {
 }
 
 await flow(flowArgs())(async () => {
-  const task = flowArgs().join(" ") || "REPLACE_WITH_TASK";
+  const baseline = resolveBaselinePolicy({ args: flowArgs() });
+  const task = baseline.args.join(" ") || "REPLACE_WITH_TASK";
   const selected = selectBackend({ default: "claude" });
 
-  // Isolate pre-existing uncommitted work so we only commit workflow changes.
-  const stashed = await stashIfDirty();
+  let stashed = false;
   try {
+    const snapshotPath =
+      baseline.policy === "accept-dirty"
+        ? await captureDirtyBaselineSnapshot({ commands: GATE, snapshotDir: await gitPath(ACCEPTED_DIRTY_SNAPSHOT_KEY) })
+        : undefined;
+    if (snapshotPath !== undefined) {
+      console.log(`Accepted dirty baseline snapshot: ${snapshotPath}`);
+      stashed = await stashIfDirty();
+    }
+
+    await runBaselineGate({
+      policy: baseline.policy === "accept-dirty" ? "repair" : baseline.policy,
+      commands: GATE,
+      repair: async (issues) => {
+        const repair = await llm()
+          .autonomous(selected.backend, {
+            prompt: `The baseline verification gate failed before PR work:\n${issues
+              .map((i) => i.message)
+              .join("\n")}\nFix the baseline. Do not weaken the gate.`,
+          })
+          .awaitResult();
+        if (repair.type !== "success") throw new Error(`baseline repair failed: ${describeOutcome(repair)}`);
+        return { usage: repair.result.usage };
+      },
+    });
+
     await ensureFeatureBranch();
 
     const impl = await llm()
@@ -91,17 +130,23 @@ await flow(flowArgs())(async () => {
   }
 });
 
-// Stash any pre-existing changes (tracked + untracked) so the workflow commits
-// only its own work. Returns true if a stash was created.
+// Stash accepted dirty baseline work (tracked + untracked). The snapshot is
+// written under the git dir so it stays auditable but outside commits.
 async function stashIfDirty(): Promise<boolean> {
   const status = await command().run({ command: "git", args: ["status", "--porcelain"] });
   if (status.type !== "success") throw new Error(`git status failed: ${status.stderr || status.stdout}`);
   if (status.stdout.trim() === "") return false;
   await runRequired({
     command: "git",
-    args: ["stash", "push", "--include-untracked", "-m", "orca-issue-to-pr autostash"],
+    args: ["stash", "push", "--include-untracked", "-m", "orca-issue-to-pr accepted dirty baseline"],
   });
   return true;
+}
+
+async function gitPath(path: string): Promise<string> {
+  const result = await command().run({ command: "git", args: ["rev-parse", "--git-path", path] });
+  if (result.type !== "success") throw new Error(`git rev-parse failed: ${result.stderr || result.stdout}`);
+  return result.stdout.trim();
 }
 
 // Restore the auto-stashed work. A pop conflict is surfaced (not swallowed) and

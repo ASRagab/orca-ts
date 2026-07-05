@@ -37,6 +37,38 @@ describe("skill flow templates", () => {
     }
     expect(result.value.exitCode).toBe(0);
   }, 120_000);
+
+  test("issue-to-pr preserves baseline repair output before main PR work", () => {
+    const text = readFileSync(join(TEMPLATES_DIR, "issue-to-pr.ts"), "utf8");
+    const snapshotIndex = text.indexOf(
+      "captureDirtyBaselineSnapshot({ commands: GATE, snapshotDir: await gitPath(ACCEPTED_DIRTY_SNAPSHOT_KEY) })",
+    );
+    const stashIndex = text.indexOf("stashed = await stashIfDirty()");
+    const gateIndex = text.indexOf("await runBaselineGate({");
+    const branchIndex = text.indexOf("await ensureFeatureBranch()");
+
+    expect(snapshotIndex).toBeGreaterThan(-1);
+    expect(stashIndex).toBeGreaterThan(snapshotIndex);
+    expect(gateIndex).toBeGreaterThan(stashIndex);
+    expect(branchIndex).toBeGreaterThan(gateIndex);
+    expect(text).toContain('policy: baseline.policy === "accept-dirty" ? "repair" : baseline.policy');
+    expect(text).toContain('ACCEPTED_DIRTY_SNAPSHOT_KEY = "orca-baselines"');
+    expect(text).toContain('git", args: ["rev-parse", "--git-path", path]');
+  });
+
+  test("cleanup-sweep protects baseline repair paths during per-file edits", () => {
+    const text = readFileSync(join(TEMPLATES_DIR, "cleanup-sweep.ts"), "utf8");
+
+    expect(text).toContain("protectedBaselineSignature(protectedBaselineEntries)");
+    expect(text).toContain("untrackedProtectedSignature");
+    expect(text).toContain("readdirSync(path)");
+    expect(text).toContain("protectedAfter !== protectedBefore");
+    expect(text).toContain("baseline-protected paths");
+    expect(text).toContain("stashed = await stashIfDirty()");
+    expect(text).toContain('ACCEPTED_DIRTY_SNAPSHOT_KEY = "orca-baselines"');
+    expect(text).toContain('git", args: ["rev-parse", "--git-path", path]');
+    expect(text).not.toContain("baselineDirtyPaths");
+  });
 });
 
 // Each skill installs as a self-contained directory via `npx skills`, so scripts

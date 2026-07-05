@@ -199,6 +199,8 @@ orca --version
 
 Loop verbs and the legacy script path share one preflight: the typecheck guard, `--backend`, and the `--` task-arg channel apply to all of them. By default, the CLI typechecks the current project before importing when it can find project typecheck setup: `typescript`, `tsconfig.json`, and a local `@twelvehart/orca-ts` package dependency. A standalone binary flow in a zero-project directory without `tsconfig.json` skips this guard. Use `--no-typecheck` only when you intentionally want to skip it.
 
+During a run, Orca writes synthesized progress diagnostics to stderr from structured run-output events. Stdout stays reserved for explicit flow output and loop sink payloads.
+
 The default state adapter needs no service. Use the sqlite store when a loop needs local crash recovery or longer-lived checkpoint history.
 
 ## Examples
@@ -289,6 +291,7 @@ Detailed guidance lives in each skill's `SKILL.md`.
 | Document | Purpose |
 | --- | --- |
 | [Backend reference](docs/backends.md) | Backend adapter behavior and live smoke details |
+| [Saved workflows](docs/workflows.md) | Generated workflow gates, baseline policy, and runbook behavior |
 | [Loops](docs/loops.md) | Loop tutorial, recipes, API notes, state, distribution, and troubleshooting |
 | [Plans](docs/plans.md) | Persistent plan helpers under `.orca/` |
 | [Review automation](docs/review.md) | Reviewer prompts, review loops, and fix execution |
@@ -304,6 +307,7 @@ The root export re-exports the main authoring modules:
 
 ```ts
 import {
+  captureDirtyBaselineSnapshot,
   claude,
   codex,
   currentFlowContext,
@@ -314,6 +318,8 @@ import {
   pi,
   plan,
   review,
+  resolveBaselinePolicy,
+  runBaselineGate,
   selectBackend,
   z
 } from "@twelvehart/orca-ts";

@@ -28,6 +28,12 @@ orca --version
 | `--help`, `-h` | Prints usage. |
 | `-- <task args>` | Passes task input to `flowArgs()`. |
 
+## Run output
+
+`orca <flow.ts>` and `orca run <loop>` render concise progress on stderr from structured run-output events: preflight status, stage progress, loop cycle progress, artifacts, and the final outcome. Non-TTY and CI output is plain line-oriented text; TTY output may use color when `NO_COLOR` is not set.
+
+Stdout is reserved for explicit flow output and loop sink payloads. A `stdout()` sink or `console.log()` in a flow should not be mixed with progress diagnostics.
+
 Valid backend tags are `claude`, `codex`, `opencode`, and `pi`.
 
 ## Loop exit codes

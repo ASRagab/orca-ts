@@ -21,6 +21,8 @@ import {
   llm,
   ok,
   recoverPlan,
+  resolveBaselinePolicy,
+  runBaselineGate,
   selectBackend,
   writePlan,
   WorkflowMonitor,
@@ -61,11 +63,29 @@ interface GateIssue {
 
 await flow(flowArgs())(async () => {
   const selected = selectBackend({ default: "claude" });
+  const baseline = resolveBaselinePolicy({ args: flowArgs() });
   const cwd = process.cwd();
   const planPath = defaultPlanPath(cwd, OBJECTIVE);
   const monitor = new WorkflowMonitor(selected.tag);
 
   try {
+    await runBaselineGate({
+      policy: baseline.policy,
+      commands: GATE,
+      monitor,
+      repair: async (issues) => {
+        const repair = await llm()
+          .autonomous(selected.backend, {
+            prompt: `The baseline verification gate failed before task planning:\n${issues
+              .map((i) => i.message)
+              .join("\n")}\nFix the baseline. Do not weaken the gate.`,
+          })
+          .awaitResult();
+        if (repair.type !== "success") throw new Error(`baseline repair failed: ${describeOutcome(repair)}`);
+        return { usage: repair.result.usage };
+      },
+    });
+
     const tasks = await loadOrPlanTasks(selected.backend, cwd);
     const pending = tasks.filter((task) => !task.done);
     console.log(

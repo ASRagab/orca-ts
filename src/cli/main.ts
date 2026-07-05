@@ -10,10 +10,15 @@ import {
   listLoops,
   loadDefinition,
   serve,
-  type LoopRunError,
   type ModuleImporter
 } from "../loop/index.ts";
 import { decodeLoopEvent, runLoopFiring } from "../loop/firing.ts";
+import {
+  createRunPresenter,
+  createRunReporter,
+  withRunReporter,
+  type RunReporter,
+} from "../run-output/index.ts";
 import { parseCliArgs, type CliArgs } from "./args.ts";
 import { ORCA_VERSION } from "./version.ts";
 
@@ -66,7 +71,9 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return;
   }
 
-  if (!(await preflight(args))) {
+  const reporter = createCliReporter();
+
+  if (!(await preflight(args, reporter))) {
     return; // typecheck failed; exit code already set
   }
   if (await respawnIfEmbeddedFallbackNeeded(args, argv)) {
@@ -78,7 +85,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return;
   }
   if (args.command === "run" && args.loop !== undefined) {
-    await runLoop(args.loop);
+    await runLoop(args.loop, reporter);
     return;
   }
   if (args.command === "serve" && args.loop !== undefined) {
@@ -86,19 +93,21 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return;
   }
   if (args.script !== undefined) {
-    await runFlowScript(args.script, argv);
+    await runFlowScript(args.script, argv, reporter);
   }
 }
 
 /** Shared preflight for every command: typecheck (unless skipped) + backend/flow-arg env wiring. */
-async function preflight(args: CliArgs): Promise<boolean> {
+async function preflight(args: CliArgs, reporter: RunReporter): Promise<boolean> {
   if (process.env[PREFLIGHT_DONE_ENV] === "1") {
     return true;
   }
 
+  reporter.emit({ type: "preflight", name: "typecheck", status: "started" });
   const typecheck = await runTypecheck({ cwd: process.cwd(), skip: args.skipTypecheck });
   if (typecheck.isErr()) {
     const error = typecheck.error;
+    reporter.emit({ type: "preflight", name: "typecheck", status: "failed", reason: describeError(error) });
     if (error._tag === "TypecheckFailed") {
       process.stderr.write(error.stdout);
       process.stderr.write(error.stderr);
@@ -110,12 +119,20 @@ async function preflight(args: CliArgs): Promise<boolean> {
   }
 
   if (typecheck.value.skipped) {
+    reporter.emit({
+      type: "preflight",
+      name: "typecheck",
+      status: "skipped",
+      ...(typecheck.value.reason === undefined ? {} : { reason: typecheck.value.reason }),
+    });
     if (typecheck.value.reason === "tsc-not-found") {
       process.stderr.write(
         "orca: missing project typecheck setup; skipping typecheck. Add typescript, tsconfig.json, and a local @twelvehart/orca-ts package dependency to enable it.\n"
       );
     }
     process.env.ORCA_TYPECHECK_SKIPPED = "1";
+  } else {
+    reporter.emit({ type: "preflight", name: "typecheck", status: "passed" });
   }
 
   if (args.backend) {
@@ -138,7 +155,7 @@ async function runLoops(): Promise<void> {
 }
 
 /** `orca run <loop>`: resolve the loop, run it once, exit with a status reflecting the stop reason. */
-async function runLoop(target: string): Promise<void> {
+async function runLoop(target: string, reporter: RunReporter): Promise<void> {
   const importLoop = await loopImporter();
   const loaded = await loadDefinition(target, { cwd: process.cwd(), import: importLoop });
   if (loaded.isErr()) {
@@ -147,9 +164,7 @@ async function runLoop(target: string): Promise<void> {
     return;
   }
   const definition = loaded.value;
-  const firing = await runLoopFiring(definition, decodeLoopEvent(), {
-    writeDiagnostic: (message) => process.stderr.write(message),
-  });
+  const firing = await runLoopFiring(definition, decodeLoopEvent(), { reporter });
   process.exitCode = firing.exitCode;
 }
 
@@ -177,7 +192,7 @@ async function runServe(target: string): Promise<void> {
 }
 
 /** Legacy flow-script path, with one respawn when the embedded fallback is needed. */
-async function runFlowScript(script: string, argv: readonly string[]): Promise<void> {
+async function runFlowScript(script: string, argv: readonly string[], reporter: RunReporter): Promise<void> {
   const resolvedScript = resolve(script);
   const { ensureOrcaResolvable } = await import("./embedded.ts");
   const shouldRespawn = process.env[EMBEDDED_RESPAWN_ENV] !== "1" && !isBunExecutable();
@@ -186,7 +201,14 @@ async function runFlowScript(script: string, argv: readonly string[]): Promise<v
     respawnWithEmbeddedFallback(argv);
     return;
   }
-  await import(pathToFileURL(resolvedScript).href);
+  reporter.emit({ type: "run_started", label: resolvedScript });
+  try {
+    await withRunReporter(reporter, () => import(pathToFileURL(resolvedScript).href));
+    reporter.emit({ type: "run_finished", label: resolvedScript, status: "success" });
+  } catch (error) {
+    reporter.emit({ type: "run_finished", label: resolvedScript, status: "failed", error: describeError(error) });
+    throw error;
+  }
 }
 
 /** An embedded-aware importer: register the standalone package fallback, then import the module. */
@@ -268,14 +290,29 @@ function waitForShutdown(): Promise<void> {
   });
 }
 
-function describeError(error: LoopRunError): string {
-  if ("message" in error) {
+function createCliReporter(): RunReporter {
+  return createRunReporter({
+    sinks: [
+      createRunPresenter({
+        isTTY: process.stderr.isTTY === true,
+        writeDiagnostic: (message) => process.stderr.write(message),
+      }),
+    ],
+  });
+}
+
+function describeError(error: unknown): string {
+  if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
     return error.message;
   }
-  if ("reason" in error) {
+  if (typeof error === "object" && error !== null && "reason" in error && typeof error.reason === "string") {
     return error.reason;
   }
-  return JSON.stringify(error);
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
 }
 
 if (import.meta.main) {

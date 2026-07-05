@@ -1,9 +1,9 @@
 ---
 title: Tools
-description: The FlowContext capability tools — FsTool, GitTool, GitHubTool, LinearTool, CommandTool, TerminalTool, LlmTool — with Result-typed signatures.
+description: The FlowContext capability tools — FsTool, GitTool, GitHubTool, LinearTool, CommandTool, TerminalTool, LlmTool, RunReporter — with Result-typed signatures.
 ---
 
-A flow runs inside a `FlowContext` whose capability tools are reached through the accessor functions `fs()`, `git()`, `gh()`, `linear()`, `terminal()`, `command()`, `llm()`, `plan()`, and `review()` (see [Public API](../api/)). Every tool that can fail is `Result`-typed over `RuntimeError` (see [Runtime Errors](../runtime-errors/)). Signatures are transcribed from `src/tools/` and verified by `bun run docs:symbols`.
+A flow runs inside a `FlowContext` whose capability tools are reached through the accessor functions `fs()`, `git()`, `gh()`, `linear()`, `terminal()`, `command()`, `llm()`, `plan()`, `review()`, and `reporter()` (see [Public API](../api/)). Every tool that can fail is `Result`-typed over `RuntimeError` (see [Runtime Errors](../runtime-errors/)). Signatures are transcribed from `src/tools/` and verified by `bun run docs:symbols`.
 
 ## `FsTool`
 
@@ -98,6 +98,18 @@ interface TerminalTool {
 ```
 
 `emit` renders an `OrcaEvent` to the in-memory line buffer; `lines()` returns the buffered rendered lines; `status` renders a status-bar line (honoring `NO_COLOR`/`CI`/non-TTY). These are synchronous and side-effect-free beyond the buffer.
+
+When a flow runs under the CLI, compatible terminal events also feed the active `RunReporter`: `step` becomes stage progress, assistant messages become agent summaries, tool events become agent activity, and token events become usage facts. This preserves `terminal().lines()` while allowing the CLI to render the same structured progress output used by loops.
+
+```ts
+interface RunReporter {
+  emit(event: RunEvent): void;
+  events(): readonly RunEvent[];
+  flush(): Promise<void>;
+}
+```
+
+`reporter().emit(event)` records a structured run-output fact for the active run. The CLI presenter writes those facts to stderr; stdout remains reserved for explicit flow output and loop sinks. Tests can override `reporter` in `flow(..., { reporter })` to capture events without writing process streams.
 
 ## `LlmTool`
 

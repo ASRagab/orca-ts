@@ -16,6 +16,8 @@ Orca's backend runtime already bounds a single autonomous turn with inactivity a
 
 The dogfood cleanup workflow can write monitoring logs and `scripts/summarize-run.ts` can summarize them by backend, stage, file, repair count, failure, and usage.
 
+When a `WorkflowMonitor` is attached to an active CLI run, the same stage, outcome, failure, cycle, heartbeat, and monitor-log facts can feed the shared run-output presenter. The JSON log remains the durable source of truth; human progress lines are derived diagnostics written to stderr.
+
 ## Monitoring JSON schema
 
 `WorkflowMonitor` (in `src/monitor/index.ts`) records a `WorkflowRunLog` and writes it with `writeLog(logDir)`. `.orca/monitoring/` is the caller convention — `writeLog` accepts any directory and writes `<logDir>/<runId>.json`. The schema:
@@ -51,6 +53,7 @@ interface OutcomeLog {
   readonly regressedReason?: "stuck" | "timeout" | "ceiling"; // only when verdict === "regressed"
   readonly tokens?: number;
   readonly usage?: Usage;
+  readonly snapshotPath?: string; // dirty baseline snapshot, when available
 }
 
 interface CommandLog {
@@ -108,6 +111,8 @@ backend usage is still reported as `unknown`, not zero.
 
 - Backend auth or crash: run the backend doctor, re-authenticate, and re-run.
 - Gate failure: let the in-flow fix loop iterate unless it reaches a guard.
+- Baseline repair: let the pre-main-work baseline stage iterate unless it reaches
+  a guard; report `snapshotPath` when dirty baseline mode was used.
 - Non-convergence: inspect the stop reason, failing gate, and last state.
 - Crash with persisted state: re-run the same workflow or loop; recover from the persistent plan or state store.
 
