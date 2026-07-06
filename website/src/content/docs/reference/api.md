@@ -8,7 +8,8 @@ The package root (`src/index.ts`) re-exports the public runtime surface grouped 
 ```ts
 import {
   claude, codex, opencode, pi, selectBackend,
-  flow, flowArgs, fs, git, gh, linear, terminal, command, llm, plan, review,
+  captureDirtyBaselineSnapshot, resolveBaselinePolicy, runBaselineGate,
+  flow, flowArgs, fs, git, gh, linear, terminal, command, llm, plan, review, reporter,
   loop, defineLoop, serve, createSnapshotStore, createSqliteStore,
   fixLoop, reviewAndFixStrategy,
   WorkflowMonitor,
@@ -35,8 +36,17 @@ A flow runs inside a `FlowContext`. The accessor functions return the current co
 | `llm()` | `LlmTool` | `autonomous(backend, request)` → `Conversation`. |
 | `plan()` | `PlanTool` | Plan persistence (see `docs/plans.md`). |
 | `review()` | `ReviewTool` | Review and fix loops (see `docs/review.md`). |
+| `reporter()` | `RunReporter` | Emit structured progress facts for the active CLI run. |
 
-The full tool interfaces (`FsTool`, `GitTool`, `GitHubTool`, `LinearTool`, `CommandTool`, `TerminalTool`, `LlmTool`) are documented in [Tools](../tools/). `flow()` creates a direct-style flow context; `flowArgs()` reads task tokens passed after CLI `--`.
+The full tool interfaces (`FsTool`, `GitTool`, `GitHubTool`, `LinearTool`, `CommandTool`, `TerminalTool`, `LlmTool`, `RunReporter`) are documented in [Tools](../tools/). `flow()` creates a direct-style flow context; `flowArgs()` reads task tokens passed after CLI `--`.
+
+## Baseline gates
+
+`resolveBaselinePolicy({ args, env? })` parses `--baseline=<policy>`, `--baseline <policy>`, or `ORCA_BASELINE_POLICY`, defaulting to `repair` and returning remaining workflow args. Policies are `repair`, `strict`, and `accept-dirty`.
+
+`captureDirtyBaselineSnapshot(options)` writes a dirty-baseline snapshot when the worktree is dirty. It captures status and diffs before gate commands, then appends the initial gate output.
+
+`runBaselineGate(options)` runs the configured verification commands before a generated mutating artifact starts main work. `repair` requires a clean worktree and repairs red gates through the provided callback; `strict` fails on red gates; `accept-dirty` writes a dirty baseline snapshot before repair.
 
 ## Loops
 

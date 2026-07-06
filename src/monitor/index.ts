@@ -5,6 +5,13 @@ import type { Usage } from "../model/index.ts";
 import { TokenBudgetCounter, type TokenUsageSummary } from "../loop/termination.ts";
 import type { LoopStopReason } from "../loop/builder/types.ts";
 import type { LoopContextPressure } from "../loop/execution.ts";
+import {
+  createRunPresenter,
+  createRunReporter,
+  type CycleBranchEvent,
+  type RunEvent,
+  type RunReporter,
+} from "../run-output/index.ts";
 
 export type StageStatus = "completed" | "failed";
 /** Discriminated cleanup verdict. `clean`/`repaired` are safe improvements
@@ -53,6 +60,7 @@ export interface OutcomeLog {
   /** Total agent tokens spent on this file (initial edit + repairs). */
   readonly tokens?: number;
   readonly usage?: Usage;
+  readonly snapshotPath?: string;
 }
 
 export interface FailureLog {
@@ -145,6 +153,7 @@ export interface WorkflowRunLog {
 
 export interface WorkflowMonitorOptions {
   readonly writeStatus?: (line: string) => void;
+  readonly reporter?: RunReporter;
   readonly statusIntervalMs?: number;
 }
 
@@ -154,7 +163,7 @@ export class WorkflowMonitor {
   readonly #runId: string;
   readonly #startedAt: Date;
   readonly #backend: string;
-  readonly #writeStatus: ((line: string) => void) | undefined;
+  readonly #reporter: RunReporter;
   readonly #statusIntervalMs: number;
   readonly #stages: StageLog[] = [];
   readonly #outcomes: OutcomeLog[] = [];
@@ -167,9 +176,9 @@ export class WorkflowMonitor {
     this.#runId = randomUUID();
     this.#startedAt = new Date();
     this.#backend = backend;
-    this.#writeStatus = options.writeStatus ?? defaultStatusWriter();
+    this.#reporter = options.reporter ?? defaultRunReporter(options.writeStatus);
     this.#statusIntervalMs = options.statusIntervalMs ?? DefaultStatusIntervalMs;
-    this.#emitStatus(`orca: run ${this.#runId} started (backend=${backend})`);
+    this.#emit({ type: "run_started", runId: this.#runId, backend });
   }
 
   get runId(): string {
@@ -180,17 +189,17 @@ export class WorkflowMonitor {
     const startedAt = new Date().toISOString();
     const start = Date.now();
     const heartbeat = this.#startHeartbeat(name, start);
-    this.#emitStatus(`orca: stage ${name} started`);
+    this.#emit({ type: "stage", name, status: "started" });
     try {
       const result = await fn();
       const durationMs = Date.now() - start;
       this.#stages.push({ name, startedAt, durationMs, status: "completed" });
-      this.#emitStatus(`orca: stage ${name} completed (${formatDuration(durationMs)})`);
+      this.#emit({ type: "stage", name, status: "completed", durationMs });
       return result;
     } catch (error) {
       const durationMs = Date.now() - start;
       this.#stages.push({ name, startedAt, durationMs, status: "failed" });
-      this.#emitStatus(`orca: stage ${name} failed (${formatDuration(durationMs)}): ${describeError(error)}`);
+      this.#emit({ type: "stage", name, status: "failed", durationMs, message: describeError(error) });
       throw error;
     } finally {
       if (heartbeat !== undefined) {
@@ -201,17 +210,24 @@ export class WorkflowMonitor {
 
   recordOutcome(log: OutcomeLog): void {
     this.#outcomes.push(log);
-    this.#emitStatus(
-      `orca: outcome ${log.file} ${log.verdict} (${formatDuration(log.durationMs)})${log.reason ? `: ${log.reason}` : ""}`
-    );
+    this.#emit({
+      type: "outcome",
+      file: log.file,
+      verdict: log.verdict,
+      durationMs: log.durationMs,
+      ...(log.reason === undefined ? {} : { reason: log.reason }),
+    });
   }
 
   recordFailure(log: FailureLog): void {
     this.#failures.push(log);
-    const category = log.category === undefined ? "" : ` ${log.category}`;
-    this.#emitStatus(
-      `orca: failure ${log.file}${category} (${formatDuration(log.durationMs)}): ${describeError(log.error)}`
-    );
+    this.#emit({
+      type: "failure",
+      file: log.file,
+      ...(log.category === undefined ? {} : { category: log.category }),
+      durationMs: log.durationMs,
+      message: describeError(log.error),
+    });
   }
 
   /** Append a per-cycle progress record. `delta` is derived against the prior cycle's `measure`
@@ -244,9 +260,18 @@ export class WorkflowMonitor {
       cumulativeUsage: this.#cumulativeUsage.summary(),
       ...(observation.contextPressure === undefined ? {} : { contextPressure: observation.contextPressure }),
     });
-    this.#emitStatus(
-      `orca: cycle ${String(observation.iteration)} measure=${String(observation.measure)} delta=${String(delta)} stop=${stopReasonSoFar}`
-    );
+    this.#emit({
+      type: "cycle_progress",
+      iteration: observation.iteration,
+      measure: observation.measure,
+      delta,
+      stopStatus: stopReasonSoFar,
+      ...(observation.usage === undefined ? {} : { usage: observation.usage }),
+      ...(observation.branches === undefined
+        ? {}
+        : { branches: observation.branches.map(toRunEventBranch) }),
+      ...(observation.contextPressure === undefined ? {} : { contextPressure: observation.contextPressure }),
+    });
   }
 
   toJson(): WorkflowRunLog {
@@ -272,22 +297,23 @@ export class WorkflowMonitor {
     const path = join(logDir, `${this.#runId}.json`);
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, JSON.stringify(this.toJson(), null, 2));
+    this.#emit({ type: "artifact", artifact: "monitor-log", path });
   }
 
   #startHeartbeat(name: string, start: number): ReturnType<typeof setInterval> | undefined {
-    if (this.#writeStatus === undefined || this.#statusIntervalMs <= 0) {
+    if (this.#statusIntervalMs <= 0) {
       return undefined;
     }
     const heartbeat = setInterval(() => {
-      this.#emitStatus(`orca: stage ${name} running (${formatDuration(Date.now() - start)})`);
+      this.#emit({ type: "stage", name, status: "running", durationMs: Date.now() - start });
     }, this.#statusIntervalMs);
     heartbeat.unref();
     return heartbeat;
   }
 
-  #emitStatus(line: string): void {
+  #emit(event: RunEvent): void {
     try {
-      this.#writeStatus?.(line);
+      this.#reporter.emit(event);
     } catch {
       return;
     }
@@ -298,11 +324,30 @@ function toBranchProgress(branch: BranchObservation): BranchProgress {
   return { id: branch.id, status: branch.status, usage: branch.usage ?? "unknown" };
 }
 
+function toRunEventBranch(branch: BranchObservation): CycleBranchEvent {
+  return { id: branch.id, status: branch.status, usage: branch.usage ?? "unknown" };
+}
+
+function defaultRunReporter(writeStatus: ((line: string) => void) | undefined): RunReporter {
+  const writer = writeStatus ?? defaultStatusWriter();
+  if (writer === undefined) {
+    return createRunReporter();
+  }
+  return createRunReporter({
+    sinks: [
+      createRunPresenter({
+        isTTY: process.stderr.isTTY === true,
+        writeDiagnostic: (text) => writer(text.endsWith("\n") ? text.slice(0, -1) : text),
+      }),
+    ],
+  });
+}
+
 function defaultStatusWriter(): ((line: string) => void) | undefined {
-  if (!process.stdout.isTTY) {
+  if (!process.stderr.isTTY) {
     return undefined;
   }
-  return (line) => process.stdout.write(`${line}\n`);
+  return (line) => process.stderr.write(`${line}\n`);
 }
 
 function describeError(error: unknown): string {
@@ -317,17 +362,4 @@ function describeError(error: unknown): string {
   } catch {
     return String(error);
   }
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1_000) {
-    return `${String(ms)}ms`;
-  }
-  const seconds = Math.floor(ms / 1_000);
-  if (seconds < 60) {
-    return `${String(seconds)}s`;
-  }
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return `${String(minutes)}m ${String(remainder)}s`;
 }

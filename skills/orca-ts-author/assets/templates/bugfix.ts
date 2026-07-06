@@ -8,7 +8,17 @@
 //   - GATE       : detected target-repo verification commands (>=1 test, >=1 lint)
 //   - BUG_REPORT : the bug description / reproduction notes
 //   - default backend
-import { command, fixLoop, flow, flowArgs, llm, ok, selectBackend } from "@twelvehart/orca-ts";
+import {
+  command,
+  fixLoop,
+  flow,
+  flowArgs,
+  llm,
+  ok,
+  resolveBaselinePolicy,
+  runBaselineGate,
+  selectBackend,
+} from "@twelvehart/orca-ts";
 
 interface Cmd {
   readonly command: string;
@@ -31,14 +41,25 @@ interface GateIssue {
 
 await flow(flowArgs())(async () => {
   const selected = selectBackend({ default: "claude" });
+  const baseline = resolveBaselinePolicy({ args: flowArgs() });
   try {
-    // Step 0 — the gate must be GREEN before we start, or a pre-existing failure
-    // would masquerade as a successful repro in Step 2.
-    if ((await runGate(GATE)) !== undefined) {
-      throw new Error(
-        "baseline gate is already red — cannot prove a repro against a red baseline; fix that first",
-      );
-    }
+    // Step 0 — make the baseline GREEN before writing the repro, or a
+    // pre-existing failure would masquerade as a successful repro in Step 2.
+    await runBaselineGate({
+      policy: baseline.policy,
+      commands: GATE,
+      repair: async (issues) => {
+        const repair = await llm()
+          .autonomous(selected.backend, {
+            prompt: `The baseline verification gate failed before the repro test:\n${issues
+              .map((i) => i.message)
+              .join("\n")}\nFix only the baseline. Do not add the repro yet. Do not weaken the gate.`,
+          })
+          .awaitResult();
+        if (repair.type !== "success") throw new Error(`baseline repair failed: ${describeOutcome(repair)}`);
+        return { usage: repair.result.usage };
+      },
+    });
 
     // Step 1 — write a failing test that reproduces the bug.
     const repro = await llm()

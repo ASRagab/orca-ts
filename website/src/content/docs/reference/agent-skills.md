@@ -17,8 +17,8 @@ description: What each bundled skill does and when to use it.
 
 `orca-ts-author` reads the target repo, detects real test and lint commands, interviews for workflow shape, fills a checked template, and saves either `.orca/workflows/<name>.ts` or `.orca/loops/<name>.ts`.
 
-Mutating artifacts must include verification gates.
+Mutating artifacts must include verification gates and the shared baseline policy. The default is `repair`; `strict` and `accept-dirty` are explicit overrides via `--baseline=<policy>` or `ORCA_BASELINE_POLICY`.
 
 ## Flow
 
-`orca-ts-flow` runs saved artifacts, watches monitoring JSON, loop state, persistent plans, and git progress, then diagnoses backend failures, gate failures, non-convergence, stalls, crashes, and served-child failures.
+`orca-ts-flow` runs saved artifacts, watches monitoring JSON, loop state, persistent plans, and git progress, then diagnoses backend failures, baseline repair progress, gate failures, non-convergence, stalls, crashes, and served-child failures. It does not retry with `accept-dirty` unless the operator explicitly asks.

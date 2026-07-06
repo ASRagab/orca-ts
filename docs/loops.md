@@ -261,6 +261,10 @@ supervisor stops the children.
 mapping. Custom `Source` and `Sink` adapters should depend only on the public
 event/output contracts, not on `ORCA_LOOP_EVENT` or supervisor internals.
 
+Run progress is rendered from structured run-output events on stderr. Loop cycle
+progress and final summaries use the same presenter as legacy flows; stdout is
+reserved for explicit sink payloads such as `stdout()`.
+
 ## Recipes
 
 ### Minimal Preset Loop

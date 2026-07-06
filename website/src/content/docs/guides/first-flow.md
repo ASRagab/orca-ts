@@ -42,4 +42,6 @@ orca --backend codex hello.ts
 
 `selectBackend()` lets the CLI select the backend through `ORCA_BACKEND`. `ORCA_BACKEND_MODEL` overrides the configured model for the selected backend.
 
+Use `terminal().emit(...)` or `reporter().emit(...)` for concise progress during a flow. The CLI renders those facts on stderr; keep stdout for payloads that callers may pipe or parse.
+
 Use `selected.shutdown?.()` in a `finally` because OpenCode owns a managed `opencode serve` process.

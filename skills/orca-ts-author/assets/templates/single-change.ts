@@ -9,7 +9,17 @@
 //
 // Stack-agnostic: GATE commands are whatever THIS repo uses. Trigger:
 //   orca .orca/workflows/<name>.ts --backend <tag>
-import { command, fixLoop, flow, flowArgs, llm, ok, selectBackend } from "@twelvehart/orca-ts";
+import {
+  command,
+  fixLoop,
+  flow,
+  flowArgs,
+  llm,
+  ok,
+  resolveBaselinePolicy,
+  runBaselineGate,
+  selectBackend,
+} from "@twelvehart/orca-ts";
 
 interface Cmd {
   readonly command: string;
@@ -31,7 +41,26 @@ interface GateIssue {
 
 await flow(flowArgs())(async () => {
   const selected = selectBackend({ default: "claude" });
+  const baseline = resolveBaselinePolicy({ args: flowArgs() });
   try {
+    await runBaselineGate({
+      policy: baseline.policy,
+      commands: GATE,
+      repair: async (issues) => {
+        const repair = await llm()
+          .autonomous(selected.backend, {
+            prompt: `The baseline verification gate failed before the main task:\n${issues
+              .map((i) => i.message)
+              .join("\n")}\nFix the baseline. Do not weaken the gate.`,
+          })
+          .awaitResult();
+        if (repair.type !== "success") {
+          throw new Error(`baseline repair turn failed: ${describeOutcome(repair)}`);
+        }
+        return { usage: repair.result.usage };
+      },
+    });
+
     const impl = await llm()
       .autonomous(selected.backend, { prompt: TASK_PROMPT })
       .awaitResult();

@@ -104,7 +104,7 @@ type LoopStopReason =
 
 ## Distribution
 
-`defineLoop({ name, source, sink, onTrigger })` packages a loop module. Put it under `.orca/loops/`, export it, then use `orca loops`, `orca run`, or `orca serve`. `orca run` and served children share one firing contract for event decoding, `definition.run(event)`, sink emission, diagnostics, and exit-code mapping. See the [Served Loops guide](../../guides/served-loops/) for the supervisor isolation contract and `ORCA_LOOP_EVENT` payload.
+`defineLoop({ name, source, sink, onTrigger })` packages a loop module. Put it under `.orca/loops/`, export it, then use `orca loops`, `orca run`, or `orca serve`. `orca run` and served children share one firing contract for event decoding, `definition.run(event)`, sink emission, diagnostics, and exit-code mapping. During `orca run`, loop-cycle progress from the active `RunReporter` is rendered on stderr while sink output remains on stdout. See the [Served Loops guide](../../guides/served-loops/) for the supervisor isolation contract and `ORCA_LOOP_EVENT` payload.
 
 Built-in source kinds: `manual`, `cron`, `watch`, `webhook`, `queue`, `linear-issue`, `linear-agent`.
 

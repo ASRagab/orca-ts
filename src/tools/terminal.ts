@@ -1,4 +1,5 @@
 import type { OrcaEvent } from "../model/index.ts";
+import type { RunReporter } from "../run-output/index.ts";
 
 export interface TerminalTool {
   emit(event: OrcaEvent): void;
@@ -17,12 +18,18 @@ export interface StatusBarOptions {
   readonly isTTY?: boolean;
 }
 
-export function createTerminalTool(): TerminalTool {
+export interface TerminalToolOptions {
+  readonly reporter?: RunReporter;
+}
+
+export function createTerminalTool(options: TerminalToolOptions = {}): TerminalTool {
   const output: string[] = [];
+  const reporter = options.reporter;
 
   return {
     emit(event) {
       output.push(renderOrcaEvent(event));
+      emitRunEvent(event, reporter);
     },
     lines() {
       return [...output];
@@ -30,6 +37,12 @@ export function createTerminalTool(): TerminalTool {
     status(status, options) {
       const line = renderStatusBar(status, options);
       output.push(line);
+      reporter?.emit({
+        type: "stage",
+        name: status.label,
+        status: "running",
+        message: `${String(status.current)}/${String(status.total)}`,
+      });
       return line;
     }
   };
@@ -67,4 +80,37 @@ export function renderStatusBar(
   }
 
   return `\r${text}\u001b[K`;
+}
+
+function emitRunEvent(event: OrcaEvent, reporter: RunReporter | undefined): void {
+  if (reporter === undefined) {
+    return;
+  }
+  switch (event.type) {
+    case "tool_use":
+      reporter.emit({ type: "agent_activity", activity: "tool_use", name: event.name });
+      return;
+    case "assistant_message":
+      reporter.emit({ type: "agent_activity", activity: "assistant_summary", summary: event.text });
+      return;
+    case "tokens_used":
+      reporter.emit({ type: "agent_activity", activity: "usage", usage: event.usage });
+      return;
+    case "structured_result":
+      reporter.emit({
+        type: "agent_activity",
+        activity: "assistant_summary",
+        summary: event.summary ?? JSON.stringify(event.raw),
+      });
+      return;
+    case "step":
+      reporter.emit({ type: "stage", name: event.name, status: event.status });
+      return;
+    case "error":
+      reporter.emit({ type: "failure", file: "flow", message: event.message });
+      return;
+    case "user_prompt":
+      reporter.emit({ type: "agent_activity", activity: "assistant_summary", summary: event.text });
+      return;
+  }
 }

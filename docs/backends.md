@@ -88,7 +88,9 @@ ORCA_REAL_BACKEND_SMOKE=1 ORCA_REAL_BACKEND=codex bun test tests/integration/rea
 
 ## Monitoring and current dogfood baseline
 
-`workflows/ai-slop-cleanup.ts --monitor` writes `.orca/monitoring/<runId>.json` with stage timing, per-file outcomes, validation command durations, repair counts, failure categories, changed paths, and backend usage/tokens when emitted. `bun run scripts/summarize-run.ts` summarizes those logs by backend, stage, file, repairs, failures, and usage.
+`workflows/ai-slop-cleanup.ts --monitor` writes `.orca/monitoring/<runId>.json` with stage timing, per-file outcomes, validation command durations, repair counts, failure categories, changed paths, dirty-baseline snapshot paths when available, and backend usage/tokens when emitted. `bun run scripts/summarize-run.ts` summarizes those logs by backend, stage, file, repairs, failures, and usage.
+
+The monitor records durable JSON first; when a run reporter is active, those same stage, outcome, failure, cycle, heartbeat, and log-artifact facts also feed the human CLI progress stream on stderr.
 
 Observed on 2026-06-12 using clean disposable repositories with `--no-publish --monitor --max-files=1` against `src/conversation/ask-user.ts`:
 

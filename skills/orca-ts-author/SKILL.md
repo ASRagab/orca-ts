@@ -78,6 +78,8 @@ accept a bare answer. Never dump all axes at once.
    - `selectBackend({ default })` tag = the verified backend;
    - the `GATE` array = the **confirmed target-repo commands** (`command` + `args`);
    - the prompt/objective/title/pathspec for the archetype.
+   - keep `resolveBaselinePolicy({ args: flowArgs() })` and `runBaselineGate()`
+     wired before any main backend turn or file edit for mutating artifacts.
 4. Apply every `gotchas.md` rule as you fill: import from `"@twelvehart/orca-ts"`; narrow
    `outcome.type`; `selected.shutdown?.()` in a `finally`; `fixLoop` issues carry
    `fixable`; no-progress detection is explicit; deprecated task/review wrappers
@@ -108,6 +110,14 @@ per-task/per-file loop, **at least one test gate and one lint gate** (the
 confirmed target-repo commands). A gate failure must drive repair or be reported
 — never silently ignored.
 
+Mutating artifacts also use the shared baseline policy before their main stage:
+`repair` is the default, `strict` fails immediately on red gates, and
+`accept-dirty` is the only mode that accepts a dirty worktree. Runtime overrides
+are `--baseline=strict`, `--baseline=accept-dirty`, or
+`ORCA_BASELINE_POLICY=<policy>`; a `--baseline` arg wins over the environment.
+In `accept-dirty`, the artifact snapshots status, diffs, untracked files, and
+initial gate output before any backend repair turn.
+
 If no verification command was detected **and** the user declines to supply any,
 **refuse to emit the artifact** and explain that a gate is what turns a vibe into
 a productized workflow. Do not save ungated mutating code.
@@ -123,8 +133,11 @@ For a workflow script, write:
 2. **`.orca/workflows/<name>.run.md`** — a runbook containing:
    - the exact trigger: `orca .orca/workflows/<name>.ts --backend <tag> [-- "<args>"]`
      (or via `bash skills/orca-ts-author/scripts/orca-run.sh .orca/workflows/<name>.ts ...`);
-   - prerequisites (verified backend, clean worktree if the flow commits, `gh`
-     auth for issue-to-pr);
+   - prerequisites (verified backend, `gh` auth for issue-to-pr, and the default
+     `repair` baseline policy requiring a clean worktree);
+   - baseline override syntax:
+     `orca .orca/workflows/<name>.ts --backend <tag> -- --baseline=strict` and
+     `orca .orca/workflows/<name>.ts --backend <tag> -- --baseline=accept-dirty`;
    - the verification commands it gates on;
    - **for non-TS targets**: the note that the binary skips its typecheck guard
      in a repo with no `tsconfig.json` (it warns and runs anyway);
@@ -143,6 +156,8 @@ For a loop module, write:
    - one-shot run: `ORCA_LOOP_EVENT='{}' orca run <name-or-path>`;
    - served run: `orca serve <name-or-path>`;
    - prerequisites for its `Source`, `Sink`, backend, and verification gates;
+   - for mutating loop modules, the same baseline policy behavior and override
+     syntax used by workflow scripts;
    - note that `ORCA_LOOP_EVENT` is the CLI/supervisor firing envelope; custom
      `Source` and `Sink` adapters should not read it directly;
    - state/resume notes if the loop uses `createSnapshotStore()` or `createSqliteStore()`.
