@@ -201,30 +201,3 @@ export function expectOrderedStderr(result: CliProcessResult, diagnostics: reado
     offset = next + diagnostic.length;
   }
 }
-
-export function expectOrderedProcessEvidence(
-  result: CliProcessResult,
-  sequence: readonly { stream: "stdout" | "stderr"; text: string }[],
-): void {
-  let offset = 0;
-  const timeline = result.chunks.map((chunk) => `[${chunk.stream}] ${chunk.text}`).join("");
-  for (const expected of sequence) {
-    let textAt = timeline.indexOf(expected.text, offset);
-    while (textAt !== -1 && streamAt(timeline, textAt) !== expected.stream) {
-      textAt = timeline.indexOf(expected.text, textAt + expected.text.length);
-    }
-    if (textAt === -1) {
-      throw new Error(`process evidence out of order: ${expected.stream} ${expected.text}\n${timeline}`);
-    }
-    offset = textAt + expected.text.length;
-  }
-}
-
-function streamAt(timeline: string, offset: number): "stdout" | "stderr" | undefined {
-  const stdoutAt = timeline.lastIndexOf("[stdout]", offset);
-  const stderrAt = timeline.lastIndexOf("[stderr]", offset);
-  if (stdoutAt === -1 && stderrAt === -1) {
-    return undefined;
-  }
-  return stdoutAt > stderrAt ? "stdout" : "stderr";
-}

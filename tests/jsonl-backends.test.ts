@@ -34,9 +34,10 @@ describe("Codex JSONL Tier 1 fixtures", () => {
   });
 
   test("builds codex exec JSONL args", () => {
-    expect(codexExecJsonlArgs({ model: "gpt-5", approvalPolicy: "never" })).toEqual([
+    expect(codexExecJsonlArgs({ model: "gpt-5", approvalPolicy: "never", ignoreUserConfig: true })).toEqual([
       "exec",
       "--json",
+      "--ignore-user-config",
       "--model",
       "gpt-5",
       "-c",

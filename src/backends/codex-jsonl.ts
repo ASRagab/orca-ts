@@ -50,6 +50,7 @@ export interface CodexExecArgs {
   readonly approvalPolicy?: BackendApprovalPolicy;
   readonly sandbox?: BackendSandboxMode;
   readonly readOnly?: boolean;
+  readonly ignoreUserConfig?: boolean;
   readonly outputSchemaPath?: string;
   readonly resumeSessionId?: string;
   readonly mcpServerUrl?: string;
@@ -61,6 +62,7 @@ export function codexExecJsonlArgs(args: CodexExecArgs = {}): readonly string[] 
   const promptArgs = args.prompt === undefined ? [] : [args.prompt];
   const commonArgs = [
     "--json",
+    ...(args.ignoreUserConfig ? ["--ignore-user-config"] : []),
     ...(args.model ? ["--model", args.model] : []),
     ...(args.approvalPolicy ? ["-c", `approval_policy="${args.approvalPolicy}"`] : []),
     ...(args.mcpServerUrl ? ["-c", `mcp_servers.orca.url=${JSON.stringify(args.mcpServerUrl)}`] : []),

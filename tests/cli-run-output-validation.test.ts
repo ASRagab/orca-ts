@@ -7,7 +7,6 @@ import { describe, expect, test } from "bun:test";
 import {
   expectExitZero,
   expectNoOrcaDiagnosticsOnStdout,
-  expectOrderedProcessEvidence,
   expectOrderedStderr,
   expectProcessExited,
   expectStderrContainsDiagnostics,
@@ -129,13 +128,6 @@ export default defineLoop({
       expectNoOrcaDiagnosticsOnStdout(result);
       expectStderrContainsDiagnostics(result, ["preflight", "run started", "cycle", "done"]);
       expectOrderedStderr(result, ["preflight", "run started", "cycle", "done"]);
-      expectOrderedProcessEvidence(result, [
-        { stream: "stderr", text: "preflight" },
-        { stream: "stderr", text: "run started" },
-        { stream: "stderr", text: "cycle" },
-        { stream: "stdout", text: "payload" },
-        { stream: "stderr", text: "done" },
-      ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

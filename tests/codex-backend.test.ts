@@ -204,6 +204,7 @@ describe("Codex live backend constructor", () => {
     let args: readonly string[] = [];
     const backend = codex({
       command: "codex-test",
+      ignoreUserConfig: true,
       config: {
         model: "gpt-5",
         approvalPolicy: "never",
@@ -224,9 +225,10 @@ describe("Codex live backend constructor", () => {
 
     await backend.autonomous({ prompt: "implement task" }).awaitResult();
 
-    expect(args.slice(0, 8)).toEqual([
+    expect(args.slice(0, 9)).toEqual([
       "exec",
       "--json",
+      "--ignore-user-config",
       "--model",
       "gpt-5",
       "-c",

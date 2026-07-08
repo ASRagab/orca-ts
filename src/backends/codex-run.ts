@@ -56,6 +56,7 @@ interface ResolvedCodexConfig<Output> {
   approvalPolicy?: BackendApprovalPolicy;
   sandbox?: BackendSandboxMode;
   readOnly?: boolean;
+  ignoreUserConfig?: boolean;
   selfManagedGit?: boolean;
   retryAttempts?: number;
   schema?: z.ZodType<Output>;
@@ -103,6 +104,7 @@ export async function runCodexConversation<Output>(
       ...(config.approvalPolicy === undefined ? {} : { approvalPolicy: config.approvalPolicy }),
       ...(config.sandbox === undefined ? {} : { sandbox: config.sandbox }),
       ...(config.readOnly === undefined ? {} : { readOnly: config.readOnly }),
+      ...(config.ignoreUserConfig === undefined ? {} : { ignoreUserConfig: config.ignoreUserConfig }),
       ...(config.outputSchemaPath === undefined ? {} : { outputSchemaPath: config.outputSchemaPath }),
       ...(config.resumeSessionId === undefined ? {} : { resumeSessionId: config.resumeSessionId }),
       ...(config.mcpServerUrl === undefined ? {} : { mcpServerUrl: config.mcpServerUrl })
@@ -157,6 +159,7 @@ function resolveCodexConfig<Output>(
   if (sandbox !== undefined) config.sandbox = sandbox;
   const readOnly = requestConfig?.readOnly ?? optionConfig?.readOnly ?? options.readOnly;
   if (readOnly !== undefined) config.readOnly = readOnly;
+  if (options.ignoreUserConfig !== undefined) config.ignoreUserConfig = options.ignoreUserConfig;
   const selfManagedGit = requestConfig?.selfManagedGit ?? optionConfig?.selfManagedGit;
   if (selfManagedGit !== undefined) config.selfManagedGit = selfManagedGit;
   const retryAttempts = requestConfig?.retry?.attempts ?? optionConfig?.retry?.attempts;

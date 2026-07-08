@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
+import type { RuntimeError } from "../src/model/index.ts";
 import { runQuiet } from "../src/tools/process.ts";
 
 // Keeps the bundled skill flow templates from drifting out of the runtime API:
@@ -28,12 +29,14 @@ describe("skill flow templates", () => {
 
   test("all templates typecheck against @twelvehart/orca-ts", async () => {
     const tsc = join("node_modules", ".bin", "tsc");
+    const declarations = await runQuiet(tsc, ["-p", "tsconfig.build.json"]);
+    if (declarations.isErr()) {
+      throw new Error(`declaration build failed before skill template typecheck:\n${formatProcessError(declarations.error)}`);
+    }
+
     const result = await runQuiet(tsc, ["--noEmit", "-p", "tsconfig.skill-templates.json"]);
     if (result.isErr()) {
-      const error = result.error;
-      const detail =
-        error._tag === "CommandFailed" ? `${error.stdout}\n${error.stderr}` : JSON.stringify(error);
-      throw new Error(`skill templates failed typecheck:\n${detail}`);
+      throw new Error(`skill templates failed typecheck:\n${formatProcessError(result.error)}`);
     }
     expect(result.value.exitCode).toBe(0);
   }, 120_000);
@@ -80,6 +83,13 @@ const DUPLICATED_SCRIPTS: ReadonlyArray<readonly [string, ...string[]]> = [
   ["skills/orca-ts-author/scripts/orca-run.sh", "skills/orca-ts-flow/scripts/orca-run.sh"],
   ["skills/orca-ts-setup/scripts/orca-doctor.sh", "skills/orca-ts-flow/scripts/orca-doctor.sh"],
 ];
+
+function formatProcessError(error: RuntimeError): string {
+  if (error._tag === "CommandFailed") {
+    return `${error.stdout}\n${error.stderr}`;
+  }
+  return JSON.stringify(error);
+}
 
 describe("bundled skill scripts", () => {
   for (const group of DUPLICATED_SCRIPTS) {

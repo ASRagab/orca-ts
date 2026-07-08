@@ -95,7 +95,7 @@ function makeBackend(
 ): { backend: LlmBackend; shutdown?: () => Promise<void> } {
   switch (tag) {
     case "codex":
-      return { backend: codex({ cwd: repo }) };
+      return { backend: codex({ cwd: repo, readOnly: true, ignoreUserConfig: true }) };
     case "claude":
       return { backend: claude({ cwd: repo }) };
     case "opencode": {

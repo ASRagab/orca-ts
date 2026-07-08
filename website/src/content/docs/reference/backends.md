@@ -27,6 +27,8 @@ export function pi(options?: PiBackendOptions): LlmBackend<"pi">;
 
 All constructors default to `{}` and return immediately — they do not start a process or perform IO. The backend process is spawned lazily on the first `autonomous()` call.
 
+`codex({ ignoreUserConfig: true })` passes `--ignore-user-config` to `codex exec`, keeping Codex auth while skipping user config such as MCP servers. Use it for hermetic automation; leave it unset when a flow should honor the operator's normal Codex setup.
+
 ## The `LlmBackend<B>` contract
 
 ```ts

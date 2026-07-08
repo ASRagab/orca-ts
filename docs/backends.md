@@ -16,6 +16,8 @@ The Codex backend starts `codex exec --json` and maps JSONL events into the shar
 
 The Codex child run lifecycle is internal to the backend adapter: config resolution, prompt composition, temporary schema files, the interactive `ask_user` bridge, process execution, stream consumption, stderr handling, cancellation, and cleanup are owned together.
 
+Set `codex({ ignoreUserConfig: true })` for hermetic automation that should keep Codex auth but skip user `~/.codex/config.toml` settings such as MCP servers. Orca passes this through as `codex exec --ignore-user-config`. The option is off by default so normal flows still honor the operator's Codex setup.
+
 Codex parity status:
 
 - Backend config: model, approval policy, read-only mode, retry metadata, system prompt, self-managed git policy, and structured output are represented in the shared config model.
