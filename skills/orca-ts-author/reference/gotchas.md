@@ -20,7 +20,10 @@ flow back (and before the typecheck gate, when one is reachable).
    and start work only inside `onTrigger`.
 3. **Always narrow `outcome.type`** before touching `outcome.result`. Reading
    `.result.output`/`.structured` on a non-`success` outcome is a type error and
-   a runtime bug.
+   a runtime bug. When reporting a non-success outcome, include
+   `outcome.error` or `outcome.reason` via a `describeOutcome` helper. Throwing
+   only `failed` or `cancelled` hides the backend/auth/timeout cause and makes
+   `orca-ts-flow` triage blind.
 4. **`selectBackend` vs pinned.** Use `selectBackend({ default })` for saved,
    re-runnable workflows so `--backend` works. Use `claude()`/`codex()`/… only
    when the flow must pin one backend; pinned calls ignore `--backend`.
@@ -95,6 +98,14 @@ flow back (and before the typecheck gate, when one is reachable).
     `orca .orca/workflows/<name>.ts --backend <tag> [-- "<args>"]`. Loop modules
     run as `orca loops`, `ORCA_LOOP_EVENT='{}' orca run <name-or-path>`, or
     `orca serve <name-or-path>`.
+19. **Mutating workflows own semantic status.** The CLI can import and execute a
+    script, but it cannot infer domain stages like "preflight", "plan",
+    "repair", or "publish". Every long-running mutating workflow should create a
+    `WorkflowMonitor`, wrap meaningful steps in `monitor.stage(...)`, record
+    per-unit `recordOutcome`/`recordFailure`, and write
+    `.orca/monitoring/<runId>.json` in `finally`. The framework owns the monitor
+    transport, heartbeat, and log schema; the script owns the stage names and
+    work-unit outcomes.
 
 ## Pre-handoff self-audit checklist
 
@@ -106,6 +117,9 @@ Before declaring a generated flow done, confirm each:
 - [ ] A repo-mutating flow guards the tree: clean-baseline/auto-stash, feature branch before commit/push, iteration-scoped revert, off-target detection; no auto-destructive git ops.
 - [ ] Every `awaitResult()` is followed by an `outcome.type` narrow before `.result`.
 - [ ] Every non-success outcome report includes `outcome.error` or `outcome.reason`, not just `outcome.type`.
+- [ ] Long-running mutating workflows instantiate `WorkflowMonitor`, wrap
+      semantic stages, record outcomes/failures, and write the monitor log in
+      `finally`.
 - [ ] If `selectBackend` (or `opencode()`) is used, `selected.shutdown?.()` runs in a `finally`.
 - [ ] Verification commands are the **detected target-repo** commands, not `bun`/`npm` assumptions.
 - [ ] At least one test gate **and** one lint gate are wired (the skill refuses an ungated flow).

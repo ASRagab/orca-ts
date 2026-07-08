@@ -116,7 +116,7 @@ async function withEnv<T>(overrides: Record<string, string>, run: () => Promise<
   } finally {
     for (const [key, value] of previous) {
       if (value === undefined) {
-        delete process.env[key];
+        Reflect.deleteProperty(process.env, key);
       } else {
         process.env[key] = value;
       }

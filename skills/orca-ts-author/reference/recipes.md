@@ -11,9 +11,11 @@ SLOTS, run the self-audit (`gotchas.md`), then save it to `.orca/workflows/` or
 Every template imports from `"@twelvehart/orca-ts"`. Mutating templates wire the
 **target repo's own** test + lint commands as a verification gate and run the
 shared baseline policy before main work (`repair` by default, explicit `strict`
-or `accept-dirty`). Any template that may run on OpenCode shuts the managed
-server down in a `finally`. The trigger is always the standalone binary — no
-dependency on the target repo's package manager:
+or `accept-dirty`), report non-success LLM outcomes with their error payloads,
+and expose semantic progress through `WorkflowMonitor` stages plus a
+`.orca/monitoring/<runId>.json` log. Any template that may run on OpenCode shuts
+the managed server down in a `finally`. The trigger is always the standalone
+binary — no dependency on the target repo's package manager:
 
 ```bash
 orca .orca/workflows/<name>.ts --backend <tag> [-- "<task args>"]
@@ -149,13 +151,14 @@ This is the shape used to author the doc-refresh workflow and it demonstrably
 biased the plan toward the latest merged work.
 
 ### emit-monitoring-json (any mutating archetype)
-persistent-multitask already does this; to add per-run observability to another
-archetype, instantiate `new WorkflowMonitor(selected.tag)`, call
-`recordOutcome`/`recordFailure` per unit of work, and `await monitor.writeLog(".orca/monitoring")`
-in the `finally`. `orca-ts-flow` reads these logs and `scripts/summarize-run.ts`
-summarizes them. Note `exactOptionalPropertyTypes`: build optional fields with a
-conditional spread (`...(cond ? { iterations } : {})`) rather than passing
-`undefined`.
+This is required for long-running mutating artifacts and already present in the
+persistent-multitask template. For another archetype, instantiate
+`new WorkflowMonitor(selected.tag)`, wrap meaningful steps with
+`monitor.stage(...)`, call `recordOutcome`/`recordFailure` per unit of work, and
+`await monitor.writeLog(".orca/monitoring")` in the `finally`. `orca-ts-flow`
+reads these logs and `scripts/summarize-run.ts` summarizes them. Note
+`exactOptionalPropertyTypes`: build optional fields with a conditional spread
+(`...(cond ? { iterations } : {})`) rather than passing `undefined`.
 
 ## Slot-filling checklist
 - Replace every `REPLACE_WITH_*` constant.
