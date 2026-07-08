@@ -11,7 +11,7 @@ Start with the [quickstart](../quickstart/) if you want to run a flow. Start wit
 
 ## Supported boundaries
 
-- Package version: `0.1.0`.
+- Package version: `0.2.0`.
 - Normal install: `npm i @twelvehart/orca-ts`.
 - Optional standalone install: GitHub Release binary.
 - Supported backend tags: `claude`, `codex`, `opencode`, and `pi`.
