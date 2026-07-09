@@ -7,7 +7,7 @@ Every live backend needs its native CLI or server installed and authenticated be
 
 | Backend | Tag | Constructor | Requirement |
 | --- | --- | --- | --- |
-| Claude | `claude` | `claude()` | `claude` CLI on `PATH` and authenticated |
+| Claude | `claude` | `claude()` | `claude-agent-acp` on `PATH`, or `ORCA_CLAUDE_ACP_COMMAND` set; `ORCA_CLAUDE_TRANSPORT=stream-json` falls back to the authenticated `claude` CLI |
 | Codex | `codex` | `codex()` | `codex` CLI on `PATH` and authenticated |
 | OpenCode | `opencode` | `opencode()` | `opencode` CLI on `PATH`; Orca manages `opencode serve` |
 | Pi | `pi` | `pi()` | `pi` CLI on `PATH` and authenticated |

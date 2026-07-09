@@ -1,0 +1,19 @@
+{
+  "capturedAt": "2026-07-08T21:56:18.564Z",
+  "backend": "codex",
+  "transport": "current",
+  "scenario": "failure",
+  "prompt": "This prompt is unused for deterministic failure capture.",
+  "repoFixture": "/tmp/orca-acp-capture-EMQYmU",
+  "node": "v24.3.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "versions": {
+    "codex": "codex-cli 0.143.0",
+    "codex-acp": null
+  },
+  "wallTimeMs": 119,
+  "exitCode": 2,
+  "eventCount": 5,
+  "live": false
+}

@@ -1,0 +1,8 @@
+{"atMs":167,"direction":"stderr","payload":"Reading additional input from stdin..."}
+{"atMs":423,"direction":"stdout","payload":"{\"type\":\"thread.started\",\"thread_id\":\"019f43d7-c757-7d73-a56a-3e22ab382981\"}"}
+{"atMs":487,"direction":"stdout","payload":"{\"type\":\"turn.started\"}"}
+{"atMs":1095,"direction":"stdout","payload":"{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.\"}}"}
+{"atMs":7221,"direction":"stdout","payload":"{\"type\":\"item.started\",\"item\":{\"id\":\"item_1\",\"type\":\"command_execution\",\"command\":\"/bin/zsh -lc 'ls package.json'\",\"aggregated_output\":\"\",\"exit_code\":null,\"status\":\"in_progress\"}}"}
+{"atMs":7391,"direction":"stdout","payload":"{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"command_execution\",\"command\":\"/bin/zsh -lc 'ls package.json'\",\"aggregated_output\":\"package.json\\n\",\"exit_code\":0,\"status\":\"completed\"}}"}
+{"atMs":8785,"direction":"stdout","payload":"{\"type\":\"item.completed\",\"item\":{\"id\":\"item_2\",\"type\":\"agent_message\",\"text\":\"{\\\"answer\\\":\\\"package.json exists\\\"}\"}}"}
+{"atMs":8831,"direction":"stdout","payload":"{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":36957,\"cached_input_tokens\":20736,\"output_tokens\":193,\"reasoning_output_tokens\":123}}"}

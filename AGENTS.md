@@ -18,7 +18,9 @@ Use `CONTEXT.md` for project vocabulary. In particular, prefer `flow`, `flow con
 - Backend tags are `claude`, `codex`, `opencode`, and `pi`.
 - Gemini is intentionally cut. Google's Gemini CLI is being deprecated in favor of the Antigravity CLI (`agy`), and the Gemini path never shipped a live streaming driver.
 - Future Google support should use a new `agy` backend tag rather than reviving a Gemini backend.
-- Codex, Claude, and Pi share the subprocess backend path.
+- Claude uses the ACP JSON-RPC adapter by default (`claude-agent-acp`, or `ORCA_CLAUDE_ACP_COMMAND`). Roll back with `ORCA_CLAUDE_TRANSPORT=stream-json` or `claude({ transport: "stream-json" })`.
+- Codex stays on `codex exec --json` subprocess JSONL by default. The Codex ACP path remains experimental behind `ORCA_EXPERIMENTAL_ACP_BACKENDS=codex` for diagnostics only because the spike measured it slower than subprocess.
+- Codex and Pi share the subprocess backend path.
 - OpenCode uses a managed `opencode serve` process over HTTP/SSE and requires explicit shutdown by the backend owner.
 
 ## Runtime Decisions

@@ -4,7 +4,7 @@ The v1 contract is backend-neutral: every backend maps native transport messages
 
 Supported target backends are Claude, OpenCode, Codex, and Pi, each shipping a live autonomous driver (`claude()`, `opencode()`, `codex()`, `pi()`) behind the same SPI. Gemini is cut: its CLI is being deprecated by Google in favor of the Antigravity CLI (`agy`), and it never shipped a live streaming driver. Future Google support will be a new `agy` backend tag, not a revived Gemini backend.
 
-Codex, Claude, and Pi are subprocess-stream backends: they share one `runSubprocessConversation` helper (`subprocess-run.ts`) that owns process spawn, stdout line-splitting, stderr capture, non-zero-exit failure, cancellation, a 120s inactivity watchdog, and a 600s wall-clock cap by default. Each supplies only its command/args builder and a per-line consumer. OpenCode is the exception — a long-lived `opencode serve` process driven over HTTP/SSE through a shared server manager, with its own 120s inactivity watchdog, 600s wall-clock cap, 30s startup timeout, and abortable POSTs.
+Codex and Pi are subprocess-stream backends: they share one `runSubprocessConversation` helper (`subprocess-run.ts`) that owns process spawn, stdout line-splitting, stderr capture, non-zero-exit failure, cancellation, a 120s inactivity watchdog, and a 600s wall-clock cap by default. Claude uses an ACP JSON-RPC adapter by default and keeps the previous stream-json subprocess path as an explicit fallback. OpenCode uses a long-lived `opencode serve` process driven over HTTP/SSE through a shared server manager, with its own 120s inactivity watchdog, 600s wall-clock cap, 30s startup timeout, and abortable POSTs.
 
 Backend fixture collection uses the shared conversation harness so adapters keep protocol parsing local while event capture and final outcome collection stay in one module.
 
@@ -29,12 +29,12 @@ Codex parity status:
 
 ## Claude
 
-The Claude backend spawns `claude --print --input-format stream-json --output-format stream-json --verbose --include-partial-messages` and feeds its stream-json read path into the shared conversation stream over `runSubprocessConversation`. The opening user turn is written to stdin as a `{"type":"user",...}` NDJSON frame, then stdin closes. Parity notes:
+The Claude backend starts `claude-agent-acp` by default, or `ORCA_CLAUDE_ACP_COMMAND` when set, and maps ACP `session/update` JSON-RPC messages into the shared conversation stream. Set `ORCA_CLAUDE_TRANSPORT=stream-json` or `claude({ transport: "stream-json" })` to roll back to the previous `claude --print --input-format stream-json --output-format stream-json --verbose --include-partial-messages` subprocess path. Model-pinned and resumed Claude runs use that stream-json fallback automatically because the ACP adapter does not expose equivalent stable fields yet. Parity notes:
 
-- Backend config: model (`--model`), read-only (`--permission-mode plan`; otherwise `bypassPermissions` for autonomous acting), system prompt / git policy / retry composed into the opening turn.
-- Structured output: schema inlined via `--json-schema`; the final result is validated against the Zod schema and returns a typed validation error (with raw output) on mismatch.
-- Sessions/resume: `--resume <id>` when a branded session handle is supplied; fresh runs let Claude mint the id, captured from the `result` message.
-- Cancellation: `SIGTERM` to the child; the conversation completes cancelled.
+- Backend config: system prompt / git policy / retry are composed into the ACP prompt. Model selection and resume use the stream-json fallback.
+- Structured output: the final ACP text is validated against the Zod schema and returns a typed validation error (with raw output) on mismatch.
+- Sessions/resume: fresh ACP runs let Claude mint the session id. Resume remains supported by the stream-json fallback.
+- Cancellation: `session/cancel`, then forced process close after the cancellation timeout; the conversation completes cancelled.
 - `ask_user`: autonomous only (`canAskUser=false`); the MCP ask-user bridge is intentionally not ported.
 
 ## OpenCode

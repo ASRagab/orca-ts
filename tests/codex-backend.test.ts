@@ -200,6 +200,23 @@ describe("Codex live backend constructor", () => {
     expect(await conversation.awaitResult()).toEqual({ type: "cancelled", reason: "stop" });
   });
 
+  test("does not spawn after immediate cancellation", async () => {
+    let spawned = false;
+    const backend = codex({
+      spawnProcess: () => {
+        spawned = true;
+        return fakeProcess([]);
+      }
+    });
+
+    const conversation = backend.autonomous({ prompt: "run" });
+    await conversation.cancel("stop");
+    await Promise.resolve();
+
+    expect(spawned).toBe(false);
+    expect(await conversation.awaitResult()).toEqual({ type: "cancelled", reason: "stop" });
+  });
+
   test("maps backend config to codex args and prompt composition", async () => {
     let args: readonly string[] = [];
     const backend = codex({
