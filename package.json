@@ -1,6 +1,6 @@
 {
   "name": "@twelvehart/orcats",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "TypeScript-native reimagining of Orca: deterministic coding-agent flows with author-time type feedback.",
   "type": "module",
   "license": "Apache-2.0",
@@ -14,7 +14,7 @@
     "url": "https://github.com/ASRagab/orca-ts/issues"
   },
   "bin": {
-    "orcats": "./bin/orcats"
+    "orcats": "bin/orcats"
   },
   "types": "./dist/index.d.ts",
   "files": [

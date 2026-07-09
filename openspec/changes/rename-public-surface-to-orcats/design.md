@@ -42,7 +42,7 @@ Alternative considered: keep `@twelvehart/orca-ts` as an alias package. Rejected
 
 ### Use `orcats` as the executable and release binary name
 
-The package bin map becomes `bin.orcats -> ./bin/orcats`. Source and build outputs should follow the same executable name:
+The package bin map becomes `bin.orcats -> bin/orcats`. Source and build outputs should follow the same executable name:
 
 - source shim: `bin/orcats`
 - local bundled output: `dist/orcats`

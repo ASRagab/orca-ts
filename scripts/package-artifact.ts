@@ -143,8 +143,8 @@ export function collectMetadataFailures(packageJson: PackageJson): string[] {
   if (packageJson.publishConfig?.registry !== "https://registry.npmjs.org/") {
     failures.push("package.json publishConfig.registry must be https://registry.npmjs.org/");
   }
-  if (packageJson.bin?.orcats !== "./bin/orcats") {
-    failures.push("package.json must expose bin.orcats as ./bin/orcats");
+  if (packageJson.bin?.orcats !== "bin/orcats") {
+    failures.push("package.json must expose bin.orcats as bin/orcats");
   }
 
   for (const [specifier, expected] of Object.entries(ExpectedExports)) {

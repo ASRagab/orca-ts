@@ -1,7 +1,7 @@
 ## 1. Package And CLI Identity
 
 - [x] 1.1 Update `package.json`, `bun.lock`, and package self-reference expectations from `@twelvehart/orca-ts` to `@twelvehart/orcats`.
-- [x] 1.2 Replace the npm bin entry with `bin.orcats -> ./bin/orcats` and rename the source shim from `bin/orca` to `bin/orcats`.
+- [x] 1.2 Replace the npm bin entry with `bin.orcats -> bin/orcats` and rename the source shim from `bin/orca` to `bin/orcats`.
 - [x] 1.3 Update CLI help, version output, diagnostics, and typecheck warning text to use `orcats` and `@twelvehart/orcats`.
 - [x] 1.4 Keep `.orca/` artifact directories and existing `ORCA_*` environment variables unchanged unless a test shows a direct package/bin identity conflict.
 
