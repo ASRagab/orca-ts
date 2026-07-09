@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the behavior of the `orca-ts-author` skill: read the target repository to
+Define the behavior of the `orcats-author` skill: read the target repository to
 detect its stack and real verification commands, interview the user adaptively to
 fix the artifact shape, generate a workflow script or loop module that
 typechecks when the target environment can check it, enforce verification gates
@@ -61,7 +61,8 @@ hosts it SHALL ask one question at a time and accept a bare answer.
 
 The skill SHALL generate the workflow script or loop module from a bundled
 template for the chosen archetype, fill its slots from the interview, and apply
-codegen rules so the artifact typechecks. Loop modules SHALL export an
+codegen rules so the artifact typechecks. Generated artifacts SHALL import from
+`@twelvehart/orcats` and its supported subpaths. Loop modules SHALL export an
 import-safe `defineLoop()` definition and SHALL NOT start a source, run a
 backend, emit to a sink, or mutate the repository at import time. When a
 TypeScript toolchain is reachable it SHALL typecheck-gate the generated artifact
@@ -72,7 +73,7 @@ be skipped.
 #### Scenario: Typecheck gate available
 
 - **WHEN** a TypeScript toolchain is reachable at author time
-- **THEN** the skill typechecks the generated artifact and does not hand back an artifact that fails typecheck
+- **THEN** the skill typechecks the generated artifact against `@twelvehart/orcats` and does not hand back an artifact that fails typecheck
 
 #### Scenario: Typecheck gate unavailable
 
@@ -83,6 +84,11 @@ be skipped.
 
 - **WHEN** the user chooses a reusable loop module artifact
 - **THEN** the skill generates `.orca/loops/<name>.ts` with an import-safe `defineLoop()` export
+
+#### Scenario: Old package imports are not generated
+
+- **WHEN** the skill emits any workflow script or loop module
+- **THEN** the generated artifact does not import from `@twelvehart/orca-ts` or `orca-ts`
 
 ### Requirement: Skill enforces verification gates
 
@@ -107,23 +113,23 @@ The skill SHALL save a generated workflow script to the target repo's
 `.orca/workflows/<name>.ts` or a generated loop module to
 `.orca/loops/<name>.ts`, emit a sibling `<name>.run.md` runbook with the exact
 trigger command and prerequisites, and provide stack-agnostic triggers through
-the `orca` binary that do not depend on the target repo's package manager. It
+the `orcats` binary that do not depend on the target repo's package manager. It
 SHALL confirm the target directory before writing.
 
 #### Scenario: Workflow saved with runbook
 
 - **WHEN** authoring completes
-- **THEN** the skill writes `.orca/workflows/<name>.ts` and `<name>.run.md` and reports the trigger command
+- **THEN** the skill writes `.orca/workflows/<name>.ts` and `<name>.run.md` and reports the `orcats <flow.ts>` trigger command
 
 #### Scenario: Loop module saved with runbook
 
 - **WHEN** loop-module authoring completes
-- **THEN** the skill writes `.orca/loops/<name>.ts` and `<name>.run.md` and reports `orca loops`, `orca run`, and `orca serve` commands
+- **THEN** the skill writes `.orca/loops/<name>.ts` and `<name>.run.md` and reports `orcats loops`, `orcats run`, and `orcats serve` commands
 
 #### Scenario: Stack-agnostic trigger
 
 - **WHEN** the target repo has no Node/TS package manager
-- **THEN** the provided trigger invokes the `orca` binary or loop CLI directly and does not rely on a `package.json` script
+- **THEN** the provided trigger invokes the `orcats` binary or loop CLI directly and does not rely on a `package.json` script
 
 #### Scenario: Target directory confirmed before writing
 

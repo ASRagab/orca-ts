@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the behavior of the `orca-ts-flow` skill: execute a saved or just-authored
+Define the behavior of the `orcats-flow` skill: execute a saved or just-authored
 workflow script or loop module, monitor it for real progress (detecting stalls
 and stuck loops), and diagnose, resolve, and where safe self-heal runtime
 failures. The skill is host-agnostic and operates against any git-backed
@@ -12,8 +12,8 @@ repository.
 
 ### Requirement: Skill executes a saved or just-authored artifact
 
-The skill SHALL run a workflow script through the `orca` binary or a loop module
-through the loop CLI (`orca loops`, `orca run`, or `orca serve`) against the
+The skill SHALL run a workflow script through the `orcats` binary or a loop module
+through the loop CLI (`orcats loops`, `orcats run`, or `orcats serve`) against the
 target repository, selecting the backend per the artifact or the user's
 override. The skill SHALL surface monitoring output when the artifact emits it
 and otherwise monitor progress through loop state, the persistent plan, and git
@@ -22,12 +22,12 @@ history. It SHALL NOT assume a `--monitor` CLI flag exists.
 #### Scenario: Run a saved workflow
 
 - **WHEN** the user triggers a saved `.orca/workflows/<name>.ts`
-- **THEN** the skill runs it via the `orca` binary against the confirmed target repo and reports any new monitor log emitted by the workflow
+- **THEN** the skill runs it via the `orcats` binary against the confirmed target repo and reports any new monitor log emitted by the workflow
 
 #### Scenario: Run a loop module
 
 - **WHEN** the user triggers a saved `.orca/loops/<name>.ts`
-- **THEN** the skill uses `orca loops`, `orca run`, or `orca serve` as appropriate instead of the legacy `orca <flow.ts>` command shape
+- **THEN** the skill uses `orcats loops`, `orcats run`, or `orcats serve` as appropriate instead of the legacy `orcats <flow.ts>` command shape
 
 #### Scenario: Backend override
 

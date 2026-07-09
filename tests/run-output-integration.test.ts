@@ -122,9 +122,9 @@ describe("run output integration", () => {
     );
 
     expect(stdoutChunks).toEqual(["payload\n"]);
-    expect(stderrChunks.join("")).toContain("orca | run started: stdout-loop\n");
+    expect(stderrChunks.join("")).toContain("orcats | run started: stdout-loop\n");
     expect(stderrChunks.join("")).toContain(
-      "orca | done: stdout-loop stopped (converged) after 1 iteration(s)\n",
+      "orcats | done: stdout-loop stopped (converged) after 1 iteration(s)\n",
     );
   });
 
@@ -180,24 +180,24 @@ await flow()(() => {
     );
 
     try {
-      const okResult = await runQuiet("bun", ["./bin/orca", "--no-typecheck", okFlow], {
+      const okResult = await runQuiet("bun", ["./bin/orcats", "--no-typecheck", okFlow], {
         cwd: process.cwd(),
       });
       const okProc = okResult._unsafeUnwrap();
       expect(okProc.stdout).toBe("payload\n");
-      expect(okProc.stderr).toContain("orca | preflight typecheck skipped: flag\n");
-      expect(okProc.stderr).toContain("orca | stage inspect started\n");
-      expect(okProc.stderr).toContain(`orca | done: ${okFlow} completed\n`);
+      expect(okProc.stderr).toContain("orcats | preflight typecheck skipped: flag\n");
+      expect(okProc.stderr).toContain("orcats | stage inspect started\n");
+      expect(okProc.stderr).toContain(`orcats | done: ${okFlow} completed\n`);
 
-      const failedResult = await runQuiet("bun", ["./bin/orca", "--no-typecheck", failingFlow], {
+      const failedResult = await runQuiet("bun", ["./bin/orcats", "--no-typecheck", failingFlow], {
         cwd: process.cwd(),
       });
       const failed = failedResult._unsafeUnwrapErr();
       expect(failed._tag).toBe("CommandFailed");
       if (failed._tag === "CommandFailed") {
         expect(failed.stdout).toBe("");
-        expect(failed.stderr).toContain("orca | stage explode started\n");
-        expect(failed.stderr).toContain(`orca | failed: ${failingFlow}: flow boom\n`);
+        expect(failed.stderr).toContain("orcats | stage explode started\n");
+        expect(failed.stderr).toContain(`orcats | failed: ${failingFlow}: flow boom\n`);
       }
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -228,13 +228,13 @@ export default defineLoop({
     );
 
     try {
-      const result = await runQuiet("bun", ["./bin/orca", "run", "--no-typecheck", loopPath], {
+      const result = await runQuiet("bun", ["./bin/orcats", "run", "--no-typecheck", loopPath], {
         cwd: process.cwd(),
       });
       const proc = result._unsafeUnwrap();
       expect(proc.stdout).toBe("done\n");
-      expect(proc.stderr).toContain("orca | cycle 1 measure=0\n");
-      expect(proc.stderr).toContain("orca | done: cli-countdown stopped (converged) after 1 iteration(s)\n");
+      expect(proc.stderr).toContain("orcats | cycle 1 measure=0\n");
+      expect(proc.stderr).toContain("orcats | done: cli-countdown stopped (converged) after 1 iteration(s)\n");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

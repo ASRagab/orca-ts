@@ -1,7 +1,7 @@
 import { BackendTagSchema, type BackendTag } from "../model/index.ts";
 import { extractFlowArgs } from "../flow/args.ts";
 
-/** Loop verbs (spec distribution). Absent ⇒ the legacy `orca <flow.ts>` script path. */
+/** Loop verbs (spec distribution). Absent => the legacy `orcats <flow.ts>` script path. */
 export type LoopCommand = "run" | "serve" | "loops";
 
 export interface CliArgs {

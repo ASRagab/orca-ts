@@ -6,10 +6,10 @@ import { runQuiet } from "../src/tools/process.ts";
 
 // Keeps the bundled skill flow templates from drifting out of the runtime API:
 // every template under skills/**/assets/templates/ must typecheck against the
-// in-repo @twelvehart/orca-ts package (resolved via package self-reference in
+// in-repo @twelvehart/orcats package (resolved via package self-reference in
 // tsconfig.skill-templates.json). Mirrors the Scala orca-flow recipes test.
 
-const TEMPLATES_DIR = "skills/orca-ts-author/assets/templates";
+const TEMPLATES_DIR = "skills/orcats-author/assets/templates";
 const EXPECTED_ARCHETYPES = [
   "single-change",
   "persistent-multitask",
@@ -27,7 +27,7 @@ describe("skill flow templates", () => {
     }
   });
 
-  test("all templates typecheck against @twelvehart/orca-ts", async () => {
+  test("all templates typecheck against @twelvehart/orcats", async () => {
     const tsc = join("node_modules", ".bin", "tsc");
     const declarations = await runQuiet(tsc, ["-p", "tsconfig.build.json"]);
     if (declarations.isErr()) {
@@ -80,8 +80,8 @@ describe("skill flow templates", () => {
 // runs a stale copy. The fix when this fails is to re-copy the canonical script,
 // never to let the copies diverge.
 const DUPLICATED_SCRIPTS: ReadonlyArray<readonly [string, ...string[]]> = [
-  ["skills/orca-ts-author/scripts/orca-run.sh", "skills/orca-ts-flow/scripts/orca-run.sh"],
-  ["skills/orca-ts-setup/scripts/orca-doctor.sh", "skills/orca-ts-flow/scripts/orca-doctor.sh"],
+  ["skills/orcats-author/scripts/orca-run.sh", "skills/orcats-flow/scripts/orca-run.sh"],
+  ["skills/orcats-setup/scripts/orca-doctor.sh", "skills/orcats-flow/scripts/orca-doctor.sh"],
 ];
 
 function formatProcessError(error: RuntimeError): string {
@@ -111,8 +111,8 @@ describe("bundled skill scripts", () => {
 const CANONICAL_INSTALL_DIR = "$HOME/.local/bin";
 const INSTALL_DIR_DOCS: ReadonlyArray<string> = [
   "install.sh",
-  "skills/orca-ts-setup/scripts/orca-setup.sh",
-  "skills/orca-ts-setup/SKILL.md",
+  "skills/orcats-setup/scripts/orca-setup.sh",
+  "skills/orcats-setup/SKILL.md",
   "README.md",
   "docs/distribution.md",
 ];

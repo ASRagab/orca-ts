@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the public documentation website for Orca TypeScript, including its
+Define the public documentation website for Orcats, including its
 deployment path, user-journey information architecture, supported content
 surface, and deterministic verification requirements.
 
@@ -50,22 +50,23 @@ repository file layout.
 
 ### Requirement: Website content covers Orca's supported user surface
 
-The documentation website SHALL cover the supported Orca TypeScript user
+The documentation website SHALL cover the supported Orcats user
 surface: motivation, core concepts, installation, Agent Skills, first flow,
 saved workflows, backend configuration, loops, monitoring, CLI usage,
 troubleshooting, examples, and reference.
 
-#### Scenario: User installs Orca
+#### Scenario: User installs Orcats
 
 - **WHEN** a user reads installation content
-- **THEN** the website documents the standalone binary path, typed npm package
-  authoring path, source checkout path, and Agent Skills installation path
+- **THEN** the website documents the standalone `orcats` binary path, typed
+  `@twelvehart/orcats` npm package authoring path, source checkout path, and
+  Agent Skills installation path
 
 #### Scenario: User writes a flow
 
 - **WHEN** a user follows the first-flow guide
-- **THEN** the website shows a copyable flow using the public package surface
-  and the supported backend-selection pattern
+- **THEN** the website shows a copyable flow using the `@twelvehart/orcats`
+  public package surface and the supported backend-selection pattern
 
 #### Scenario: User adopts skills
 
@@ -77,7 +78,7 @@ troubleshooting, examples, and reference.
 
 - **WHEN** a user reads loop documentation
 - **THEN** the website explains when to use loops, termination presets, guards,
-  state stores, fan-out/fan-in, loop modules, and `orca run`/`orca serve`/`orca
+  state stores, fan-out/fan-in, loop modules, and `orcats run`/`orcats serve`/`orcats
   loops`
 
 ### Requirement: Website content preserves release and support boundaries
@@ -88,7 +89,7 @@ SHALL keep deferred or unsupported paths explicit.
 #### Scenario: User chooses an install path
 
 - **WHEN** a user reads install documentation
-- **THEN** the website presents `@twelvehart/orca-ts` as the typed authoring
+- **THEN** the website presents `@twelvehart/orcats` as the typed authoring
   package and GitHub Release binaries as the zero-dependency execution path
 
 #### Scenario: User chooses a backend

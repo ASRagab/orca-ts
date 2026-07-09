@@ -7,18 +7,18 @@ The CLI typechecks the current project before importing a flow when it can find:
 
 - `typescript`
 - `tsconfig.json`
-- a local `@twelvehart/orca-ts` package dependency
+- a local `@twelvehart/orcats` package dependency
 
 If setup is missing, the standalone binary can skip the typecheck guard and warn:
 
 ```text
-orca: missing project typecheck setup; skipping typecheck.
+orcats: missing project typecheck setup; skipping typecheck.
 ```
 
 For typed authoring, install the project dependencies:
 
 ```bash
-npm i @twelvehart/orca-ts
+npm i @twelvehart/orcats
 npm i -D typescript
 ```
 

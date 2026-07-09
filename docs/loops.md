@@ -22,7 +22,7 @@ you when to stop.
 ## The Two Loop APIs
 
 - `loop()` builds the repeated cycle.
-- `defineLoop()` packages a loop for discovery, `orca run`, and `orca serve`.
+- `defineLoop()` packages a loop for discovery, `orcats run`, and `orcats serve`.
 
 Use `loop()` inside another flow, test, or loop module. Use `defineLoop()` when
 you want a loop module that Orca can find and launch.
@@ -36,7 +36,7 @@ primitive, but direct `executeLoop` is internal and not part of authored flows.
 Save this as `.orca/loops/countdown.ts`:
 
 ```ts
-import { defineLoop, loop, manual, ok, stdout, times } from "@twelvehart/orca-ts";
+import { defineLoop, loop, manual, ok, stdout, times } from "@twelvehart/orcats";
 
 interface Countdown {
   remaining: number;
@@ -67,19 +67,19 @@ export default defineLoop({
 Run it with the CLI:
 
 ```bash
-orca run countdown
+orcats run countdown
 ```
 
 If you are still iterating on the file path, you can also run it directly:
 
 ```bash
-orca run .orca/loops/countdown.ts
+orcats run .orca/loops/countdown.ts
 ```
 
 List it without firing the source or sink:
 
 ```bash
-orca loops
+orcats loops
 ```
 
 This tiny loop is intentionally boring. Replace `times(3)` with a real
@@ -121,7 +121,7 @@ The loop result includes a `stopReason`.
 | `budget-exhausted` | known token usage exceeded `tokenBudget` |
 | `cancelled` | the caller or supervisor stopped the run |
 
-`orca run` exits with a status that reflects the stop reason. Treat a non-zero
+`orcats run` exits with a status that reflects the stop reason. Treat a non-zero
 exit as "read the stop reason first."
 
 ### Token Budgets
@@ -223,9 +223,9 @@ Put the module under `.orca/loops/` and export the loop definition.
 | --- | --- |
 | `defineLoop({ name, source, sink, onTrigger })` | packages the trigger, sink, and one-shot runner into a loop definition |
 | `.orca/loops/<name>.ts` | the import-only location for loop modules |
-| `orca loops` | lists discovered loops without firing a source or sink |
-| `orca run <loop>` | runs one loop firing; the target can be a module path or a registered loop name |
-| `orca serve <loop>` | keeps the trigger open and starts one child process per firing |
+| `orcats loops` | lists discovered loops without firing a source or sink |
+| `orcats run <loop>` | runs one loop firing; the target can be a module path or a registered loop name |
+| `orcats serve <loop>` | keeps the trigger open and starts one child process per firing |
 
 Built-in source kinds:
 
@@ -252,11 +252,11 @@ source and sink share the same `queue` kind.
 Linear adapters are covered in the focused [Linear integration](linear.md)
 guide.
 
-`orca serve` owns the trigger and isolates each firing in its own child
+`orcats serve` owns the trigger and isolates each firing in its own child
 process. One child crash does not take down the supervisor, and stopping the
 supervisor stops the children.
 
-`orca run` and served children share one firing contract: trigger-event decoding,
+`orcats run` and served children share one firing contract: trigger-event decoding,
 `defineLoop().run(event)`, sink emission, diagnostics, and stop-reason exit-code
 mapping. Custom `Source` and `Sink` adapters should depend only on the public
 event/output contracts, not on `ORCA_LOOP_EVENT` or supervisor internals.
@@ -300,7 +300,7 @@ See [`examples/loop-persisted-state.ts`](../examples/loop-persisted-state.ts)
 for a checked snapshot-store branch/merge example.
 
 ```ts
-import { createSqliteStore, type TaskManifest } from "@twelvehart/orca-ts";
+import { createSqliteStore, type TaskManifest } from "@twelvehart/orcats";
 
 const store = createSqliteStore({ path: "./.orca/state.db" });
 if (store.isErr()) throw store.error;
@@ -321,14 +321,14 @@ Call `stateStore.close()` when you are done with the sqlite store.
 
 ### Served Trigger Loop
 
-Use `orca serve` when a trigger should stay alive and own repeated firings.
+Use `orcats serve` when a trigger should stay alive and own repeated firings.
 The loop module should live under `.orca/loops/` and export a `defineLoop()`
 result.
 See [`examples/loop-served-trigger.ts`](../examples/loop-served-trigger.ts) for
 an import-safe module example.
 
 ```ts
-import { defineLoop, ok, stdout, watch } from "@twelvehart/orca-ts";
+import { defineLoop, ok, stdout, watch } from "@twelvehart/orcats";
 
 export default defineLoop({
   name: "watch-src",
@@ -362,16 +362,16 @@ example.
   cycles you are watching.
 - `createSnapshotStore()` loses progress after a crash: use `createSqliteStore()`
   when you need restartable history.
-- `orca loops` prints nothing: make sure the module exports a loop definition
+- `orcats loops` prints nothing: make sure the module exports a loop definition
   from `.orca/loops/` and that importing the module has no side effects.
-- `orca serve` reports a child failure: the child loop crashed or exited
+- `orcats serve` reports a child failure: the child loop crashed or exited
   non-zero. Inspect the loop run, not the supervisor.
 
 ## Migration Notes
 
 - Keep one-shot scripts in `.orca/workflows/` when you want the legacy flow
-  path. Move to `.orca/loops/` when you want discovery, `orca run`, or
-  `orca serve`.
+  path. Move to `.orca/loops/` when you want discovery, `orcats run`, or
+  `orcats serve`.
 - If you are replacing `implementTaskLoop` or `runReviewAndFixLoop`, switch to
   `sequentialTaskStrategy` or `reviewAndFixStrategy`; both now consume loop
   execution while the deprecated wrappers keep their warning behavior.

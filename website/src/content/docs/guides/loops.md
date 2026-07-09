@@ -16,7 +16,7 @@ Use a loop when one pass is not enough and the state itself should decide when t
 Save this as `.orca/loops/countdown.ts`:
 
 ```ts
-import { defineLoop, loop, manual, ok, stdout, times } from "@twelvehart/orca-ts";
+import { defineLoop, loop, manual, ok, stdout, times } from "@twelvehart/orcats";
 
 interface Countdown {
   remaining: number;
@@ -47,9 +47,9 @@ export default defineLoop({
 Run it:
 
 ```bash
-orca run countdown
-orca run .orca/loops/countdown.ts
-orca loops
+orcats run countdown
+orcats run .orca/loops/countdown.ts
+orcats loops
 ```
 
 ## Stop rules

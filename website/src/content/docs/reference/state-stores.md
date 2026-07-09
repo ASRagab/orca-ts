@@ -44,7 +44,7 @@ interface BranchWritableStateStore<S = TaskManifest> extends StateStore<S> {
 **`createSqliteStore` returns `Result`, not a bare `SqliteStore`.** Construction can fail — it returns `Err(RuntimeError)` on file/lease problems rather than throwing. Always handle the `Result` before using the store:
 
 ```ts
-import { createSqliteStore } from "@twelvehart/orca-ts";
+import { createSqliteStore } from "@twelvehart/orcats";
 
 const made = createSqliteStore({ path: ".orca/state.db" });
 if (made.isErr()) {

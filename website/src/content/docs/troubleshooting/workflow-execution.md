@@ -12,14 +12,14 @@ Classify failures from evidence:
 | Gate failure | A test, lint, or build command failed and the flow is repairing. |
 | Non-convergence | A loop or fix loop hit `stuck`, `timeout`, or `ceiling`. |
 | Crash | Partial state or commits exist but the process died mid-flow. |
-| Served child | `orca serve` stays alive while one child firing fails. |
+| Served child | `orcats serve` stays alive while one child firing fails. |
 
 Recovery steps:
 
 1. Re-run the backend doctor for environment failures.
 2. Let baseline repair and gate failures continue until they converge or hit a guard.
 3. Re-run after crashes when persistent plans or state stores are present.
-4. Reproduce served-child failures with `ORCA_LOOP_EVENT='...' orca run <loop>`.
+4. Reproduce served-child failures with `ORCA_LOOP_EVENT='...' orcats run <loop>`.
 
 Do not retry a dirty-worktree rejection with `--baseline=accept-dirty` unless the operator explicitly asks. That mode writes a dirty baseline snapshot before backend repair work.
 

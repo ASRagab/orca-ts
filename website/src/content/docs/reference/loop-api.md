@@ -77,7 +77,7 @@ type LoopStopReason =
   | "cancelled";
 ```
 
-`orca run` and `orca serve` map each stop reason to a process exit code via `exitCodeForStop(reason)`, exported from the loop surface. A build/runtime error exits `70`.
+`orcats run` and `orcats serve` map each stop reason to a process exit code via `exitCodeForStop(reason)`, exported from the loop surface. A build/runtime error exits `70`.
 
 | Stop reason | Exit code | Meaning |
 | --- | --- | --- |
@@ -104,7 +104,7 @@ type LoopStopReason =
 
 ## Distribution
 
-`defineLoop({ name, source, sink, onTrigger })` packages a loop module. Put it under `.orca/loops/`, export it, then use `orca loops`, `orca run`, or `orca serve`. `orca run` and served children share one firing contract for event decoding, `definition.run(event)`, sink emission, diagnostics, and exit-code mapping. During `orca run`, loop-cycle progress from the active `RunReporter` is rendered on stderr while sink output remains on stdout. See the [Served Loops guide](../../guides/served-loops/) for the supervisor isolation contract and `ORCA_LOOP_EVENT` payload.
+`defineLoop({ name, source, sink, onTrigger })` packages a loop module. Put it under `.orca/loops/`, export it, then use `orcats loops`, `orcats run`, or `orcats serve`. `orcats run` and served children share one firing contract for event decoding, `definition.run(event)`, sink emission, diagnostics, and exit-code mapping. During `orcats run`, loop-cycle progress from the active `RunReporter` is rendered on stderr while sink output remains on stdout. See the [Served Loops guide](../../guides/served-loops/) for the supervisor isolation contract and `ORCA_LOOP_EVENT` payload.
 
 Built-in source kinds: `manual`, `cron`, `watch`, `webhook`, `queue`, `linear-issue`, `linear-agent`.
 

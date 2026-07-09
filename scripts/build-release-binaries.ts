@@ -17,9 +17,9 @@ const checksums: string[] = [];
 const assets: string[] = [];
 
 for (const target of targets) {
-  const asset = target.replace(/^bun-/, "orca-");
+  const asset = target.replace(/^bun-/, "orcats-");
   const outDir = join(releaseDir, asset);
-  const outFile = join(outDir, "orca");
+  const outFile = join(outDir, "orcats");
   const tarball = join(releaseDir, `${asset}.tar.gz`);
 
   await mkdir(outDir, { recursive: true });
@@ -30,7 +30,7 @@ for (const target of targets) {
     `--target=${target}`,
     `--outfile=${outFile}`
   ]);
-  await mustRun("tar", ["-czf", tarball, "-C", outDir, "orca"]);
+  await mustRun("tar", ["-czf", tarball, "-C", outDir, "orcats"]);
 
   const hash = new Bun.CryptoHasher("sha256");
   hash.update(await readFile(tarball));

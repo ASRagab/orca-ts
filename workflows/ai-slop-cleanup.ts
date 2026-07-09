@@ -176,7 +176,7 @@ export function parseWorkflowArgs(argv: readonly string[]): WorkflowArgs {
 
 export function shouldRunWorkflow(metaMain: boolean, argv: readonly string[] = process.argv): boolean {
   const entrypoint = argv[1] ?? "";
-  return metaMain || entrypoint.endsWith("/bin/orca") || entrypoint.endsWith("\\bin\\orca");
+  return metaMain || entrypoint.endsWith("/bin/orcats") || entrypoint.endsWith("\\bin\\orcats");
 }
 
 function parseOptionalMaxFiles(value: string | undefined): number | undefined {

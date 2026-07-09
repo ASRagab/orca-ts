@@ -20,7 +20,7 @@ describe("Codex JSONL Tier 1 fixtures", () => {
   test("fails ask_user MCP bridge attempts explicitly", async () => {
     const actual = await collectCodexJsonl([
       '{"type":"thread.started","thread_id":"thr"}',
-      '{"type":"item.started","item":{"id":"ask","type":"mcp_tool_call","server":"orca","tool":"ask_user","arguments":{"question":"Continue?"}}}'
+      '{"type":"item.started","item":{"id":"ask","type":"mcp_tool_call","server":"orcats","tool":"ask_user","arguments":{"question":"Continue?"}}}'
     ]);
 
     expect(actual.outcome).toEqual({

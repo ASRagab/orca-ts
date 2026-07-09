@@ -1,15 +1,15 @@
 # Release Runbook
 
-Releases are tag-driven. A `vX.Y.Z` tag runs `.github/workflows/release.yml`, which verifies the repo, publishes GitHub Release binaries, and publishes `@twelvehart/orca-ts` to npm through Trusted Publishing.
+Releases are tag-driven. A `vX.Y.Z` tag runs `.github/workflows/release.yml`, which verifies the repo, publishes GitHub Release binaries, and publishes `@twelvehart/orcats` to npm through Trusted Publishing.
 
 ## One-time setup
 
 1. Confirm the repository has GitHub Actions permission to create releases (`contents: write`).
 2. Make the canonical repository public before the first npm publish if provenance is required for the release. npm provenance ties the package to public source metadata.
-3. Configure npm Trusted Publishing for package `@twelvehart/orca-ts`, repository `ASRagab/orca-ts`, and workflow file `release.yml`. Dry-run the CLI setup first:
+3. Configure npm Trusted Publishing for package `@twelvehart/orcats`, repository `ASRagab/orca-ts`, and workflow file `release.yml`. Dry-run the CLI setup first:
 
    ```bash
-   npm trust github @twelvehart/orca-ts \
+   npm trust github @twelvehart/orcats \
      --repo ASRagab/orca-ts \
      --file release.yml \
      --allow-publish \
@@ -41,20 +41,20 @@ Releases are tag-driven. A `vX.Y.Z` tag runs `.github/workflows/release.yml`, wh
    - four tarballs: macOS arm64/x64 and Linux arm64/x64
    - `SHA256SUMS.txt`
    - `install.sh`
-   - npm package `@twelvehart/orca-ts@X.Y.Z`
+   - npm package `@twelvehart/orcats@X.Y.Z`
 
 6. Spot-check the GitHub Release install path:
 
    ```bash
    ORCA_VERSION=X.Y.Z bash <(curl -fsSL https://github.com/ASRagab/orca-ts/releases/download/vX.Y.Z/install.sh)
-   orca --version
+   orcats --version
    ```
 
 7. Spot-check the npm package:
 
    ```bash
-   npm view @twelvehart/orca-ts@X.Y.Z version
-   bunx -p @twelvehart/orca-ts@X.Y.Z orca --version
+   npm view @twelvehart/orcats@X.Y.Z version
+   bunx -p @twelvehart/orcats@X.Y.Z orcats --version
    ```
 
 ## Failed release at 0.x

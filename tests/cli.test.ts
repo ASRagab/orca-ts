@@ -47,15 +47,15 @@ describe("CLI args", () => {
     });
   });
   test("bin shim invokes the CLI", async () => {
-    const result = await runQuiet("bun", ["./bin/orca", "--help"], { cwd: process.cwd() });
+    const result = await runQuiet("bun", ["./bin/orcats", "--help"], { cwd: process.cwd() });
 
-    expect(result._unsafeUnwrap().stdout).toContain("Usage: orca");
+    expect(result._unsafeUnwrap().stdout).toContain("Usage: orcats");
   });
 
   test("bin shim prints the version", async () => {
-    const result = await runQuiet("bun", ["./bin/orca", "--version"], { cwd: process.cwd() });
+    const result = await runQuiet("bun", ["./bin/orcats", "--version"], { cwd: process.cwd() });
 
-    expect(result._unsafeUnwrap().stdout).toStartWith("orca ");
+    expect(result._unsafeUnwrap().stdout).toStartWith("orcats ");
   });
 
   test("help and version return before embedded fallback is loaded", async () => {

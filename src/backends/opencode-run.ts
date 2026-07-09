@@ -22,7 +22,7 @@ export interface OpenCodeHttp {
 
 export interface OpenCodeBackend extends LlmBackend<"opencode"> {
   /** Stop the shared `opencode serve` process. Caller-invoked at runtime end —
-   * orca-ts has no global scope hook, so the backend owner drives teardown. */
+   * the package has no global scope hook, so the backend owner drives teardown. */
   shutdown(signal?: NodeJS.Signals): Promise<void>;
 }
 

@@ -23,11 +23,11 @@ import { parseCliArgs, type CliArgs } from "./args.ts";
 import { ORCA_VERSION } from "./version.ts";
 
 const USAGE = [
-  "Usage: orca [--backend <name>] [--no-typecheck] <flow.ts> [-- <task args>]",
-  "       orca run <loop>      run a loop once; exit status reflects the stop reason",
-  "       orca serve <loop>    host a loop's trigger, spawning a child process per firing",
-  "       orca loops           list defined loops with their source and sink",
-  "       orca --version"
+  "Usage: orcats [--backend <name>] [--no-typecheck] <flow.ts> [-- <task args>]",
+  "       orcats run <loop>      run a loop once; exit status reflects the stop reason",
+  "       orcats serve <loop>    host a loop's trigger, spawning a child process per firing",
+  "       orcats loops           list defined loops with their source and sink",
+  "       orcats --version"
 ].join("\n");
 
 const DEFERRED_DBOS_NOTE =
@@ -35,9 +35,9 @@ const DEFERRED_DBOS_NOTE =
   "Run without --durable/--postgres-url and without `--state dbos` to use the service-free default adapter.";
 // Private parent->child handshake for the embedded-fallback respawn. The value is the
 // PARENT's pid, not a constant flag: a genuine child's process.ppid equals it, while a stale
-// value inherited from an unrelated shell or a prior orca process does not. Validating against
+// value inherited from an unrelated shell or a prior orcats process does not. Validating against
 // ppid keeps a leaked ORCA_EMBEDDED_RESPAWNED from making a fresh invocation skip the bootstrap
-// + respawn (which would then fail to resolve @twelvehart/orca-ts from a bare directory).
+// + respawn (which would then fail to resolve @twelvehart/orcats from a bare directory).
 const EMBEDDED_RESPAWN_ENV = "ORCA_EMBEDDED_RESPAWNED";
 
 /** True only when this process is the embedded-fallback child spawned by THIS run's parent. */
@@ -58,14 +58,14 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   const args = parseCliArgs(argv);
 
   if (args.version) {
-    console.log(`orca ${ORCA_VERSION}`);
+    console.log(`orcats ${ORCA_VERSION}`);
     return;
   }
 
   // Reject deferred durable mode before any typecheck/import so the pointer surfaces immediately.
   const deferred = deferredDurableError(args);
   if (deferred !== undefined) {
-    process.stderr.write(`orca: ${describeError(deferred)}\n`);
+    process.stderr.write(`orcats: ${describeError(deferred)}\n`);
     process.exitCode = 1;
     return;
   }
@@ -76,7 +76,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   }
 
   if ((args.command === "run" || args.command === "serve") && args.loop === undefined) {
-    process.stderr.write(`orca: ${args.command} requires a <loop> (module path or registered name)\n`);
+    process.stderr.write(`orcats: ${args.command} requires a <loop> (module path or registered name)\n`);
     process.exitCode = 1;
     return;
   }
@@ -137,7 +137,7 @@ async function preflight(args: CliArgs, reporter: RunReporter): Promise<boolean>
     });
     if (typecheck.value.reason === "tsc-not-found") {
       process.stderr.write(
-        "orca: missing project typecheck setup; skipping typecheck. Add typescript, tsconfig.json, and a local @twelvehart/orca-ts package dependency to enable it.\n"
+        "orcats: missing project typecheck setup; skipping typecheck. Add typescript, tsconfig.json, and a local @twelvehart/orcats package dependency to enable it.\n"
       );
     }
     process.env.ORCA_TYPECHECK_SKIPPED = "1";
@@ -152,24 +152,24 @@ async function preflight(args: CliArgs, reporter: RunReporter): Promise<boolean>
   return true;
 }
 
-/** `orca loops`: discover and list defined loops without firing any Source / backend / Sink. */
+/** `orcats loops`: discover and list defined loops without firing any Source / backend / Sink. */
 async function runLoops(): Promise<void> {
   const importLoop = await loopImporter();
   const discovered = await discoverLoops({ dir: resolve(process.cwd(), ".orca", "loops"), import: importLoop });
   if (discovered.isErr()) {
-    process.stderr.write(`orca: ${describeError(discovered.error)}\n`);
+    process.stderr.write(`orcats: ${describeError(discovered.error)}\n`);
     process.exitCode = 1;
     return;
   }
   console.log(formatLoopListing(listLoops(discovered.value.values())));
 }
 
-/** `orca run <loop>`: resolve the loop, run it once, exit with a status reflecting the stop reason. */
+/** `orcats run <loop>`: resolve the loop, run it once, exit with a status reflecting the stop reason. */
 async function runLoop(target: string, reporter: RunReporter): Promise<void> {
   const importLoop = await loopImporter();
   const loaded = await loadDefinition(target, { cwd: process.cwd(), import: importLoop });
   if (loaded.isErr()) {
-    process.stderr.write(`orca: ${describeError(loaded.error)}\n`);
+    process.stderr.write(`orcats: ${describeError(loaded.error)}\n`);
     process.exitCode = 1;
     return;
   }
@@ -178,24 +178,24 @@ async function runLoop(target: string, reporter: RunReporter): Promise<void> {
   process.exitCode = firing.exitCode;
 }
 
-/** `orca serve <loop>`: a thin supervisor owning the trigger, spawning a child per firing (D8). */
+/** `orcats serve <loop>`: a thin supervisor owning the trigger, spawning a child per firing (D8). */
 async function runServe(target: string): Promise<void> {
   const importLoop = await loopImporter();
   const loaded = await loadDefinition(target, { cwd: process.cwd(), import: importLoop });
   if (loaded.isErr()) {
-    process.stderr.write(`orca: ${describeError(loaded.error)}\n`);
+    process.stderr.write(`orcats: ${describeError(loaded.error)}\n`);
     process.exitCode = 1;
     return;
   }
   const definition = loaded.value;
   const supervisor = await serve(definition, { loopRef: target });
   if (supervisor.isErr()) {
-    process.stderr.write(`orca: ${describeError(supervisor.error)}\n`);
+    process.stderr.write(`orcats: ${describeError(supervisor.error)}\n`);
     process.exitCode = 1;
     return;
   }
   process.stderr.write(
-    `orca: serving loop "${definition.name}" (source=${definition.source.kind}); press Ctrl-C to stop\n`
+    `orcats: serving loop "${definition.name}" (source=${definition.source.kind}); press Ctrl-C to stop\n`
   );
   await waitForShutdown();
   await supervisor.value.stop();

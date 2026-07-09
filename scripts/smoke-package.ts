@@ -91,10 +91,10 @@ void fakeBackend;
   runCommand("npm", ["install", "--ignore-scripts", "--no-audit", "--fund=false"], projectDir);
   runCommand("npx", ["--no-install", "tsc", "--noEmit"], projectDir);
 
-  const version = runCommand(join(projectDir, "node_modules", ".bin", "orca"), ["--version"], projectDir);
-  const expectedVersion = `orca ${packageJson.version ?? ""}\n`;
+  const version = runCommand(join(projectDir, "node_modules", ".bin", "orcats"), ["--version"], projectDir);
+  const expectedVersion = `orcats ${packageJson.version ?? ""}\n`;
   if (version.stdout !== expectedVersion) {
-    throw new Error(`orca --version mismatch: expected ${JSON.stringify(expectedVersion)}, got ${JSON.stringify(version.stdout)}`);
+    throw new Error(`orcats --version mismatch: expected ${JSON.stringify(expectedVersion)}, got ${JSON.stringify(version.stdout)}`);
   }
 } finally {
   await rm(tempDir, { recursive: true, force: true });

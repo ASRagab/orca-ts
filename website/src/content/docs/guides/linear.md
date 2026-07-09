@@ -26,7 +26,7 @@ Webhook registration is manual in this release.
 1. Create a Linear webhook for the Orca endpoint you will serve.
 2. Store the Linear webhook secret as `LINEAR_WEBHOOK_SECRET`.
 3. Configure the loop source with the same path and port you expose to Linear.
-4. Run the loop with `orca serve`.
+4. Run the loop with `orcats serve`.
 
 Linear requests are verified before delivery. Verification uses the exact raw body, `Linear-Signature`, `Linear-Timestamp`, a timing-safe comparison, and the configured replay window. Do not parse and reserialize the JSON body before verification; that changes the signed bytes and must be rejected.
 
@@ -35,7 +35,7 @@ Linear requests are verified before delivery. Verification uses the exact raw bo
 Use `linearIssueSource()` for stable issue and comment webhooks.
 
 ```ts
-import { defineLoop, linearIssueSink, linearIssueSource, ok } from "@twelvehart/orca-ts";
+import { defineLoop, linearIssueSink, linearIssueSource, ok } from "@twelvehart/orcats";
 
 export default defineLoop({
   name: "linear-issue-triage",
@@ -69,7 +69,7 @@ Use `linearAgentSource()` for Linear Agent Sessions. Linear's Agent APIs are Dev
 Agent events normalize created sessions, prompted sessions, activity content, related issue context, stop signals, raw payload, and `dedupeKey`.
 
 ```ts
-import { linear, linearAgentSink, linearAgentSource } from "@twelvehart/orca-ts";
+import { linear, linearAgentSink, linearAgentSource } from "@twelvehart/orcats";
 
 const source = linearAgentSource({
   webhookSecret: process.env.LINEAR_WEBHOOK_SECRET ?? "",
@@ -95,7 +95,7 @@ Use `linear()` for intermediate Agent Activities or plan updates inside the loop
 Slack remains a separate sink. Compose it locally when a workflow needs both Linear and Slack:
 
 ```ts
-import { err, linearIssueSink, ok, slack, type Sink } from "@twelvehart/orca-ts";
+import { err, linearIssueSink, ok, slack, type Sink } from "@twelvehart/orcats";
 
 const sink: Sink<{ linear: { issueId: string; finalSummary: string }; slack?: string }> = {
   kind: "linear-issue",

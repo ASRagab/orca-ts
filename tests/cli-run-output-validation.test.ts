@@ -80,7 +80,7 @@ await new Promise(() => undefined);
     );
 
     try {
-      const result = await runCliProcess("bun", ["./bin/orca", "--no-typecheck", flowPath], {
+      const result = await runCliProcess("bun", ["./bin/orcats", "--no-typecheck", flowPath], {
         cwd: repoRoot,
         forceKillAfterMs: 50,
         timeoutMs: 500,
@@ -95,7 +95,7 @@ await new Promise(() => undefined);
     }
   });
 
-  test("orca run separates stdout payloads from stderr diagnostics", async () => {
+  test("orcats run separates stdout payloads from stderr diagnostics", async () => {
     const root = await mkdtemp(join(tmpdir(), "orca-output-run-"));
     const loopPath = join(root, "stdout-loop.ts");
     await writeFile(
@@ -118,7 +118,7 @@ export default defineLoop({
     );
 
     try {
-      const result = await runCliProcess("bun", ["./bin/orca", "run", "--no-typecheck", loopPath], {
+      const result = await runCliProcess("bun", ["./bin/orcats", "run", "--no-typecheck", loopPath], {
         cwd: repoRoot,
         timeoutMs: 5_000,
       });
@@ -138,7 +138,7 @@ export default defineLoop({
     const before = await gitStatus(target);
 
     try {
-      const result = await runCliProcess("bun", ["./bin/orca", "run", "--no-typecheck", repoHealthLoopPath], {
+      const result = await runCliProcess("bun", ["./bin/orcats", "run", "--no-typecheck", repoHealthLoopPath], {
         cwd: repoRoot,
         env: { ORCA_VALIDATE_TARGET_REPO: target },
         timeoutMs: 10_000,
@@ -175,12 +175,12 @@ export default defineLoop({
     }
   });
 
-  test("orca serve exposes child output and stops cleanly after SIGINT", async () => {
+  test("orcats serve exposes child output and stops cleanly after SIGINT", async () => {
     const target = await createDisposableTargetRepo();
     const before = await gitStatus(target);
 
     try {
-      const result = await runCliProcess("bun", ["./bin/orca", "serve", "--no-typecheck", repoHealthLoopPath], {
+      const result = await runCliProcess("bun", ["./bin/orcats", "serve", "--no-typecheck", repoHealthLoopPath], {
         cwd: repoRoot,
         env: { ORCA_VALIDATE_TARGET_REPO: target },
         shutdownAfter: { stream: "stdout", pattern: /"checkedAt": "deterministic"/, signal: "SIGINT" },
@@ -191,7 +191,7 @@ export default defineLoop({
       expectExitZero(result);
       expect(after).toBe(before);
       expect(result.stdout).toContain("\"checkedAt\": \"deterministic\"");
-      expect(result.stderr).toContain('orca: serving loop "repo-health"');
+      expect(result.stderr).toContain('orcats: serving loop "repo-health"');
       expectStderrContainsDiagnostics(result, ["preflight", "run started", "stage", "cycle", "done"]);
       expectNoOrcaDiagnosticsOnStdout(result);
     } finally {

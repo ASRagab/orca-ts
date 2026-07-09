@@ -11,7 +11,7 @@ run, serve, troubleshoot, and migrate Orca loops.
 #### Scenario: New user follows first-loop tutorial
 - **WHEN** a user starts from the loop guide with no prior loop-builder context
 - **THEN** the guide shows a minimal runnable loop and the command needed to run
-  it with the Orca CLI
+  it with the Orcats CLI
 
 #### Scenario: User needs API reference
 - **WHEN** a user needs details for `loop()`, presets, guards, state adapters,
@@ -21,7 +21,7 @@ run, serve, troubleshoot, and migrate Orca loops.
 
 #### Scenario: User operates a served loop
 - **WHEN** a user wants a long-lived trigger host
-- **THEN** the guide explains `orca serve`, trigger ownership, child-run
+- **THEN** the guide explains `orcats serve`, trigger ownership, child-run
   isolation, state persistence, and safe shutdown expectations
 
 ### Requirement: README remains a concise loop entry point
@@ -71,8 +71,8 @@ modules and provide correct authoring and execution guidance for both.
 
 #### Scenario: Flow skill runs a loop artifact
 - **WHEN** a user asks to run, monitor, or heal a loop module
-- **THEN** the flow skill uses the loop CLI shape (`orca run`, `orca serve`, or
-  `orca loops`) rather than only the legacy `orca <flow.ts>` command
+- **THEN** the flow skill uses the loop CLI shape (`orcats run`, `orcats serve`, or
+  `orcats loops`) rather than only the legacy `orcats <flow.ts>` command
 
 ### Requirement: Examples are verified documentation
 

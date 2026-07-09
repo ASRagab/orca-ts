@@ -26,8 +26,8 @@ if (!versionMatch) {
   failures.push("package.json version must match src/cli/version.ts ORCA_VERSION");
 }
 
-if (!packageJson.bin?.["orca"]) {
-  failures.push("package.json must expose bin.orca");
+if (!packageJson.bin?.["orcats"]) {
+  failures.push("package.json must expose bin.orcats");
 }
 
 if (!packageJson.exports?.["."]) {

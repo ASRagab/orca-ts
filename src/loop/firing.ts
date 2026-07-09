@@ -19,7 +19,7 @@ const STOP_EXIT_CODES = {
 
 /** What the supervisor hands the spawner for one trigger firing. */
 export interface ChildSpec {
-  /** The loop module path or registered name the child `orca run` resolves. */
+  /** The loop module path or registered name the child `orcats run` resolves. */
   readonly loop: string;
   /** The trigger event, serialized to the child by the default spawner. */
   readonly event: unknown;
@@ -103,7 +103,7 @@ function childEntrypoint(argv: readonly string[]): string | undefined {
   return entry;
 }
 
-/** Default spawner: re-invoke this CLI as `orca run --no-typecheck <loop>` in a fresh OS process. */
+/** Default spawner: re-invoke this CLI as `orcats run --no-typecheck <loop>` in a fresh OS process. */
 export const spawnLoopChild: ChildSpawner = (spec) => {
   const childSpec = buildChildProcessSpec(spec);
   const child = spawn(childSpec.command, [...childSpec.args], {
@@ -172,8 +172,8 @@ export function formatLoopFiringDiagnostic(
 ): string {
   return result.match(
     (outcome) =>
-      `orca: loop "${name}" stopped (${outcome.stopReason}) after ${String(outcome.iterations)} iteration(s)\n`,
-    (error) => `orca: loop "${name}" failed: ${describeLoopRunError(error)}\n`,
+      `orcats: loop "${name}" stopped (${outcome.stopReason}) after ${String(outcome.iterations)} iteration(s)\n`,
+    (error) => `orcats: loop "${name}" failed: ${describeLoopRunError(error)}\n`,
   );
 }
 

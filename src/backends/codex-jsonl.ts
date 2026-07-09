@@ -65,7 +65,7 @@ export function codexExecJsonlArgs(args: CodexExecArgs = {}): readonly string[] 
     ...(args.ignoreUserConfig ? ["--ignore-user-config"] : []),
     ...(args.model ? ["--model", args.model] : []),
     ...(args.approvalPolicy ? ["-c", `approval_policy="${args.approvalPolicy}"`] : []),
-    ...(args.mcpServerUrl ? ["-c", `mcp_servers.orca.url=${JSON.stringify(args.mcpServerUrl)}`] : []),
+    ...(args.mcpServerUrl ? ["-c", `mcp_servers.orcats.url=${JSON.stringify(args.mcpServerUrl)}`] : []),
     ...(args.outputSchemaPath ? ["--output-schema", args.outputSchemaPath] : [])
   ];
 
@@ -95,7 +95,7 @@ export interface CodexJsonlOptions<Output = unknown> {
   readonly schema?: z.ZodType<Output>;
   /** Interactive conversations surface the agent's `ask_user` call as a
    * `user_question` event for the renderer. The answer is NOT routed here — Codex
-   * obtains it from the Orca MCP HTTP bridge and re-emits it on the matching
+   * obtains it from the Orcats MCP HTTP bridge and re-emits it on the matching
    * `item.completed`, which the tool-result branch turns into a `tool_result`.
    * Autonomous conversations leave this false and reject `ask_user` explicitly. */
   readonly interactive?: boolean;
@@ -166,10 +166,10 @@ export function createCodexJsonlConsumer<Output = unknown>(
       }
 
       if (line.type === "item.started" && isToolItem(line.item)) {
-        if (line.item.server === "orca" && line.item.tool === "ask_user") {
+        if (line.item.server === "orcats" && line.item.tool === "ask_user") {
           if (options.interactive) {
             // Surface the question for the renderer only. The answer travels
-            // Codex ↔ Orca MCP HTTP bridge and arrives on the matching
+            // Codex <-> Orcats MCP HTTP bridge and arrives on the matching
             // `item.completed`, which the tool-result branch emits below.
             const question = askUserQuestion(line.item.arguments);
             await conversation.emit({ type: "user_question", question });

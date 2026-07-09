@@ -4,11 +4,8 @@ import * as root from "../index.ts";
 import * as loop from "../loop/index.ts";
 import * as model from "../model/index.ts";
 
-const PackageName = "@twelvehart/orca-ts";
-// One-release runtime alias for pre-0.1.0 standalone flows that import "orca-ts".
-// The published package contract stays scoped; this shim is runtime-only.
-const LegacyPackageName = "orca-ts";
-const EmbeddedKey = Symbol.for("@twelvehart/orca-ts.embedded");
+const PackageName = "@twelvehart/orcats";
+const EmbeddedKey = Symbol.for("@twelvehart/orcats.embedded");
 const RuntimeExports = {
   ".": "./index.cjs",
   "./loop": "./loop.cjs",
@@ -23,7 +20,7 @@ export function ensureOrcaResolvable(scriptPath: string, options: EnsureOrcaReso
   const scriptDir = dirname(scriptPath);
   registerEmbeddedRegistry();
   const includeSelfReference = isBunExecutable();
-  const missingPackages = [PackageName, LegacyPackageName].filter(
+  const missingPackages = [PackageName].filter(
     (specifier) => !hasProjectPackage(specifier, scriptDir, includeSelfReference)
   );
   if (missingPackages.length === 0) {
@@ -36,7 +33,7 @@ export function ensureOrcaResolvable(scriptPath: string, options: EnsureOrcaReso
 
 export function canResolveOrca(scriptPath: string): boolean {
   const scriptDir = dirname(scriptPath);
-  return [PackageName, LegacyPackageName].every((specifier) => canResolveFrom(specifier, scriptDir));
+  return canResolveFrom(PackageName, scriptDir);
 }
 
 function canResolveFrom(specifier: string, fromDir: string): boolean {
@@ -101,7 +98,7 @@ function registerEmbeddedOrca(scriptDir: string, packageNames: readonly string[]
   for (const packageName of packageNames) {
     const packageDir = join(nodeModulesDir, ...packageName.split("/"));
     if (existsSync(packageDir)) {
-      throw new Error(`orca: found ${packageDir} but could not resolve "${packageName}" from ${scriptDir}`);
+      throw new Error(`orcats: found ${packageDir} but could not resolve "${packageName}" from ${scriptDir}`);
     }
 
     mkdirSync(packageDir, { recursive: true });
@@ -124,19 +121,19 @@ function registerEmbeddedOrca(scriptDir: string, packageNames: readonly string[]
 function packageJson(packageName: string): string {
   return JSON.stringify({
     name: packageName,
-    orcaEmbedded: true,
+    orcatsEmbedded: true,
     main: "index.cjs",
     exports: RuntimeExports
   }, null, 2);
 }
 
 function embeddedModule(name: "root" | "loop" | "model"): string {
-  return `const registry = globalThis[Symbol.for("@twelvehart/orca-ts.embedded")];\nif (!registry) throw new Error("orca embedded library is not registered");\nmodule.exports = registry.${name};\n`;
+  return `const registry = globalThis[Symbol.for("@twelvehart/orcats.embedded")];\nif (!registry) throw new Error("orcats embedded library is not registered");\nmodule.exports = registry.${name};\n`;
 }
 
 function scheduleExistingEmbeddedCleanup(scriptDir: string): void {
   const nodeModulesDir = join(scriptDir, "node_modules");
-  const packageDirs = [PackageName, LegacyPackageName]
+  const packageDirs = [PackageName]
     .map((packageName) => join(nodeModulesDir, ...packageName.split("/")))
     .filter(isEmbeddedPackageDir);
   if (packageDirs.length === 0) {
@@ -151,9 +148,9 @@ function scheduleExistingEmbeddedCleanup(scriptDir: string): void {
 function isEmbeddedPackageDir(packageDir: string): boolean {
   try {
     const parsed = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8")) as {
-      orcaEmbedded?: unknown;
+      orcatsEmbedded?: unknown;
     };
-    return parsed.orcaEmbedded === true;
+    return parsed.orcatsEmbedded === true;
   } catch {
     return false;
   }

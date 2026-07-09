@@ -7,14 +7,14 @@ The repository ships three host-agnostic Agent Skills:
 
 | Skill | Purpose |
 | --- | --- |
-| `orca-ts-setup` | Install or verify the `orca` CLI and verify at least one backend. |
-| `orca-ts-author` | Generate a saved, verification-gated workflow or loop module. |
-| `orca-ts-flow` | Run, monitor, diagnose, and heal a saved workflow or loop. |
+| `orcats-setup` | Install or verify the `orcats` CLI and verify at least one backend. |
+| `orcats-author` | Generate a saved, verification-gated workflow or loop module. |
+| `orcats-flow` | Run, monitor, diagnose, and heal a saved workflow or loop. |
 
 The intended sequence is:
 
 ```text
-orca-ts-setup -> orca-ts-author -> orca-ts-flow
+orcats-setup -> orcats-author -> orcats-flow
 ```
 
 ## Install from GitHub
@@ -27,7 +27,7 @@ npx skills add ASRagab/orca-ts --skill '*' --global
 Install one skill to one agent:
 
 ```bash
-npx skills add ASRagab/orca-ts --skill orca-ts-setup --agent claude-code
+npx skills add ASRagab/orca-ts --skill orcats-setup --agent claude-code
 ```
 
 Before the repository is public, install from a local checkout:

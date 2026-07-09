@@ -328,7 +328,7 @@ describe("Codex live backend constructor", () => {
   });
 
   test("surfaces interactive ask_user as a question; the answer arrives on item.completed", async () => {
-    // The answer is routed by the Orca MCP HTTP bridge (responder), not the
+    // The answer is routed by the Orcats MCP HTTP bridge (responder), not the
     // consumer; Codex re-emits it on the matching `item.completed`. So the
     // consumer must emit the question for display and turn that completion into
     // the tool_result — without invoking the responder a second time.
@@ -356,7 +356,7 @@ describe("Codex live backend constructor", () => {
             item: {
               id: "ask_1",
               type: "mcp_tool_call",
-              server: "orca",
+              server: "orcats",
               tool: "ask_user",
               arguments: { question: "Continue?" }
             }
@@ -366,7 +366,7 @@ describe("Codex live backend constructor", () => {
             item: {
               id: "ask_1",
               type: "mcp_tool_call",
-              server: "orca",
+              server: "orcats",
               tool: "ask_user",
               result: { content: [{ text: "answer:Continue?" }] }
             }
@@ -382,7 +382,7 @@ describe("Codex live backend constructor", () => {
     const outcome = await conversation.awaitResult();
 
     expect(conversation.canAskUser).toBe(true);
-    expect(args).toContain("mcp_servers.orca.url=\"http://127.0.0.1:12345\"");
+    expect(args).toContain("mcp_servers.orcats.url=\"http://127.0.0.1:12345\"");
     expect(await events).toEqual([
       { type: "user_question", question: "Continue?" },
       { type: "tool_result", toolCallId: "ask_1", output: "answer:Continue?" },

@@ -4,11 +4,11 @@ description: Commands, flags, and task-argument behavior.
 ---
 
 ```bash
-orca [--backend <name>] [--no-typecheck] <flow.ts> [-- <task args>]
-orca run <loop>
-orca serve <loop>
-orca loops
-orca --version
+orcats [--backend <name>] [--no-typecheck] <flow.ts> [-- <task args>]
+orcats run <loop>
+orcats serve <loop>
+orcats loops
+orcats --version
 ```
 
 | Command | Meaning |
@@ -18,19 +18,19 @@ orca --version
 | `serve <loop>` | Host a loop trigger and spawn one child process per firing. |
 | `loops` | Discover loops from `.orca/loops/` without firing them. |
 
-`orca run` and served child execution share the same firing contract: event decoding, `defineLoop().run(event)`, sink emission, diagnostics, and stop-reason exit-code mapping. `ORCA_LOOP_EVENT` is the CLI/supervisor envelope for reproducing one firing; custom Source and Sink adapters should not read it directly.
+`orcats run` and served child execution share the same firing contract: event decoding, `defineLoop().run(event)`, sink emission, diagnostics, and stop-reason exit-code mapping. `ORCA_LOOP_EVENT` is the CLI/supervisor envelope for reproducing one firing; custom Source and Sink adapters should not read it directly.
 
 | Option | Meaning |
 | --- | --- |
 | `--backend <name>` | Validates the backend tag and sets `ORCA_BACKEND`. |
 | `--no-typecheck` | Skips the `tsc --noEmit` preflight and sets `ORCA_TYPECHECK_SKIPPED=1`. |
-| `--version`, `-v` | Prints the embedded Orca version. |
+| `--version`, `-v` | Prints the embedded Orcats version. |
 | `--help`, `-h` | Prints usage. |
 | `-- <task args>` | Passes task input to `flowArgs()`. |
 
 ## Run output
 
-`orca <flow.ts>` and `orca run <loop>` render concise progress on stderr from structured run-output events: preflight status, stage progress, loop cycle progress, artifacts, and the final outcome. Non-TTY and CI output is plain line-oriented text; TTY output may use color when `NO_COLOR` is not set.
+`orcats <flow.ts>` and `orcats run <loop>` render concise progress on stderr from structured run-output events: preflight status, stage progress, loop cycle progress, artifacts, and the final outcome. Non-TTY and CI output is plain line-oriented text; TTY output may use color when `NO_COLOR` is not set.
 
 Stdout is reserved for explicit flow output and loop sink payloads. A `stdout()` sink or `console.log()` in a flow should not be mixed with progress diagnostics.
 
@@ -38,7 +38,7 @@ Valid backend tags are `claude`, `codex`, `opencode`, and `pi`.
 
 ## Loop exit codes
 
-`orca run` and `orca serve` map each loop stop reason to a process exit code via `exitCodeForStop(reason)`, exported from the loop surface. A build or runtime error that prevents the loop from running exits `70`.
+`orcats run` and `orcats serve` map each loop stop reason to a process exit code via `exitCodeForStop(reason)`, exported from the loop surface. A build or runtime error that prevents the loop from running exits `70`.
 
 | Stop reason | Exit code | Meaning |
 | --- | --- | --- |

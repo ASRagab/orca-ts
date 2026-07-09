@@ -132,7 +132,7 @@ export async function runAcpConversation<Output, B extends "claude" | "codex">(
         },
         terminal: false
       },
-      clientInfo: { name: "orca-ts", title: "Orca TS", version: "0.0.0" }
+      clientInfo: { name: "orcats", title: "Orcats", version: "0.0.0" }
     }));
 
     const session = await runAcpPhase(options.backend, "session creation", () => acpClient.request<AcpSessionResponse>("session/new", {

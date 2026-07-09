@@ -7,7 +7,7 @@ export function extractFlowArgs(argv: readonly string[]): string[] {
   return separator === -1 ? [] : argv.slice(separator + 1);
 }
 
-// The arguments a flow should treat as its task input. The orca CLI captures
+// The arguments a flow should treat as its task input. The orcats CLI captures
 // the post-`--` tokens and forwards them via ORCA_FLOW_ARGS; a flow run directly
 // (e.g. `bun flow.ts -- foo`) falls back to parsing argv.
 export function flowArgs(): string[] {

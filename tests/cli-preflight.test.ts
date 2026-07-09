@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { runQuiet } from "../src/tools/process.ts";
 
-// Drives the real `orca` CLI entrypoint (the bin shim) end-to-end — not parseCliArgs in
+// Drives the real `orcats` CLI entrypoint (the bin shim) end-to-end — not parseCliArgs in
 // isolation — to lock the shared preflight contract every flow and loop run depends on:
 // flow-arg forwarding, --backend → ORCA_BACKEND, the typecheck skip env + warning, and a
 // non-zero exit on typecheck failure. The compiled standalone binary is covered separately
 // by scripts/smoke-binary.ts; here the bin shim keeps the gate fast and token-free (the probe
 // flow never touches a backend).
 const repoRoot = resolve(import.meta.dir, "..");
-const binShim = resolve(repoRoot, "bin", "orca");
+const binShim = resolve(repoRoot, "bin", "orcats");
 const orcaSrc = resolve(repoRoot, "src", "index.ts");
 const repoTsc = resolve(repoRoot, "node_modules", ".bin", "tsc");
 
@@ -124,6 +124,6 @@ describe("CLI preflight (binary entrypoint)", () => {
   test("prints USAGE (not an error) when no script or command is given", async () => {
     const result = await runOrca([], repoRoot);
     expect(result.isOk()).toBe(true);
-    expect(result._unsafeUnwrap().stdout).toContain("Usage: orca");
+    expect(result._unsafeUnwrap().stdout).toContain("Usage: orcats");
   });
 });

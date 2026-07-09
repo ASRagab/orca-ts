@@ -18,4 +18,4 @@ description: Checked examples and what each one demonstrates.
 | `examples/loop-served-trigger.ts` | Import-safe `defineLoop()` module. |
 | `examples/linear-ticket-triage.ts` | Linear ticket source, progress comment, triage loop, final update, optional Slack. |
 
-Inside this repository, examples may import from local source paths. Package consumers should import from `@twelvehart/orca-ts`.
+Inside this repository, examples may import from local source paths. Package consumers should import from `@twelvehart/orcats`.

@@ -1,6 +1,6 @@
 ## Purpose
 
-Define the shared event model and human presentation rules for Orca CLI run
+Define the shared event model and human presentation rules for Orcats CLI run
 output.
 
 ## Requirements
@@ -12,13 +12,13 @@ lifecycle, preflight, stage progress, agent activity, loop cycle progress,
 artifact writes, and final outcome.
 
 #### Scenario: Loop run emits shared progress events
-- **WHEN** a user runs `orca run <loop>`
+- **WHEN** a user runs `orcats run <loop>`
 - **THEN** the CLI output layer receives structured events for the run start,
   typecheck preflight, loop cycle progress, sink emission or failure, and final
   stop outcome
 
 #### Scenario: Legacy flow emits shared progress events
-- **WHEN** a user runs `orca <flow.ts>`
+- **WHEN** a user runs `orcats <flow.ts>`
 - **THEN** the CLI output layer receives structured events from the flow runtime
   instead of relying on a separate flow-only formatter
 

@@ -63,7 +63,7 @@ This table is the operation→tag map. When you pattern-match a `Result`'s error
 Because `RuntimeError` is discriminated on `_tag`, a `switch` is exhaustive at the type level. Within a flow, errors arrive in the `E` channel of a `Result`; within a loop run, they are wrapped as `LoopRunError = RuntimeError | TerminationContractError` (see [Loop API](../loop-api/)).
 
 ```ts
-import { git } from "orca";
+import { git } from "@twelvehart/orcats";
 
 const result = await git().commit("ship it");
 if (result.isErr()) {

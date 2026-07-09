@@ -176,8 +176,8 @@ export function expectProcessExited(result: CliProcessResult): void {
 }
 
 export function expectNoOrcaDiagnosticsOnStdout(result: CliProcessResult): void {
-  if (/(^|\n)orca (?:\||:)/.test(result.stdout)) {
-    throw new Error(`Orca diagnostics leaked to stdout\n${formatCliProcessEvidence(result)}`);
+  if (/(^|\n)orcats (?:\||:)/.test(result.stdout)) {
+    throw new Error(`Orcats diagnostics leaked to stdout\n${formatCliProcessEvidence(result)}`);
   }
 }
 
@@ -185,7 +185,7 @@ export function expectStderrContainsDiagnostics(
   result: CliProcessResult,
   diagnostics: readonly string[],
 ): void {
-  const missing = diagnostics.filter((diagnostic) => !result.stderr.includes(`orca | ${diagnostic}`));
+  const missing = diagnostics.filter((diagnostic) => !result.stderr.includes(`orcats | ${diagnostic}`));
   if (missing.length > 0) {
     throw new Error(`missing stderr diagnostics: ${missing.join(", ")}\n${formatCliProcessEvidence(result)}`);
   }
