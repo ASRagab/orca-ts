@@ -1,0 +1,19 @@
+{
+  "capturedAt": "2026-07-08T22:27:33.549Z",
+  "backend": "codex",
+  "transport": "current",
+  "scenario": "cancel",
+  "prompt": "Inspect this tiny repository without modifying files, then wait briefly before answering.",
+  "repoFixture": "/tmp/orca-acp-capture-3P6W42",
+  "node": "v24.3.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "versions": {
+    "codex": "codex-cli 0.143.0",
+    "codex-acp": null
+  },
+  "wallTimeMs": 1510,
+  "exitCode": null,
+  "eventCount": 4,
+  "live": true
+}

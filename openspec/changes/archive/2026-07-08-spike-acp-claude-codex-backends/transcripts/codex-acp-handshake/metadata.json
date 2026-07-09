@@ -1,0 +1,19 @@
+{
+  "capturedAt": "2026-07-08T21:56:07.152Z",
+  "backend": "codex",
+  "transport": "acp",
+  "scenario": "handshake",
+  "prompt": null,
+  "repoFixture": "/tmp/orca-acp-capture-4KtWZ3",
+  "node": "v24.3.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "versions": {
+    "codex": "codex-cli 0.143.0",
+    "codex-acp": "@agentclientprotocol/codex-acp 1.1.0"
+  },
+  "wallTimeMs": 8734,
+  "exitCode": null,
+  "eventCount": 4,
+  "live": false
+}

@@ -1,0 +1,389 @@
+{
+  "capturedAt": "2026-07-08T23:01:32.912Z",
+  "results": [
+    {
+      "backend": "codex",
+      "transport": "current",
+      "workload": "direct",
+      "wallTimeMs": 21049,
+      "backendPromptCount": 1,
+      "processCountEstimate": 1,
+      "sessionReuse": false,
+      "eventCount": 10,
+      "timeToFirstBackendEventMs": [
+        15065
+      ],
+      "promptMetrics": [
+        {
+          "promptIndex": 0,
+          "wallTimeMs": 21035,
+          "timeToFirstEventMs": 15065,
+          "eventCount": 10,
+          "outcomeType": "success"
+        }
+      ],
+      "finalStatus": "success",
+      "cleanupStatus": "owned process closed by conversation"
+    },
+    {
+      "backend": "codex",
+      "transport": "current",
+      "workload": "flow",
+      "wallTimeMs": 49936,
+      "backendPromptCount": 2,
+      "processCountEstimate": 2,
+      "sessionReuse": false,
+      "eventCount": 15,
+      "timeToFirstBackendEventMs": [
+        15592,
+        7931
+      ],
+      "promptMetrics": [
+        {
+          "promptIndex": 0,
+          "wallTimeMs": 40645,
+          "timeToFirstEventMs": 15592,
+          "eventCount": 11,
+          "outcomeType": "success"
+        },
+        {
+          "promptIndex": 1,
+          "wallTimeMs": 9279,
+          "timeToFirstEventMs": 7931,
+          "eventCount": 4,
+          "outcomeType": "success"
+        }
+      ],
+      "finalStatus": "success",
+      "cleanupStatus": "owned process closed by conversation"
+    },
+    {
+      "backend": "codex",
+      "transport": "current",
+      "workload": "loop",
+      "wallTimeMs": 96004,
+      "backendPromptCount": 3,
+      "processCountEstimate": 3,
+      "sessionReuse": false,
+      "eventCount": 49,
+      "timeToFirstBackendEventMs": [
+        17775,
+        12760,
+        12678
+      ],
+      "promptMetrics": [
+        {
+          "promptIndex": 0,
+          "wallTimeMs": 36980,
+          "timeToFirstEventMs": 17775,
+          "eventCount": 17,
+          "outcomeType": "success"
+        },
+        {
+          "promptIndex": 1,
+          "wallTimeMs": 34269,
+          "timeToFirstEventMs": 12760,
+          "eventCount": 22,
+          "outcomeType": "success"
+        },
+        {
+          "promptIndex": 2,
+          "wallTimeMs": 24741,
+          "timeToFirstEventMs": 12678,
+          "eventCount": 10,
+          "outcomeType": "success"
+        }
+      ],
+      "finalStatus": "converged",
+      "cleanupStatus": "owned process closed by conversation"
+    },
+    {
+      "backend": "codex",
+      "transport": "acp",
+      "workload": "direct",
+      "wallTimeMs": 33835,
+      "backendPromptCount": 1,
+      "processCountEstimate": 1,
+      "sessionReuse": false,
+      "eventCount": 25,
+      "timeToFirstBackendEventMs": [
+        9170
+      ],
+      "promptMetrics": [
+        {
+          "promptIndex": 0,
+          "wallTimeMs": 33829,
+          "timeToFirstEventMs": 9170,
+          "eventCount": 25,
+          "outcomeType": "success"
+        }
+      ],
+      "finalStatus": "success",
+      "cleanupStatus": "owned process closed by conversation"
+    },
+    {
+      "backend": "codex",
+      "transport": "acp",
+      "workload": "flow",
+      "wallTimeMs": 63588,
+      "backendPromptCount": 2,
+      "processCountEstimate": 2,
+      "sessionReuse": false,
+      "eventCount": 54,
+      "timeToFirstBackendEventMs": [
+        9198,
+        9377
+      ],
+      "promptMetrics": [
+        {
+          "promptIndex": 0,
+          "wallTimeMs": 26156,
+          "timeToFirstEventMs": 9198,
+          "eventCount": 21,
+          "outcomeType": "success"
+        },
+        {
+          "promptIndex": 1,
+          "wallTimeMs": 37423,
+          "timeToFirstEventMs": 9377,
+          "eventCount": 33,
+          "outcomeType": "success"
+        }
+      ],
+      "finalStatus": "success",
+      "cleanupStatus": "owned process closed by conversation"
+    },
+    {
+      "backend": "codex",
+      "transport": "acp",
+      "workload": "loop",
+      "wallTimeMs": 111814,
+      "backendPromptCount": 3,
+      "processCountEstimate": 3,
+      "sessionReuse": false,
+      "eventCount": 44,
+      "timeToFirstBackendEventMs": [
+        9218,
+        9350,
+        9072
+      ],
+      "promptMetrics": [
+        {
+          "promptIndex": 0,
+          "wallTimeMs": 36979,
+          "timeToFirstEventMs": 9218,
+          "eventCount": 13,
+          "outcomeType": "success"
+        },
+        {
+          "promptIndex": 1,
+          "wallTimeMs": 41907,
+          "timeToFirstEventMs": 9350,
+          "eventCount": 18,
+          "outcomeType": "success"
+        },
+        {
+          "promptIndex": 2,
+          "wallTimeMs": 32921,
+          "timeToFirstEventMs": 9072,
+          "eventCount": 13,
+          "outcomeType": "success"
+        }
+      ],
+      "finalStatus": "converged",
+      "cleanupStatus": "owned process closed by conversation"
+    },
+    {
+      "backend": "claude",
+      "transport": "current",
+      "workload": "direct",
+      "wallTimeMs": 60249,
+      "backendPromptCount": 1,
+      "processCountEstimate": 1,
+      "sessionReuse": false,
+      "eventCount": 7,
+      "timeToFirstBackendEventMs": [
+        39187
+      ],
+      "promptMetrics": [
+        {
+          "promptIndex": 0,
+          "wallTimeMs": 60228,
+          "timeToFirstEventMs": 39187,
+          "eventCount": 7,
+          "outcomeType": "success"
+        }
+      ],
+      "finalStatus": "success",
+      "cleanupStatus": "owned process closed by conversation"
+    },
+    {
+      "backend": "claude",
+      "transport": "current",
+      "workload": "flow",
+      "wallTimeMs": 91720,
+      "backendPromptCount": 2,
+      "processCountEstimate": 2,
+      "sessionReuse": false,
+      "eventCount": 38,
+      "timeToFirstBackendEventMs": [
+        27860,
+        26577
+      ],
+      "promptMetrics": [
+        {
+          "promptIndex": 0,
+          "wallTimeMs": 50713,
+          "timeToFirstEventMs": 27860,
+          "eventCount": 18,
+          "outcomeType": "success"
+        },
+        {
+          "promptIndex": 1,
+          "wallTimeMs": 40987,
+          "timeToFirstEventMs": 26577,
+          "eventCount": 20,
+          "outcomeType": "success"
+        }
+      ],
+      "finalStatus": "success",
+      "cleanupStatus": "owned process closed by conversation"
+    },
+    {
+      "backend": "claude",
+      "transport": "current",
+      "workload": "loop",
+      "wallTimeMs": 120803,
+      "backendPromptCount": 3,
+      "processCountEstimate": 3,
+      "sessionReuse": false,
+      "eventCount": 33,
+      "timeToFirstBackendEventMs": [
+        19279,
+        33339,
+        41434
+      ],
+      "promptMetrics": [
+        {
+          "promptIndex": 0,
+          "wallTimeMs": 24437,
+          "timeToFirstEventMs": 19279,
+          "eventCount": 7,
+          "outcomeType": "success"
+        },
+        {
+          "promptIndex": 1,
+          "wallTimeMs": 44393,
+          "timeToFirstEventMs": 33339,
+          "eventCount": 13,
+          "outcomeType": "success"
+        },
+        {
+          "promptIndex": 2,
+          "wallTimeMs": 51958,
+          "timeToFirstEventMs": 41434,
+          "eventCount": 13,
+          "outcomeType": "success"
+        }
+      ],
+      "finalStatus": "converged",
+      "cleanupStatus": "owned process closed by conversation"
+    },
+    {
+      "backend": "claude",
+      "transport": "acp",
+      "workload": "direct",
+      "wallTimeMs": 38137,
+      "backendPromptCount": 1,
+      "processCountEstimate": 1,
+      "sessionReuse": false,
+      "eventCount": 5,
+      "timeToFirstBackendEventMs": [
+        18231
+      ],
+      "promptMetrics": [
+        {
+          "promptIndex": 0,
+          "wallTimeMs": 38121,
+          "timeToFirstEventMs": 18231,
+          "eventCount": 5,
+          "outcomeType": "success"
+        }
+      ],
+      "finalStatus": "success",
+      "cleanupStatus": "owned process closed by conversation"
+    },
+    {
+      "backend": "claude",
+      "transport": "acp",
+      "workload": "flow",
+      "wallTimeMs": 50622,
+      "backendPromptCount": 2,
+      "processCountEstimate": 2,
+      "sessionReuse": false,
+      "eventCount": 10,
+      "timeToFirstBackendEventMs": [
+        20144,
+        17074
+      ],
+      "promptMetrics": [
+        {
+          "promptIndex": 0,
+          "wallTimeMs": 27047,
+          "timeToFirstEventMs": 20144,
+          "eventCount": 5,
+          "outcomeType": "success"
+        },
+        {
+          "promptIndex": 1,
+          "wallTimeMs": 23562,
+          "timeToFirstEventMs": 17074,
+          "eventCount": 5,
+          "outcomeType": "success"
+        }
+      ],
+      "finalStatus": "success",
+      "cleanupStatus": "owned process closed by conversation"
+    },
+    {
+      "backend": "claude",
+      "transport": "acp",
+      "workload": "loop",
+      "wallTimeMs": 77192,
+      "backendPromptCount": 3,
+      "processCountEstimate": 3,
+      "sessionReuse": false,
+      "eventCount": 17,
+      "timeToFirstBackendEventMs": [
+        17412,
+        16846,
+        16748
+      ],
+      "promptMetrics": [
+        {
+          "promptIndex": 0,
+          "wallTimeMs": 29722,
+          "timeToFirstEventMs": 17412,
+          "eventCount": 7,
+          "outcomeType": "success"
+        },
+        {
+          "promptIndex": 1,
+          "wallTimeMs": 23741,
+          "timeToFirstEventMs": 16846,
+          "eventCount": 5,
+          "outcomeType": "success"
+        },
+        {
+          "promptIndex": 2,
+          "wallTimeMs": 23715,
+          "timeToFirstEventMs": 16748,
+          "eventCount": 5,
+          "outcomeType": "success"
+        }
+      ],
+      "finalStatus": "converged",
+      "cleanupStatus": "owned process closed by conversation"
+    }
+  ]
+}

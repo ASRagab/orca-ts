@@ -50,7 +50,7 @@ export type CodexProcess = SubprocessProcess;
 
 export type CodexProcessSpawner = SubprocessSpawner;
 
-interface ResolvedCodexConfig<Output> {
+export interface ResolvedCodexConfig<Output> {
   model?: string;
   systemPrompt?: string;
   approvalPolicy?: BackendApprovalPolicy;
@@ -141,7 +141,7 @@ export async function runCodexConversation<Output>(
   }
 }
 
-function resolveCodexConfig<Output>(
+export function resolveCodexConfig<Output>(
   request: AutonomousRequest<Output, "codex">,
   options: CodexBackendOptions
 ): ResolvedCodexConfig<Output> {

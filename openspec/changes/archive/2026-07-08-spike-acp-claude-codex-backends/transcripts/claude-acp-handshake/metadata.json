@@ -1,0 +1,19 @@
+{
+  "capturedAt": "2026-07-08T21:56:18.159Z",
+  "backend": "claude",
+  "transport": "acp",
+  "scenario": "handshake",
+  "prompt": null,
+  "repoFixture": "/tmp/orca-acp-capture-4iJnbO",
+  "node": "v24.3.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "versions": {
+    "claude": "2.1.204 (Claude Code)",
+    "claude-agent-acp": ""
+  },
+  "wallTimeMs": 10572,
+  "exitCode": 0,
+  "eventCount": 5,
+  "live": false
+}

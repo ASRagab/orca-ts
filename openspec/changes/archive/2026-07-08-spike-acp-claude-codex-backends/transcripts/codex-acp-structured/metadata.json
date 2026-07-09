@@ -1,0 +1,19 @@
+{
+  "capturedAt": "2026-07-08T22:22:26.776Z",
+  "backend": "codex",
+  "transport": "acp",
+  "scenario": "structured",
+  "prompt": "Inspect this tiny repository without modifying files. Return JSON only: {\"answer\":\"package.json exists\"}.",
+  "repoFixture": "/tmp/orca-acp-capture-bAmeay",
+  "node": "v24.3.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "versions": {
+    "codex": "codex-cli 0.143.0",
+    "codex-acp": "@agentclientprotocol/codex-acp 1.1.0"
+  },
+  "wallTimeMs": 33426,
+  "exitCode": null,
+  "eventCount": 39,
+  "live": true
+}

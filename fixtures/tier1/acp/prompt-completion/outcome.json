@@ -1,0 +1,12 @@
+{
+  "initialize": {
+    "protocolVersion": 1,
+    "agentCapabilities": {}
+  },
+  "session": {
+    "sessionId": "sid-1"
+  },
+  "prompt": {
+    "stopReason": "end_turn"
+  }
+}

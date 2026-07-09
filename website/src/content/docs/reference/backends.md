@@ -13,7 +13,7 @@ type BackendTag = "claude" | "codex" | "opencode" | "pi";
 
 | Backend | Tag | Constructor | Returns | Runtime |
 | --- | --- | --- | --- | --- |
-| Claude | `claude` | `claude(options?)` | `LlmBackend<"claude">` | Subprocess stream over the `claude` CLI. |
+| Claude | `claude` | `claude(options?)` | `LlmBackend<"claude">` | ACP JSON-RPC over `claude-agent-acp` by default; stream-json fallback via `ORCA_CLAUDE_TRANSPORT=stream-json`. |
 | Codex | `codex` | `codex(options?)` | `LlmBackend<"codex">` | Subprocess JSONL over `codex exec --json`. |
 | OpenCode | `opencode` | `opencode(options?)` | `OpenCodeBackend` | Managed `opencode serve` over HTTP/SSE. |
 | Pi | `pi` | `pi(options?)` | `LlmBackend<"pi">` | Subprocess RPC JSONL over the `pi` CLI. |
@@ -28,6 +28,8 @@ export function pi(options?: PiBackendOptions): LlmBackend<"pi">;
 All constructors default to `{}` and return immediately — they do not start a process or perform IO. The backend process is spawned lazily on the first `autonomous()` call.
 
 `codex({ ignoreUserConfig: true })` passes `--ignore-user-config` to `codex exec`, keeping Codex auth while skipping user config such as MCP servers. Use it for hermetic automation; leave it unset when a flow should honor the operator's normal Codex setup.
+
+`claude()` uses `claude-agent-acp` by default. Set `ORCA_CLAUDE_ACP_COMMAND` to point at a different ACP adapter command, or set `ORCA_CLAUDE_TRANSPORT=stream-json` / `claude({ transport: "stream-json" })` to use the previous `claude --print --input-format stream-json` subprocess path. Model-pinned and resumed Claude runs use the stream-json fallback automatically because the ACP adapter does not expose equivalent stable fields yet.
 
 ## The `LlmBackend<B>` contract
 

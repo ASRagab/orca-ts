@@ -122,7 +122,7 @@ Orca normalizes backend output into one `Conversation` model, but each backend s
 
 | Backend | Flow constructor | Runtime requirement |
 | --- | --- | --- |
-| Claude | `claude()` | `claude` CLI on `PATH` and authenticated |
+| Claude | `claude()` | `claude-agent-acp` on `PATH`, or `ORCA_CLAUDE_ACP_COMMAND` set; use `ORCA_CLAUDE_TRANSPORT=stream-json` to fall back to the authenticated `claude` CLI |
 | Codex | `codex()` | `codex` CLI on `PATH` and authenticated |
 | OpenCode | `opencode()` | `opencode` CLI on `PATH` and authenticated; Orca manages `opencode serve` |
 | Pi | `pi()` | `pi` CLI on `PATH` and authenticated |
@@ -374,7 +374,7 @@ ORCA_REAL_BACKEND_SMOKE=1 ORCA_REAL_BACKEND=pi bun test tests/integration/real-b
 | CLI prints typecheck errors | Run `bun run typecheck`, fix the TypeScript errors, then rerun the flow |
 | `orca` is not found after npm install | Run it through the local package bin with `npx orca`, or add `node_modules/.bin` to your script path |
 | `orca: missing project typecheck setup` warning | Add `typescript`, `tsconfig.json`, and a local `@twelvehart/orca-ts` package dependency in the flow project to restore the typecheck guard |
-| Live flow cannot start a backend | Confirm the backend CLI is on `PATH`, authenticated, and usable outside Orca |
+| Live flow cannot start a backend | Confirm the backend CLI or adapter is on `PATH`, authenticated, and usable outside Orca |
 | `--backend` seems to do nothing | The flow must call `selectBackend()`; direct `claude()`/`codex()` calls pin the backend |
 | Installer fails on checksum | Re-run; if persistent, download the tarball and `SHA256SUMS.txt` from the release page manually |
 | Live backend smoke is skipped | Set `ORCA_REAL_BACKEND_SMOKE=1` and choose `ORCA_REAL_BACKEND` |

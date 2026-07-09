@@ -1,5 +1,9 @@
 import type { z } from "zod";
 import {
+  claudeAcpCommand,
+  runAcpConversation
+} from "./acp-run.ts";
+import {
   createClaudeStreamConsumer,
   type ClaudeStreamOptions
 } from "./claude-stream-json.ts";
@@ -16,6 +20,7 @@ import { backendFailed, jsonSchemaFromZod, type BackendConfig } from "../model/i
 
 export type ClaudeProcess = SubprocessProcess;
 export type ClaudeProcessSpawner = SubprocessSpawner;
+export type ClaudeTransport = "acp" | "stream-json";
 
 export interface ClaudeBackendOptions {
   readonly command?: string;
@@ -23,6 +28,9 @@ export interface ClaudeBackendOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly capacity?: number;
   readonly spawnProcess?: ClaudeProcessSpawner;
+  readonly spawnAcpProcess?: import("./acp-client.ts").AcpProcessSpawner;
+  readonly transport?: ClaudeTransport;
+  readonly acpCancelTimeoutMs?: number;
   readonly config?: BackendConfig<"claude">;
   readonly inactivityTimeoutMs?: number;
   readonly wallClockTimeoutMs?: number;
@@ -133,22 +141,89 @@ export function claude(options: ClaudeBackendOptions = {}): LlmBackend<"claude">
     tag: "claude",
     autonomous<Output = unknown>(request: AutonomousRequest<Output, "claude">) {
       let child: ClaudeProcess | undefined;
+      let cancelAcp: (() => Promise<void>) | undefined;
+      const config = resolveClaudeConfig(request, options);
+      const transport = resolveClaudeTransport(options, config);
+      const useAcp = transport === "acp";
       const conversation = new StreamConversation({
         backend: "claude",
         capacity: options.capacity ?? 256,
         canAskUser: false,
-        onCancel: () => {
+        onCancel: async () => {
+          if (useAcp && cancelAcp) {
+            try {
+              await cancelAcp();
+            } catch (error) {
+              conversation.fail(backendFailed("claude", `Claude ACP cancellation failed: ${errorMessage(error)}`));
+            }
+            return;
+          }
           child?.kill("SIGTERM");
         }
       });
 
       queueMicrotask(() => {
+        if (conversation.signal.aborted) {
+          return;
+        }
+        if (useAcp) {
+          const acp = claudeAcpCommand();
+          void runAcpConversation(
+            request,
+            {
+              backend: "claude",
+              command: acp.command,
+              args: acp.args,
+              config,
+              ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+              ...(options.env === undefined ? {} : { env: options.env }),
+              ...(options.spawnAcpProcess === undefined ? {} : { spawnProcess: options.spawnAcpProcess }),
+              ...(options.acpCancelTimeoutMs === undefined ? {} : { cancelTimeoutMs: options.acpCancelTimeoutMs }),
+              ...(options.wallClockTimeoutMs === undefined ? {} : { requestTimeoutMs: options.wallClockTimeoutMs }),
+              ...(options.inactivityTimeoutMs === undefined ? {} : { inactivityTimeoutMs: options.inactivityTimeoutMs }),
+              setProcess: (process) => {
+                child = process;
+                if (conversation.signal.aborted) {
+                  process.kill("SIGTERM");
+                }
+              },
+              setCancel: (cancel) => {
+                cancelAcp = cancel;
+              }
+            },
+            conversation
+          );
+          return;
+        }
         void runClaudeConversation(request, options, conversation, (process) => {
           child = process;
+          if (conversation.signal.aborted) {
+            process.kill("SIGTERM");
+          }
         });
       });
 
       return conversation;
     }
   };
+}
+
+function resolveClaudeTransport<Output>(
+  options: ClaudeBackendOptions,
+  config: ResolvedClaudeConfig<Output>
+): ClaudeTransport {
+  const transport = options.transport ?? process.env.ORCA_CLAUDE_TRANSPORT;
+  if (transport === "stream-json") {
+    return "stream-json";
+  }
+  if (transport !== undefined && transport !== "acp") {
+    throw new Error(`unsupported Claude transport ${transport}`);
+  }
+  if (config.model !== undefined || config.resumeSessionId !== undefined) {
+    return "stream-json";
+  }
+  if (transport === undefined || transport === "acp") {
+    return "acp";
+  }
+  return "acp";
 }

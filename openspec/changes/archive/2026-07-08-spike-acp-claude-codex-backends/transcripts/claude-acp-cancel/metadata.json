@@ -1,0 +1,19 @@
+{
+  "capturedAt": "2026-07-08T22:25:28.127Z",
+  "backend": "claude",
+  "transport": "acp",
+  "scenario": "cancel",
+  "prompt": "Inspect this tiny repository without modifying files, then wait briefly before answering.",
+  "repoFixture": "/tmp/orca-acp-capture-ks0ies",
+  "node": "v24.3.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "versions": {
+    "claude": "2.1.204 (Claude Code)",
+    "claude-agent-acp": ""
+  },
+  "wallTimeMs": 14800,
+  "exitCode": 0,
+  "eventCount": 8,
+  "live": true
+}

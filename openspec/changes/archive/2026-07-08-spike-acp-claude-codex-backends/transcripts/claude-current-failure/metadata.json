@@ -1,0 +1,19 @@
+{
+  "capturedAt": "2026-07-08T21:56:19.013Z",
+  "backend": "claude",
+  "transport": "current",
+  "scenario": "failure",
+  "prompt": "This prompt is unused for deterministic failure capture.",
+  "repoFixture": "/tmp/orca-acp-capture-GDW84e",
+  "node": "v24.3.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "versions": {
+    "claude": "2.1.204 (Claude Code)",
+    "claude-agent-acp": null
+  },
+  "wallTimeMs": 126,
+  "exitCode": 1,
+  "eventCount": 1,
+  "live": false
+}

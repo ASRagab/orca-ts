@@ -1,0 +1,5 @@
+{"atMs":118,"direction":"stderr","payload":"error: unexpected argument '--orca-invalid-flag' found"}
+{"atMs":118,"direction":"stderr","payload":"  tip: to pass '--orca-invalid-flag' as a value, use '-- --orca-invalid-flag'"}
+{"atMs":118,"direction":"stderr","payload":"Usage: codex [OPTIONS] [PROMPT]"}
+{"atMs":118,"direction":"stderr","payload":"       codex [OPTIONS] <COMMAND> [ARGS]"}
+{"atMs":118,"direction":"stderr","payload":"For more information, try '--help'."}

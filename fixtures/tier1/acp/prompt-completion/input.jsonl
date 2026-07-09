@@ -1,0 +1,4 @@
+{"jsonrpc":"2.0","id":0,"result":{"protocolVersion":1,"agentCapabilities":{}}}
+{"jsonrpc":"2.0","id":1,"result":{"sessionId":"sid-1"}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sid-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"done"}}}}
+{"jsonrpc":"2.0","id":2,"result":{"stopReason":"end_turn"}}
