@@ -1,5 +1,5 @@
 /**
- * Mechanical correctness guard for orca-ts documentation.
+ * Mechanical correctness guard for Orcats documentation.
  *
  * The docs remediation plan (docs-remediation-plan.md) hand-transcribes
  * TypeScript signatures and literal sets from `src/` into the website/`docs/`

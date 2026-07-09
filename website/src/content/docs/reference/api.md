@@ -14,7 +14,7 @@ import {
   fixLoop, reviewAndFixStrategy,
   WorkflowMonitor,
   ok, err, type Result, z,
-} from "@twelvehart/orca-ts";
+} from "@twelvehart/orcats";
 ```
 
 ## Backends
@@ -66,6 +66,6 @@ The full tool interfaces (`FsTool`, `GitTool`, `GitHubTool`, `LinearTool`, `Comm
 
 ## Subpath imports
 
-Loop authoring can also import from `@twelvehart/orca-ts/loop`; model and testing helpers are exposed through `@twelvehart/orca-ts/model` and `@twelvehart/orca-ts/testing`.
+Loop authoring can also import from `@twelvehart/orcats/loop`; model and testing helpers are exposed through `@twelvehart/orcats/model` and `@twelvehart/orcats/testing`.
 
 Effect remains behind the loop facade and is not part of the public API.

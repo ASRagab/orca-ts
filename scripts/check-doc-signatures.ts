@@ -1,5 +1,5 @@
 /**
- * Field-level signature guard for orca-ts documentation.
+ * Field-level signature guard for Orcats documentation.
  *
  * The sibling gate `check-doc-symbols.ts` verifies enum/union *literal sets*
  * only (e.g. that the set of `RuntimeError` `_tag` values matches between docs

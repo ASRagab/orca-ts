@@ -11,7 +11,7 @@ events, and Linear Agent Session events. A custom trigger SHALL require
 implementing only the `Source` interface.
 
 #### Scenario: Bundled source fires the loop
-- **WHEN** a loop is bound to `cron(expr)` and the schedule elapses under `orca serve`
+- **WHEN** a loop is bound to `cron(expr)` and the schedule elapses under `orcats serve`
 - **THEN** the supervisor receives a trigger event and starts a loop run
 
 #### Scenario: Custom source integrates without engine changes
@@ -56,5 +56,5 @@ The system SHALL make `Source` and `Sink` the only loop-level trigger and output
 - **THEN** the loop runs end to end without performing real trigger, output, backend, filesystem, git, or command IO, and the fake sink captures the emitted output
 
 #### Scenario: Adapter is independent of firing internals
-- **WHEN** a loop is run directly with `orca run` or through `orca serve`
+- **WHEN** a loop is run directly with `orcats run` or through `orcats serve`
 - **THEN** its `Source` and `Sink` implementations observe the same public loop event and output contracts without reading child-process environment variables or supervisor internals

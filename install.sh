@@ -3,7 +3,7 @@ set -euo pipefail
 
 need() {
   command -v "$1" >/dev/null 2>&1 || {
-    echo "orca installer requires $1" >&2
+    echo "orcats installer requires $1" >&2
     exit 1
   }
 }
@@ -15,7 +15,7 @@ case "$(uname -s)" in
   Darwin) os="darwin" ;;
   Linux) os="linux" ;;
   *)
-    echo "orca installer supports macOS and Linux only" >&2
+    echo "orcats installer supports macOS and Linux only" >&2
     exit 1
     ;;
 esac
@@ -24,12 +24,12 @@ case "$(uname -m)" in
   arm64|aarch64) arch="arm64" ;;
   x86_64|amd64) arch="x64" ;;
   *)
-    echo "orca installer supports arm64 and x64 only" >&2
+    echo "orcats installer supports arm64 and x64 only" >&2
     exit 1
     ;;
 esac
 
-asset="orca-${os}-${arch}.tar.gz"
+asset="orcats-${os}-${arch}.tar.gz"
 if [[ -n "${ORCA_VERSION:-}" ]]; then
   version="${ORCA_VERSION#v}"
   base_url="https://github.com/ASRagab/orca-ts/releases/download/v${version}"
@@ -58,7 +58,7 @@ grep "  $asset$" "$workdir/SHA256SUMS.txt" > "$workdir/SHA256SUMS.check" || {
   elif command -v shasum >/dev/null 2>&1; then
     shasum -a 256 -c SHA256SUMS.check
   else
-    echo "orca installer requires sha256sum or shasum" >&2
+    echo "orcats installer requires sha256sum or shasum" >&2
     exit 1
   fi
 )
@@ -66,11 +66,11 @@ grep "  $asset$" "$workdir/SHA256SUMS.txt" > "$workdir/SHA256SUMS.check" || {
 tar -xzf "$workdir/$asset" -C "$workdir"
 install_dir="${ORCA_INSTALL_DIR:-$HOME/.local/bin}"
 install -d "$install_dir"
-install -m 0755 "$workdir/orca" "$install_dir/orca"
+install -m 0755 "$workdir/orcats" "$install_dir/orcats"
 
 case ":$PATH:" in
   *":$install_dir:"*) ;;
   *) echo "Add to PATH: export PATH=\"$install_dir:\$PATH\"" ;;
 esac
 
-"$install_dir/orca" --version
+"$install_dir/orcats" --version

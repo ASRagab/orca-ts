@@ -12,6 +12,6 @@ export * from "./run-output/index.ts";
 export * from "./tools/index.ts";
 export { z } from "zod";
 // Re-exported so flows (including standalone runs that only get the embedded
-// @twelvehart/orca-ts surface) can build fixLoop/Result values without a neverthrow dep.
+// @twelvehart/orcats surface) can build fixLoop/Result values without a neverthrow dep.
 export { err, ok } from "neverthrow";
 export type { Result } from "neverthrow";

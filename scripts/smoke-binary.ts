@@ -7,12 +7,12 @@ const packageJson = await Bun.file("package.json").json() as { version: string }
 
 await mustRun("bun", ["run", "build:binary"]);
 
-const binary = resolve("dist", "orca");
+const binary = resolve("dist", "orcats");
 const help = await mustRun(binary, ["--help"]);
-expectIncludes(help.stdout, "Usage: orca", "compiled binary help output");
+expectIncludes(help.stdout, "Usage: orcats", "compiled binary help output");
 
 const version = await mustRun(binary, ["--version"]);
-const expectedVersion = `orca ${packageJson.version}\n`;
+const expectedVersion = `orcats ${packageJson.version}\n`;
 if (version.stdout !== expectedVersion) {
   throw new Error(`compiled binary version mismatch: expected ${JSON.stringify(expectedVersion)}, got ${JSON.stringify(version.stdout)}`);
 }
@@ -22,63 +22,45 @@ try {
   await mkdir(repoFlowDir, { recursive: true });
   await writeFile(
     join(repoFlowDir, "flow.ts"),
-    `import { flow } from "@twelvehart/orca-ts";
-import { manual } from "@twelvehart/orca-ts/loop";
-import { BackendTagSchema } from "@twelvehart/orca-ts/model";
+    `import { flow } from "@twelvehart/orcats";
+import { manual } from "@twelvehart/orcats/loop";
+import { BackendTagSchema } from "@twelvehart/orcats/model";
 
 void manual;
 void BackendTagSchema;
 
 await flow()(async () => {
-  console.log("orca-binary-repo-self-smoke-ok");
+  console.log("orcats-binary-repo-self-smoke-ok");
 });
 `
   );
 
   const repoFlow = await mustRun(binary, ["--no-typecheck", join(repoFlowDir, "flow.ts")]);
-  expectIncludes(repoFlow.stdout, "orca-binary-repo-self-smoke-ok", "compiled binary repo workflow output");
+  expectIncludes(repoFlow.stdout, "orcats-binary-repo-self-smoke-ok", "compiled binary repo workflow output");
 } finally {
   await rm(repoFlowDir, { recursive: true, force: true });
 }
 
-const tempDir = await mkdtemp(join(tmpdir(), "orca-binary-smoke-"));
+const tempDir = await mkdtemp(join(tmpdir(), "orcats-binary-smoke-"));
 try {
   await writeFile(
     join(tempDir, "flow.ts"),
-    `import { flow, currentFlowContext } from "@twelvehart/orca-ts";
-import { manual } from "@twelvehart/orca-ts/loop";
-import { BackendTagSchema } from "@twelvehart/orca-ts/model";
+    `import { flow, currentFlowContext } from "@twelvehart/orcats";
+import { manual } from "@twelvehart/orcats/loop";
+import { BackendTagSchema } from "@twelvehart/orcats/model";
 
 void manual;
 void BackendTagSchema;
 
 await flow()(async () => {
-  console.log(\`orca-binary-smoke-ok \${currentFlowContext().cwd}\`);
-});
-`
-  );
-  await writeFile(
-    join(tempDir, "legacy-flow.ts"),
-    `import { flow } from "orca-ts";
-import { manual } from "orca-ts/loop";
-import { BackendTagSchema } from "orca-ts/model";
-
-void manual;
-void BackendTagSchema;
-
-await flow()(async () => {
-  console.log("orca-binary-legacy-smoke-ok");
+  console.log(\`orcats-binary-smoke-ok \${currentFlowContext().cwd}\`);
 });
 `
   );
 
   const flow = await mustRun(binary, ["flow.ts"], { cwd: tempDir });
-  expectIncludes(flow.stdout, "orca-binary-smoke-ok", "compiled binary flow output");
+  expectIncludes(flow.stdout, "orcats-binary-smoke-ok", "compiled binary flow output");
   expectIncludes(flow.stderr, "missing project typecheck setup", "compiled binary typecheck warning");
-
-  const legacyFlow = await mustRun(binary, ["legacy-flow.ts"], { cwd: tempDir });
-  expectIncludes(legacyFlow.stdout, "orca-binary-legacy-smoke-ok", "compiled binary legacy flow output");
-  expectIncludes(legacyFlow.stderr, "missing project typecheck setup", "compiled binary legacy typecheck warning");
 
   // Regression guard: a stale ORCA_EMBEDDED_RESPAWNED leaked into the environment must NOT
   // make a fresh invocation skip the bootstrap + respawn. The handshake is validated against
@@ -86,7 +68,7 @@ await flow()(async () => {
   const poisoned = await withEnv({ ORCA_EMBEDDED_RESPAWNED: "1" }, () =>
     mustRun(binary, ["flow.ts"], { cwd: tempDir })
   );
-  expectIncludes(poisoned.stdout, "orca-binary-smoke-ok", "compiled binary flow output under stale respawn handshake");
+  expectIncludes(poisoned.stdout, "orcats-binary-smoke-ok", "compiled binary flow output under stale respawn handshake");
   expectIncludes(poisoned.stderr, "missing project typecheck setup", "compiled binary typecheck warning under stale respawn handshake");
 } finally {
   await rm(tempDir, { recursive: true, force: true });

@@ -3,7 +3,7 @@ title: Backend Matrix
 description: Backend tags, constructors, the LlmBackend contract, selectBackend, and shared timeout defaults.
 ---
 
-A backend is an LLM driver that produces autonomous `Conversation`s. orca ships four backend tags — `claude`, `codex`, `opencode`, `pi` — behind a shared `LlmBackend<B>` contract. Signatures are transcribed from `src/backends/` and verified by `bun run docs:symbols`.
+A backend is an LLM driver that produces autonomous `Conversation`s. Orcats ships four backend tags — `claude`, `codex`, `opencode`, `pi` — behind a shared `LlmBackend<B>` contract. Signatures are transcribed from `src/backends/` and verified by `bun run docs:symbols`.
 
 ## Tags and constructors
 
@@ -83,7 +83,7 @@ export function selectBackend(options: SelectBackendOptions): SelectedBackend;
 `selectBackend` resolves the backend **synchronously** and **throws** on an invalid `ORCA_BACKEND`. The chosen tag is `process.env.ORCA_BACKEND` when set, otherwise `options.default`. An unrecognized value throws `Unsupported backend "<value>" (expected one of: claude, codex, opencode, pi)` — wrap the call if you prefer a `Result`-style boundary.
 
 ```ts
-import { selectBackend } from "orca";
+import { selectBackend } from "@twelvehart/orcats";
 
 const selected = selectBackend({ default: "claude" }); // reads ORCA_BACKEND
 try {

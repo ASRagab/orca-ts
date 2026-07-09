@@ -6,7 +6,7 @@ description: Build a copyable autonomous flow that selects a backend at run time
 Create `hello.ts`:
 
 ```ts
-import { flow, llm, selectBackend } from "@twelvehart/orca-ts";
+import { flow, llm, selectBackend } from "@twelvehart/orcats";
 
 await flow()(async () => {
   const selected = selectBackend({
@@ -37,7 +37,7 @@ await flow()(async () => {
 Run it:
 
 ```bash
-orca --backend codex hello.ts
+orcats --backend codex hello.ts
 ```
 
 `selectBackend()` lets the CLI select the backend through `ORCA_BACKEND`. `ORCA_BACKEND_MODEL` overrides the configured model for the selected backend.

@@ -1,6 +1,6 @@
 ## Purpose
 
-Define the shared configuration type and prompt-composition utility common to all subprocess backend adapters in Orca TypeScript.
+Define the shared configuration type and prompt-composition utility common to all subprocess backend adapters in Orcats.
 
 ## Requirements
 

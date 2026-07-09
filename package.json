@@ -1,5 +1,5 @@
 {
-  "name": "@twelvehart/orca-ts",
+  "name": "@twelvehart/orcats",
   "version": "0.2.0",
   "description": "TypeScript-native reimagining of Orca: deterministic coding-agent flows with author-time type feedback.",
   "type": "module",
@@ -14,11 +14,11 @@
     "url": "https://github.com/ASRagab/orca-ts/issues"
   },
   "bin": {
-    "orca": "./bin/orca"
+    "orcats": "./bin/orcats"
   },
   "types": "./dist/index.d.ts",
   "files": [
-    "bin/orca",
+    "bin/orcats",
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
     "src/**/*.ts",
@@ -52,8 +52,8 @@
     }
   },
   "scripts": {
-    "build": "bun build src/cli/main.ts --target bun --outfile dist/orca",
-    "build:binary": "bun build src/cli/main.ts --compile --outfile dist/orca",
+    "build": "bun build src/cli/main.ts --target bun --outfile dist/orcats",
+    "build:binary": "bun build src/cli/main.ts --compile --outfile dist/orcats",
     "build:types": "tsc -p tsconfig.build.json",
     "build:release": "bun run scripts/build-release-binaries.ts",
     "lint": "eslint .",

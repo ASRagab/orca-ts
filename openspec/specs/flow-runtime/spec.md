@@ -119,7 +119,7 @@ The system SHALL implement the internal loop engine (scheduling, bounded concurr
 - **THEN** the engine interrupts the outstanding branches via structured concurrency and returns a cancelled outcome
 
 ### Requirement: A facade gate forbids Effect types in the authoring surface
-The system SHALL enforce, via a type-test/lint check in the verification gate, that no Effect type appears in public runtime signatures or flow-authoring files. The gate SHALL scan generated declarations for the root runtime export (`@twelvehart/orca-ts`) and the explicit loop export surface, plus authored flow files used by examples/tests (`examples/**/*.ts` and `.orca/workflows/**/*.ts`). Internal engine files under `src/loop/engine/**` MAY reference Effect. Testing helpers MAY expose fakes and assertions but SHALL NOT require ordinary loop tests to import Effect.
+The system SHALL enforce, via a type-test/lint check in the verification gate, that no Effect type appears in public runtime signatures or flow-authoring files. The gate SHALL scan generated declarations for the root runtime export (`@twelvehart/orcats`) and the explicit loop export surface, plus authored flow files used by examples/tests (`examples/**/*.ts` and `.orca/workflows/**/*.ts`). Internal engine files under `src/loop/engine/**` MAY reference Effect. Testing helpers MAY expose fakes and assertions but SHALL NOT require ordinary loop tests to import Effect.
 
 #### Scenario: Effect leak fails verification
 - **WHEN** a root runtime signature, loop export signature, example flow, or `.orca/workflows` flow references an Effect type

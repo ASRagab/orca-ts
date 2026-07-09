@@ -1,6 +1,6 @@
 ## Purpose
 
-Define the backend-neutral conversation contract and supported v1 backend transports for Orca TypeScript.
+Define the backend-neutral conversation contract and supported v1 backend transports for Orcats.
 ## Requirements
 ### Requirement: Conversation contract is backend-neutral
 The system SHALL expose one read-only `Conversation` contract for all supported backends. The contract SHALL provide an async event stream, `awaitResult()`, `cancel()`, and a capability flag indicating whether the backend can ask the user.

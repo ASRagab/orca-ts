@@ -59,10 +59,10 @@ describe("run output reporter", () => {
     });
 
     expect(stdout).toEqual([]);
-    expect(stderr.join("")).toContain("orca | run started: cleanup (backend=codex)\n");
-    expect(stderr.join("")).toContain("orca | stage inspect completed (25ms)\n");
-    expect(stderr.join("")).toContain("orca | cycle 3 measure=0 delta=-1 stop=converged\n");
-    expect(stderr.join("")).toContain("orca | done: cleanup stopped (converged) after 3 iteration(s)\n");
+    expect(stderr.join("")).toContain("orcats | run started: cleanup (backend=codex)\n");
+    expect(stderr.join("")).toContain("orcats | stage inspect completed (25ms)\n");
+    expect(stderr.join("")).toContain("orcats | cycle 3 measure=0 delta=-1 stop=converged\n");
+    expect(stderr.join("")).toContain("orcats | done: cleanup stopped (converged) after 3 iteration(s)\n");
   });
 
   test("presenter uses color only for TTY output when color is allowed", () => {
@@ -81,7 +81,7 @@ describe("run output reporter", () => {
     }).handle({ type: "stage", name: "patch", status: "started" });
 
     expect(tty.join("")).toContain("\u001b[36morca\u001b[0m | stage patch started\n");
-    expect(noColor.join("")).toBe("orca | stage patch started\n");
+    expect(noColor.join("")).toBe("orcats | stage patch started\n");
   });
 
   test("narration is disabled by default and failure falls back to deterministic output", async () => {
@@ -106,7 +106,7 @@ describe("run output reporter", () => {
     disabledReporter.emit({ type: "run_finished", label: "cleanup", status: "success", iterations: 1 });
     await disabledReporter.flush();
     expect(calls).toBe(0);
-    expect(disabled.join("")).toContain("orca | done: cleanup completed after 1 iteration(s)\n");
+    expect(disabled.join("")).toContain("orcats | done: cleanup completed after 1 iteration(s)\n");
 
     const fallback: string[] = [];
     const fallbackReporter = createRunReporter({
@@ -127,7 +127,7 @@ describe("run output reporter", () => {
 
     fallbackReporter.emit({ type: "run_finished", label: "cleanup", status: "success", iterations: 1 });
     await fallbackReporter.flush();
-    expect(fallback.join("")).toContain("orca | done: cleanup completed after 1 iteration(s)\n");
-    expect(fallback.join("")).toContain("orca | narration unavailable: offline\n");
+    expect(fallback.join("")).toContain("orcats | done: cleanup completed after 1 iteration(s)\n");
+    expect(fallback.join("")).toContain("orcats | narration unavailable: offline\n");
   });
 });

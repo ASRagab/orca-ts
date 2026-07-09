@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@twelvehart/orca-ts",
+      "name": "@twelvehart/orcats",
       "dependencies": {
         "effect": "^3.21.2",
         "neverthrow": "^8.2.0",

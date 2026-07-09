@@ -1,18 +1,18 @@
 ## Purpose
 
-Define black-box validation for Orca CLI run output, stream separation, productive read-only loop execution, and process lifecycle monitoring.
+Define black-box validation for Orcats CLI run output, stream separation, productive read-only loop execution, and process lifecycle monitoring.
 
 ## Requirements
 
 ### Requirement: CLI output validation captures process streams separately
-The system SHALL provide validation coverage that launches Orca CLI commands as child processes and captures stdout and stderr independently.
+The system SHALL provide validation coverage that launches Orcats CLI commands as child processes and captures stdout and stderr independently.
 
 #### Scenario: Run command preserves stdout payload
-- **WHEN** the validation harness runs a loop with a stdout sink through `orca run`
+- **WHEN** the validation harness runs a loop with a stdout sink through `orcats run`
 - **THEN** stdout contains the loop payload and does not contain Orca progress diagnostics
 
 #### Scenario: Run command emits diagnostics on stderr
-- **WHEN** the validation harness runs a loop through `orca run`
+- **WHEN** the validation harness runs a loop through `orcats run`
 - **THEN** stderr contains the preflight, run start, progress, and final summary diagnostics needed to monitor the run
 
 #### Scenario: Captured evidence is available on failure
@@ -35,10 +35,10 @@ The system SHALL include a deterministic productive loop fixture that can inspec
 - **THEN** the target repository's git status after the run matches its git status before the run, excluding files explicitly created in a disposable test
 
 ### Requirement: CLI output validation covers serve lifecycle
-The system SHALL validate the operational lifecycle of `orca serve`, including supervisor startup, child firing output, shutdown, and timeout handling.
+The system SHALL validate the operational lifecycle of `orcats serve`, including supervisor startup, child firing output, shutdown, and timeout handling.
 
 #### Scenario: Serve command starts and stops cleanly
-- **WHEN** the validation harness starts `orca serve` and then sends a graceful shutdown signal
+- **WHEN** the validation harness starts `orcats serve` and then sends a graceful shutdown signal
 - **THEN** the process exits within the configured timeout without requiring a forced kill
 
 #### Scenario: Serve command exposes child firing output
@@ -46,7 +46,7 @@ The system SHALL validate the operational lifecycle of `orca serve`, including s
 - **THEN** the harness captures the child firing payload on stdout and the child progress diagnostics on stderr
 
 #### Scenario: Hung process is terminated
-- **WHEN** an Orca CLI process does not exit before the validation timeout
+- **WHEN** an Orcats CLI process does not exit before the validation timeout
 - **THEN** the harness terminates the process, records the timeout as failure evidence, and does not leave the child process running
 
 ### Requirement: Manual dogfood validation is documented

@@ -8,7 +8,7 @@ Codex and Pi are subprocess-stream backends: they share one `runSubprocessConver
 
 Backend fixture collection uses the shared conversation harness so adapters keep protocol parsing local while event capture and final outcome collection stay in one module.
 
-Autonomous human interaction is rejected. `UserQuestion` and `ApproveTool` remain explicit model variants; interactive support is only available when a backend starts an interactive session with an Orca-owned bridge.
+Autonomous human interaction is rejected. `UserQuestion` and `ApproveTool` remain explicit model variants; interactive support is only available when a backend starts an interactive session with an Orcats-owned bridge.
 
 ## Codex
 
@@ -23,7 +23,7 @@ Codex parity status:
 - Backend config: model, approval policy, read-only mode, retry metadata, system prompt, self-managed git policy, and structured output are represented in the shared config model.
 - Sessions/resume: TypeScript-facing session handles are backend-branded; Codex thread ids are captured from JSONL and can be requested on subsequent calls.
 - Structured output: Zod schemas are converted to JSON Schema for supported live calls and validated again on return.
-- `ask_user`: autonomous conversations reject `ask_user`; explicit interactive conversations use an Orca-owned MCP bridge.
+- `ask_user`: autonomous conversations reject `ask_user`; explicit interactive conversations use an Orcats-owned MCP bridge.
 - Approval events: Codex approval remains spawn-policy/config based until JSONL exposes approval request events.
 - Tool events: Codex tool-call and tool-result events preserve call id, tool name, raw input, output content, and error status when the JSONL stream exposes them.
 
@@ -39,7 +39,7 @@ The Claude backend starts `claude-agent-acp` by default, or `ORCA_CLAUDE_ACP_COM
 
 ## OpenCode
 
-The OpenCode backend drives a shared `opencode serve` process over HTTP/SSE (`opencode-run.ts`). Configure `opencode` and its auth outside Orca first. The server is started lazily and reused across conversations through `createOpenCodeServerManager`; `opencode().shutdown()` stops it (orca-ts has no global scope hook, so the backend owner drives teardown). Each turn opens the `GET /event` SSE stream first, then starts the turn with `POST /session/{id}/prompt_async`, and reads to a terminal `session.idle`/`session.error`. Parity notes:
+The OpenCode backend drives a shared `opencode serve` process over HTTP/SSE (`opencode-run.ts`). Configure `opencode` and its auth outside Orcats first. The server is started lazily and reused across conversations through `createOpenCodeServerManager`; `opencode().shutdown()` stops it (the package has no global scope hook, so the backend owner drives teardown). Each turn opens the `GET /event` SSE stream first, then starts the turn with `POST /session/{id}/prompt_async`, and reads to a terminal `session.idle`/`session.error`. Parity notes:
 
 - Backend config travels in the message body: model (`{providerID, modelID}`), system prompt, per-tool gate (autonomous disables `question`; read-only disables `write`/`edit`/`bash`/`patch`).
 - Structured output: schema sent as `format: {type: "json_schema", schema}`; the server-enforced `structured` payload is surfaced on the result.

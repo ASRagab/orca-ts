@@ -6,10 +6,10 @@ description: Diagnose missing CLIs, expired auth, and backend setup failures.
 Run the backend doctor through the setup skill or directly from a checked-out skill:
 
 ```bash
-bash skills/orca-ts-setup/scripts/orca-doctor.sh --backend codex
+bash skills/orcats-setup/scripts/orca-doctor.sh --backend codex
 ```
 
-The doctor script is byte-identical in two skill directories — `skills/orca-ts-setup/scripts/orca-doctor.sh` and `skills/orca-ts-flow/scripts/orca-doctor.sh`. Either path works; prefer the `orca-ts-setup` copy (the canonical location) and keep the two in sync if you edit one.
+The doctor script is byte-identical in two skill directories — `skills/orcats-setup/scripts/orca-doctor.sh` and `skills/orcats-flow/scripts/orca-doctor.sh`. Either path works; prefer the `orcats-setup` copy (the canonical location) and keep the two in sync if you edit one.
 
 Status meanings:
 

@@ -1,7 +1,7 @@
 # Saved Workflows
 
 Saved one-shot workflows live under `.orca/workflows/<name>.ts`; reusable loop
-modules live under `.orca/loops/<name>.ts`. The `orca-ts-author` skill generates
+modules live under `.orca/loops/<name>.ts`. The `orcats-author` skill generates
 mutating artifacts from checked templates and wires them to the target repo's
 confirmed test and lint commands.
 
@@ -19,9 +19,9 @@ Generated mutating artifacts default to `repair`:
 Override the policy with a workflow arg or environment variable:
 
 ```bash
-orca .orca/workflows/name.ts --backend codex -- --baseline=strict
-orca .orca/workflows/name.ts --backend codex -- --baseline=accept-dirty
-ORCA_BASELINE_POLICY=strict orca .orca/workflows/name.ts --backend codex
+orcats .orca/workflows/name.ts --backend codex -- --baseline=strict
+orcats .orca/workflows/name.ts --backend codex -- --baseline=accept-dirty
+ORCA_BASELINE_POLICY=strict orcats .orca/workflows/name.ts --backend codex
 ```
 
 `--baseline=...` takes precedence over `ORCA_BASELINE_POLICY`. If neither is set,

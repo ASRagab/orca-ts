@@ -1,11 +1,11 @@
-# Orca TypeScript Context
+# Orcats Context
 
-Orca TypeScript is a workflow runner for deterministic coding-agent work. This context names the project concepts that should anchor architecture discussions and documentation.
+Orcats is a workflow runner for deterministic coding-agent work. This context names the project concepts that should anchor architecture discussions and documentation.
 
 ## Language
 
 **Flow**:
-A direct-style TypeScript program that orchestrates coding-agent work through Orca runtime primitives.
+A direct-style TypeScript program that orchestrates coding-agent work through Orcats runtime primitives.
 _Avoid_: pipeline, job, command suite
 
 **Flow context**:

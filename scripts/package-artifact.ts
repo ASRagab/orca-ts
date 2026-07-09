@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-export const PackageName = "@twelvehart/orca-ts";
+export const PackageName = "@twelvehart/orcats";
 
 export interface PackageJson {
   readonly name?: string;
@@ -38,7 +38,7 @@ export interface CommandResult {
 }
 
 const ExpectedFiles = [
-  "bin/orca",
+  "bin/orcats",
   "dist/**/*.d.ts",
   "dist/**/*.d.ts.map",
   "src/**/*.ts",
@@ -60,7 +60,7 @@ const RequiredPackedFiles = [
   "README.md",
   "LICENSE",
   "NOTICE",
-  "bin/orca",
+  "bin/orcats",
   "src/index.ts",
   "src/loop/index.ts",
   "src/model/index.ts",
@@ -83,7 +83,7 @@ const ForbiddenPackedPathPatterns: ReadonlyArray<readonly [RegExp, string]> = [
   [/^website\//, "website files must not publish"],
   [/^openspec\//, "OpenSpec files must not publish"],
   [/^dist\/release\//, "release artifacts must not publish"],
-  [/^dist\/orca$/, "compiled release binary must not publish through npm"],
+  [/^dist\/orcats$/, "compiled release binary must not publish through npm"],
   [/\.tar\.gz$/, "release tarballs must not publish"],
   [/\.tgz$/, "package tarballs must not publish"],
   [/(^|\/)node_modules\//, "node_modules must not publish"],
@@ -143,8 +143,8 @@ export function collectMetadataFailures(packageJson: PackageJson): string[] {
   if (packageJson.publishConfig?.registry !== "https://registry.npmjs.org/") {
     failures.push("package.json publishConfig.registry must be https://registry.npmjs.org/");
   }
-  if (packageJson.bin?.orca !== "./bin/orca") {
-    failures.push("package.json must expose bin.orca as ./bin/orca");
+  if (packageJson.bin?.orcats !== "./bin/orcats") {
+    failures.push("package.json must expose bin.orcats as ./bin/orcats");
   }
 
   for (const [specifier, expected] of Object.entries(ExpectedExports)) {

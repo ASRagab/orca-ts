@@ -1,6 +1,6 @@
 ---
 title: Errors and Results
-description: The Result, Outcome, and Conversation types — how orca returns values, signals failure, and surfaces an autonomous run's terminal state.
+description: The Result, Outcome, and Conversation types — how Orcats returns values, signals failure, and surfaces an autonomous run's terminal state.
 ---
 
 Orca does not throw across its public boundaries. Every operation that can fail returns a `Result`, every autonomous run resolves to an `Outcome`, and a live run is observed through a `Conversation`. These three types are the contract every flow and loop builds on. Signatures below are transcribed from `src/` and verified by `bun run docs:symbols`.
@@ -14,7 +14,7 @@ export { err, ok } from "neverthrow";
 export type { Result } from "neverthrow";
 ```
 
-A `Result<T, E>` is either `Ok<T>` or `Err<E>`. The methods orca flows actually use:
+A `Result<T, E>` is either `Ok<T>` or `Err<E>`. The methods Orcats flows actually use:
 
 | Member | Signature | Behavior |
 | --- | --- | --- |
@@ -27,12 +27,12 @@ A `Result<T, E>` is either `Ok<T>` or `Err<E>`. The methods orca flows actually 
 | `.value` | `T` | Available on `Ok` (narrowed by `isOk()`). |
 | `.error` | `E` | Available on `Err` (narrowed by `isErr()`). |
 
-The error channel `E` for orca's own tools is `RuntimeError` (see [Runtime Errors](../runtime-errors/)). `src/model/result.ts` also exports an `orThrow(result)` helper that unwraps an ok value or throws the error — use it only at boundaries where a `Result` must become a thrown exception.
+The error channel `E` for Orcats's own tools is `RuntimeError` (see [Runtime Errors](../runtime-errors/)). `src/model/result.ts` also exports an `orThrow(result)` helper that unwraps an ok value or throws the error — use it only at boundaries where a `Result` must become a thrown exception.
 
 ### Example
 
 ```ts
-import { git } from "orca";
+import { git } from "@twelvehart/orcats";
 
 const result = await git().add(["src/index.ts"]);
 if (result.isErr()) {
@@ -65,7 +65,7 @@ type Outcome<B extends BackendTag = BackendTag> =
 ### Example
 
 ```ts
-import { claude } from "orca";
+import { claude } from "@twelvehart/orcats";
 
 const convo = claude().autonomous({ prompt: "fix the failing test" });
 const outcome = await convo.awaitResult(); // never throws

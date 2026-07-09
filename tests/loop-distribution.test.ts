@@ -37,8 +37,8 @@ import { parseCliArgs } from "../src/cli/args.ts";
 import { deferredDurableError } from "../src/cli/main.ts";
 import { runQuiet } from "../src/tools/process.ts";
 
-// L11 acceptance (spec distribution, design D8, tasks 10.1-10.5). The CLI gains run/serve/loops
-// while the legacy `orca <flow.ts>` path is preserved; `serve` is a thin supervisor that spawns an
+// L11 acceptance (spec distribution, design D8, tasks 10.1-10.5). The CLI supports run/serve/loops
+// while the legacy `orcats <flow.ts>` path is preserved; `serve` is a thin supervisor that spawns an
 // ephemeral child per trigger firing — the loop never runs in-supervisor, a child crash is isolated,
 // and a runaway child is OS-killable. Durable DBOS mode is rejected with a deferred-note pointer.
 
@@ -179,12 +179,12 @@ describe("loop firing contract", () => {
     expect(spec).toEqual({ loop: "./loops/triage.ts", event: { issueId: "LIN-123" } });
 
     const child = buildChildProcessSpec(spec, {
-      argv: ["bun", "/repo/bin/orca"],
+      argv: ["bun", "/repo/bin/orcats"],
       env: { PATH: "/bin" },
       execPath: "/runtime/bun"
     });
     expect(child.command).toBe("/runtime/bun");
-    expect(child.args).toEqual(["/repo/bin/orca", "run", "--no-typecheck", "./loops/triage.ts"]);
+    expect(child.args).toEqual(["/repo/bin/orcats", "run", "--no-typecheck", "./loops/triage.ts"]);
     expect(child.env.PATH).toBe("/bin");
     expect(child.env[LOOP_EVENT_ENV]).toBe(JSON.stringify({ issueId: "LIN-123" }));
   });
@@ -200,11 +200,11 @@ describe("loop firing contract", () => {
     expect(child.env[LOOP_EVENT_ENV]).toBeUndefined();
   });
 
-  test("constructs child process args for a compiled orca binary already running serve", () => {
+  test("constructs child process args for a compiled orcats binary already running serve", () => {
     const child = buildChildProcessSpec(createLoopChildSpec("registered-loop", { n: 1 }), {
-      argv: ["/dist/orca", "serve", "registered-loop"],
+      argv: ["/dist/orcats", "serve", "registered-loop"],
       env: {},
-      execPath: "/dist/orca"
+      execPath: "/dist/orcats"
     });
 
     expect(child.args).toEqual(["run", "--no-typecheck", "registered-loop"]);
@@ -230,20 +230,20 @@ describe("loop firing contract", () => {
 
     expect(fired.result._unsafeUnwrap().stopReason).toBe("converged");
     expect(fired.exitCode).toBe(0);
-    expect(fired.diagnostic).toBe('orca: loop "fire-once" stopped (converged) after 2 iteration(s)\n');
+    expect(fired.diagnostic).toBe('orcats: loop "fire-once" stopped (converged) after 2 iteration(s)\n');
     expect(diagnostics).toEqual([fired.diagnostic]);
     expect(seenEvent).toEqual(event);
     expect(sink.emitted()).toEqual([event]);
   });
 
-  test("bin orca run passes ORCA_LOOP_EVENT through the shared firing path", async () => {
+  test("bin orcats run passes ORCA_LOOP_EVENT through the shared firing path", async () => {
     const root = await mkdtemp(join(tmpdir(), "orca-loop-firing-"));
     const outputPath = join(root, "event.json");
     const loopPath = join(root, "event-loop.ts");
     await writeFile(
       loopPath,
       `import { writeFile } from "node:fs/promises";
-import { defineLoop, ok } from "@twelvehart/orca-ts";
+import { defineLoop, ok } from "@twelvehart/orcats";
 
 const source = {
   kind: "manual",
@@ -272,13 +272,13 @@ export default defineLoop({
     const previous = process.env[LOOP_EVENT_ENV];
     process.env[LOOP_EVENT_ENV] = JSON.stringify({ issueId: "LIN-123" });
     try {
-      const result = await runQuiet("bun", ["./bin/orca", "run", "--no-typecheck", loopPath], {
+      const result = await runQuiet("bun", ["./bin/orcats", "run", "--no-typecheck", loopPath], {
         cwd: process.cwd()
       });
 
       const proc = result._unsafeUnwrap();
       expect(proc.exitCode).toBe(0);
-      expect(proc.stderr).toContain("orca | done: cli-event stopped (converged) after 1 iteration(s)");
+      expect(proc.stderr).toContain("orcats | done: cli-event stopped (converged) after 1 iteration(s)");
       expect(JSON.parse(await readFile(outputPath, "utf8"))).toEqual({ issueId: "LIN-123" });
     } finally {
       if (previous === undefined) {
@@ -300,7 +300,7 @@ export default defineLoop({
 
     const failedLoop = await runLoopFiring(loopFailure, undefined);
     expect(failedLoop.exitCode).toBe(70);
-    expect(failedLoop.diagnostic).toBe('orca: loop "loop-fails" failed: boom\n');
+    expect(failedLoop.diagnostic).toBe('orcats: loop "loop-fails" failed: boom\n');
 
     const sinkFailure = defineLoop<unknown, string>({
       name: "sink-fails",
@@ -311,7 +311,7 @@ export default defineLoop({
 
     const failedSink = await runLoopFiring(sinkFailure, undefined);
     expect(failedSink.exitCode).toBe(70);
-    expect(failedSink.diagnostic).toBe('orca: loop "sink-fails" failed: no\n');
+    expect(failedSink.diagnostic).toBe('orcats: loop "sink-fails" failed: no\n');
   });
 });
 
@@ -343,7 +343,7 @@ describe("defineLoop", () => {
   });
 });
 
-describe("orca loops discovery is side-effect free", () => {
+describe("orcats loops discovery is side-effect free", () => {
   test("listing reads source/sink metadata without firing the Source, Sink, or loop", () => {
     const source = fakeSource();
     const sink = fakeSink();

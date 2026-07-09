@@ -37,7 +37,7 @@ describe("ask_user MCP server JSON-RPC handshake", () => {
     };
 
     expect(json.result?.capabilities?.tools).toBeDefined();
-    expect(json.result?.serverInfo?.name).toBe("orca");
+    expect(json.result?.serverInfo?.name).toBe("orcats");
     expect(calls()).toBe(0);
   });
 

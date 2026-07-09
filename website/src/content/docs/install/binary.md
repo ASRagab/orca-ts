@@ -9,7 +9,7 @@ The normal install path is the [npm package](../typed-authoring/). Use the stand
 curl -fsSL https://github.com/ASRagab/orca-ts/releases/latest/download/install.sh | bash
 ```
 
-The installer downloads the matching GitHub Release tarball, verifies `SHA256SUMS.txt`, and installs `orca` to `${ORCA_INSTALL_DIR:-$HOME/.local/bin}`.
+The installer downloads the matching GitHub Release tarball, verifies `SHA256SUMS.txt`, and installs `orcats` to `${ORCA_INSTALL_DIR:-$HOME/.local/bin}`.
 
 ## Pin a release
 
@@ -20,15 +20,13 @@ ORCA_VERSION=0.2.0 ORCA_INSTALL_DIR="$HOME/.local/bin" \
 
 ## How flow imports resolve
 
-The standalone binary can run a flow that imports from `@twelvehart/orca-ts` even when the flow project has no `node_modules`.
+The standalone binary can run a flow that imports from `@twelvehart/orcats` even when the flow project has no `node_modules`.
 
-1. Orca first tries to resolve `@twelvehart/orca-ts` from the flow file's project.
+1. Orcats first tries to resolve `@twelvehart/orcats` from the flow file's project.
 2. If a project-local package exists, that copy wins.
-3. If no project package exists, the CLI registers the embedded API through a temporary `node_modules/@twelvehart/orca-ts` shim next to the flow.
+3. If no project package exists, the CLI registers the embedded API through a temporary `node_modules/@twelvehart/orcats` shim next to the flow.
 
 In a zero-project directory with no `tsconfig.json`, the standalone binary skips the typecheck guard and emits a warning before running.
-
-For one release, the standalone fallback also accepts legacy `orca-ts`, `orca-ts/loop`, and `orca-ts/model` runtime imports. New typed projects should import `@twelvehart/orca-ts`.
 
 ## Supported release artifacts
 

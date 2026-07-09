@@ -50,7 +50,7 @@ export interface LoopConfig<E = unknown, A = unknown, S = unknown> {
 /**
  * Package a loop with its Source + Sink into a discoverable definition. A loop module exports the
  * result; importing the module only registers it (no Source fires, no backend runs, no Sink emits)
- * so `orca loops` discovery is side-effect-free. `run` folds the sink emit into one Result so the
+ * so `orcats loops` discovery is side-effect-free. `run` folds the sink emit into one Result so the
  * CLI and the `serve` child share identical output behavior.
  */
 export function defineLoop<E = unknown, A = unknown, S = unknown>(
@@ -241,7 +241,7 @@ export function listLoops(definitions: Iterable<LoopDefinition>): LoopListing[] 
   return rows;
 }
 
-/** Render the loop listing as text for `orca loops`. */
+/** Render the loop listing as text for `orcats loops`. */
 export function formatLoopListing(rows: readonly LoopListing[]): string {
   if (rows.length === 0) {
     return "No loops defined. Add an export-only module under .orca/loops that exports a defineLoop(...) result.";
@@ -252,7 +252,7 @@ export function formatLoopListing(rows: readonly LoopListing[]): string {
 // --- serve: a thin long-lived supervisor that spawns an ephemeral child per trigger firing (D8). ---
 
 export interface ServeOptions {
-  /** Spawn an ephemeral child per firing; default re-invokes `orca run <loop>` as a subprocess. */
+  /** Spawn an ephemeral child per firing; default re-invokes `orcats run <loop>` as a subprocess. */
   readonly spawn?: ChildSpawner;
   /** What the child runs: a loop name or path. Default: the definition name. */
   readonly loopRef?: string;

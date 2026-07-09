@@ -15,7 +15,7 @@ export interface AskUserMcpServerOptions {
   readonly responder: AskUserResponder;
 }
 
-/** The tool name Codex's MCP client discovers and calls (namespaced `orca.ask_user`). */
+/** The tool name Codex's MCP client discovers and calls (namespaced `orcats.ask_user`). */
 export const ASK_USER_TOOL_NAME = "ask_user";
 
 const ASK_USER_TOOL = {
@@ -57,7 +57,7 @@ export function createAskUserMcpServer(options: AskUserMcpServerOptions): AskUse
           result: {
             protocolVersion: "2024-11-05",
             capabilities: { tools: {} },
-            serverInfo: { name: "orca", version: "1.0.0" }
+            serverInfo: { name: "orcats", version: "1.0.0" }
           }
         });
       }

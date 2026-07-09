@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: Install Orca, write a first flow, and run it with a backend.
+description: Install Orcats, write a first flow, and run it with a backend.
 ---
 
 ## Requirements
@@ -9,12 +9,12 @@ description: Install Orca, write a first flow, and run it with a backend.
 - Git.
 - At least one configured backend CLI when running live flows: Claude, Codex, OpenCode, or Pi.
 
-## Install Orca
+## Install Orcats
 
 ```bash
-npm i @twelvehart/orca-ts
+npm i @twelvehart/orcats
 npm i -D typescript
-npx orca --version
+bunx -p @twelvehart/orcats orcats --version
 ```
 
 `typescript` enables editor feedback and the CLI typecheck preflight. Bun `>=1.3.0` must be on `PATH` because the npm CLI shim runs with Bun.
@@ -22,7 +22,7 @@ npx orca --version
 ## Write `hello.ts`
 
 ```ts
-import { flow, llm, selectBackend } from "@twelvehart/orca-ts";
+import { flow, llm, selectBackend } from "@twelvehart/orcats";
 
 await flow()(async () => {
   const selected = selectBackend({ default: "claude" });
@@ -46,7 +46,7 @@ await flow()(async () => {
 ## Run the flow
 
 ```bash
-npx orca --backend claude hello.ts
+bunx -p @twelvehart/orcats orcats --backend claude hello.ts
 ```
 
 `--backend` sets `ORCA_BACKEND`. A flow that calls `selectBackend()` honors it. A flow that calls `claude()`, `codex()`, `opencode()`, or `pi()` directly pins that backend.

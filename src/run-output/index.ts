@@ -289,7 +289,7 @@ function prefix(options: Pick<RunPresenterOptions, "env" | "isTTY"> = {}): strin
   if (isTTY && !env.NO_COLOR && !env.CI) {
     return "\u001b[36morca\u001b[0m |";
   }
-  return "orca |";
+  return "orcats |";
 }
 
 function durationSuffix(ms: number | undefined): string {

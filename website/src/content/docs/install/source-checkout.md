@@ -1,6 +1,6 @@
 ---
 title: Source Checkout
-description: Install Orca from source for development and contribution.
+description: Install Orcats from source for development and contribution.
 ---
 
 Use a source checkout when you are contributing to Orca itself.
