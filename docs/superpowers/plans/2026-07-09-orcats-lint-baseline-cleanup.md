@@ -399,16 +399,20 @@ git commit -m "ci: enforce lint in verification"
 
 Create a temporary outer `node_modules/@twelvehart/orcats/package.json` whose
 root export points to a missing file, then put a flow in a nested project. The
-test must assert this exact sequence:
+test must assert this sequence:
 
 ```typescript
 expect(canResolveOrca(flowPath)).toBe(false);
 expect(ensureOrcaResolvable(flowPath)).toBe(true);
-expect(canResolveOrca(flowPath)).toBe(true);
 ```
 
-Use real filesystem calls and Bun's real resolver; do not mock
-`Bun.resolveSync`. Remove the temporary tree in `finally`.
+Assert the nearer embedded package files now exist. Then start a fresh Bun
+subprocess and assert that it resolves the package from the same flow directory.
+The fresh process is required because Bun 1.3.14 caches a scoped package miss
+within one process; it also matches the compiled CLI's real parent/child
+fallback contract. Use real filesystem calls and Bun's real resolver; do not
+mock `Bun.resolveSync` or add production cache-busting. Remove the temporary
+tree in `finally`.
 
 Run:
 
