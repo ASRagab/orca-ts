@@ -73,7 +73,7 @@
     "validate:package": "bun run build:types && bun run scripts/validate-package-artifact.ts",
     "smoke:package": "bun run scripts/smoke-package.ts",
     "smoke:binary": "bun run scripts/smoke-binary.ts",
-    "verify": "bun run typecheck && bun test && bun run docs:site:build && bun run docs:check && bun run docs:symbols && bun run validate:fixtures && bun run validate:release && bun run build:types && bun run docs:signatures && bun run check:facade-gate && bun run smoke:binary"
+    "verify": "bun run lint && bun run typecheck && bun test && bun run docs:site:build && bun run docs:check && bun run docs:symbols && bun run validate:fixtures && bun run validate:release && bun run build:types && bun run docs:signatures && bun run check:facade-gate && bun run smoke:binary"
   },
   "dependencies": {
     "effect": "^3.21.2",
