@@ -35,14 +35,14 @@ export default tseslint.config(
     settings: {
       "boundaries/dependency-nodes": ["import"],
       "boundaries/elements": [
-        { "type": "model", "pattern": "src/model/*" },
-        { "type": "conversation", "pattern": "src/conversation/*" },
-        { "type": "flow", "pattern": "src/flow/*" },
-        { "type": "tools", "pattern": "src/tools/*" },
-        { "type": "backends", "pattern": "src/backends/*" },
-        { "type": "runner", "pattern": "src/runner/*" },
-        { "type": "cli", "pattern": "src/cli/*" },
-        { "type": "testing", "pattern": "src/test-utils/*" }
+        { "type": "model", "pattern": "src/model/*", "mode": "full" },
+        { "type": "conversation", "pattern": "src/conversation/*", "mode": "full" },
+        { "type": "flow", "pattern": "src/flow/*", "mode": "full" },
+        { "type": "tools", "pattern": "src/tools/*", "mode": "full" },
+        { "type": "backends", "pattern": "src/backends/*", "mode": "full" },
+        { "type": "runner", "pattern": "src/runner/*", "mode": "full" },
+        { "type": "cli", "pattern": "src/cli/*", "mode": "full" },
+        { "type": "testing", "pattern": "src/test-utils/*", "mode": "full" }
       ]
     },
     rules: {

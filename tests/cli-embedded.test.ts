@@ -77,3 +77,34 @@ test("installs the embedded fallback when an ancestor package cannot resolve", (
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("runs a bare flow through the source CLI embedded fallback", () => {
+  const root = mkdtempSync(join(tmpdir(), "orcats-source-cli-"));
+  const flowPath = join(root, "flow.ts");
+  const cliPath = join(import.meta.dir, "..", "bin", "orcats");
+
+  try {
+    writeFileSync(
+      flowPath,
+      `import { flowArgs } from "@twelvehart/orcats";
+void flowArgs;
+process.stdout.write("source-cli-ok");
+`,
+    );
+
+    const result = Bun.spawnSync(
+      [process.execPath, cliPath, "--no-typecheck", flowPath],
+      {
+        cwd: root,
+        env: { ...process.env },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("source-cli-ok");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
