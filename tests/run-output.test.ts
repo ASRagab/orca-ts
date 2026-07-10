@@ -37,7 +37,7 @@ describe("run output reporter", () => {
     expect(seen).toEqual(events);
   });
 
-  test("presenter writes deterministic diagnostics without touching stdout", () => {
+  test("presenter writes deterministic diagnostics without touching stdout", async () => {
     const stderr: string[] = [];
     const stdout: string[] = [];
     const presenter = createRunPresenter({
@@ -47,16 +47,22 @@ describe("run output reporter", () => {
       writeOutput: (text) => stdout.push(text),
     });
 
-    presenter.handle({ type: "run_started", label: "cleanup", backend: "codex" });
-    presenter.handle({ type: "stage", name: "inspect", status: "completed", durationMs: 25 });
-    presenter.handle({ type: "cycle_progress", iteration: 3, measure: 0, delta: -1, stopStatus: "converged" });
-    presenter.handle({
-      type: "run_finished",
-      label: "cleanup",
-      status: "success",
-      stopReason: "converged",
-      iterations: 3,
-    });
+    await Promise.resolve(presenter.handle({ type: "run_started", label: "cleanup", backend: "codex" }));
+    await Promise.resolve(
+      presenter.handle({ type: "stage", name: "inspect", status: "completed", durationMs: 25 }),
+    );
+    await Promise.resolve(
+      presenter.handle({ type: "cycle_progress", iteration: 3, measure: 0, delta: -1, stopStatus: "converged" }),
+    );
+    await Promise.resolve(
+      presenter.handle({
+        type: "run_finished",
+        label: "cleanup",
+        status: "success",
+        stopReason: "converged",
+        iterations: 3,
+      }),
+    );
 
     expect(stdout).toEqual([]);
     expect(stderr.join("")).toContain("orcats | run started: cleanup (backend=codex)\n");
@@ -65,20 +71,22 @@ describe("run output reporter", () => {
     expect(stderr.join("")).toContain("orcats | done: cleanup stopped (converged) after 3 iteration(s)\n");
   });
 
-  test("presenter uses color only for TTY output when color is allowed", () => {
+  test("presenter uses color only for TTY output when color is allowed", async () => {
     const tty: string[] = [];
-    createRunPresenter({
+    const ttyPresenter = createRunPresenter({
       env: {},
       isTTY: true,
       writeDiagnostic: (text) => tty.push(text),
-    }).handle({ type: "stage", name: "patch", status: "started" });
+    });
+    await Promise.resolve(ttyPresenter.handle({ type: "stage", name: "patch", status: "started" }));
 
     const noColor: string[] = [];
-    createRunPresenter({
+    const noColorPresenter = createRunPresenter({
       env: { NO_COLOR: "1" },
       isTTY: true,
       writeDiagnostic: (text) => noColor.push(text),
-    }).handle({ type: "stage", name: "patch", status: "started" });
+    });
+    await Promise.resolve(noColorPresenter.handle({ type: "stage", name: "patch", status: "started" }));
 
     expect(tty.join("")).toContain("\u001b[36morca\u001b[0m | stage patch started\n");
     expect(noColor.join("")).toBe("orcats | stage patch started\n");
