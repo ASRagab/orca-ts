@@ -3,12 +3,34 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   createAcpClient,
+  spawnAcpProcess,
   type AcpProcess,
   type AcpIncomingMessage,
   type AcpRequestMessage
 } from "../src/backends/acp-client.ts";
 
 describe("ACP client seam", () => {
+  test("spawns a process with piped stdin, stdout, and stderr", async () => {
+    const process = spawnAcpProcess(
+      globalThis.process.execPath,
+      ["-e", "process.stdin.pipe(process.stdout); process.stderr.write('stderr')"],
+      {}
+    );
+    const stderr = process.stderr;
+    if (stderr === undefined) {
+      throw new Error("spawned ACP process has no stderr stream");
+    }
+    const stdoutText = collectStream(process.stdout);
+    const stderrText = collectStream(stderr);
+
+    process.write("ping");
+    process.endStdin();
+
+    expect(await stdoutText).toBe("ping");
+    expect(await stderrText).toBe("stderr");
+    expect(await process.exit).toBe(0);
+  });
+
   test("maps deterministic ACP JSON-RPC fixtures", async () => {
     const dir = join(globalThis.process.cwd(), "fixtures", "tier1", "acp", "prompt-completion");
     const lines = (await readFile(join(dir, "input.jsonl"), "utf8")).trim().split("\n");
@@ -44,7 +66,7 @@ describe("ACP client seam", () => {
       prompt: await client.request("session/prompt")
     };
 
-    await expect(events).resolves.toEqual(expectedEvent);
+    expect(await events).toEqual(expectedEvent);
     expect(actual).toEqual(expectedOutcome);
     client.close();
   });
@@ -72,14 +94,17 @@ describe("ACP client seam", () => {
       requestTimeoutMs: 100
     });
 
-    await expect(client.request("initialize")).resolves.toEqual({
+    const initialize = await client.request("initialize");
+    expect(initialize).toEqual({
       protocolVersion: 1,
       agentCapabilities: {}
     });
-    await expect(client.request("session/new")).resolves.toEqual({ sessionId: "sid-1" });
+    const session = await client.request("session/new");
+    expect(session).toEqual({ sessionId: "sid-1" });
     const messages = collectOne(client.messages());
-    await expect(client.request("session/prompt")).resolves.toEqual({ stopReason: "end_turn" });
-    await expect(messages).resolves.toEqual({
+    const prompt = await client.request("session/prompt");
+    expect(prompt).toEqual({ stopReason: "end_turn" });
+    expect(await messages).toEqual({
       jsonrpc: "2.0",
       method: "session/update",
       params: { sessionId: "sid-1", update: { sessionUpdate: "agent_message_chunk" } }
@@ -143,7 +168,7 @@ describe("ACP client seam", () => {
       requestTimeoutMs: 100
     });
 
-    await expect(client.request("initialize")).rejects.toThrow("boom (-32000)");
+    expect((await rejectionError(client.request("initialize"))).message).toContain("boom (-32000)");
     client.close();
   });
 
@@ -156,7 +181,7 @@ describe("ACP client seam", () => {
     });
     process.pushRaw("not json");
 
-    await expect(client.done).rejects.toThrow("invalid ACP JSON-RPC message");
+    expect((await rejectionError(client.done)).message).toContain("invalid ACP JSON-RPC message");
   });
 
   test("rejects pending requests when the process exits", async () => {
@@ -170,7 +195,7 @@ describe("ACP client seam", () => {
     const request = client.request("initialize");
     process.close(1);
 
-    await expect(request).rejects.toThrow("ACP process exited with code 1");
+    expect((await rejectionError(request)).message).toContain("ACP process exited with code 1");
     await done;
   });
 });
@@ -247,4 +272,25 @@ async function collectOne<T>(iterable: AsyncIterable<T>): Promise<T> {
     return item;
   }
   throw new Error("empty iterable");
+}
+
+async function collectStream(stream: AsyncIterable<string | Uint8Array>): Promise<string> {
+  const decoder = new TextDecoder();
+  let text = "";
+  for await (const chunk of stream) {
+    text += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
+async function rejectionError(promise: Promise<unknown>): Promise<Error> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof Error) {
+      return error;
+    }
+    throw new Error("promise rejected with a non-Error value");
+  }
+  throw new Error("expected promise to reject");
 }

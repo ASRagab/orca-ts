@@ -749,7 +749,15 @@ function fakeAcpProcess(
       const parsed = JSON.parse(data.trim()) as Record<string, unknown>;
       writes.push(parsed);
       if ("id" in parsed && typeof parsed.method === "string") {
-        onMessage(parsed as unknown as AcpRequestMessage, process.push, process.pushRaw);
+        onMessage(
+          parsed as unknown as AcpRequestMessage,
+          (message) => {
+            process.push(message);
+          },
+          (line) => {
+            process.pushRaw(line);
+          }
+        );
       }
     },
     endStdin() {},
