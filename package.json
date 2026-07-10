@@ -1,6 +1,6 @@
 {
   "name": "@twelvehart/orcats",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "TypeScript-native reimagining of Orca: deterministic coding-agent flows with author-time type feedback.",
   "type": "module",
   "license": "Apache-2.0",
