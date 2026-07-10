@@ -33,6 +33,7 @@ export default tseslint.config(
       boundaries
     },
     settings: {
+      "boundaries/dependency-nodes": ["import"],
       "boundaries/elements": [
         { "type": "model", "pattern": "src/model/*" },
         { "type": "conversation", "pattern": "src/conversation/*" },
@@ -45,31 +46,37 @@ export default tseslint.config(
       ]
     },
     rules: {
-      "boundaries/element-types": [
+      "boundaries/dependencies": [
         "error",
         {
           "default": "allow",
           "rules": [
             {
-              "from": "model",
+              "from": { "type": "model" },
               "disallow": [
-                "conversation",
-                "flow",
-                "tools",
-                "backends",
-                "runner",
-                "cli",
-                "testing"
+                {
+                  "to": {
+                    "type": [
+                      "conversation",
+                      "flow",
+                      "tools",
+                      "backends",
+                      "runner",
+                      "cli",
+                      "testing"
+                    ]
+                  }
+                }
               ]
             },
             {
-              "from": "conversation",
+              "from": { "type": "conversation" },
               "disallow": [
-                "flow",
-                "tools",
-                "backends",
-                "runner",
-                "cli"
+                {
+                  "to": {
+                    "type": ["flow", "tools", "backends", "runner", "cli"]
+                  }
+                }
               ]
             }
           ]
