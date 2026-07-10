@@ -27,20 +27,23 @@ protection. Recent CI completes in about 70 seconds and Docs in about 20 seconds
 
 1. Finish one simple improvement end to end in at most 10 minutes; faster is
    acceptable.
-2. Make stage-specific skill and prompt instructions explicit inputs.
-3. Expose live progress and preserve a machine-readable final run log.
-4. Prove the selected change with test-first work, targeted repair gates,
+2. Support explicit medium and challenging profiles with ceilings of 30 and 45
+   minutes without weakening the same delivery gates.
+3. Make stage-specific skill and prompt instructions explicit inputs.
+4. Expose live progress and preserve a machine-readable final run log.
+5. Prove the selected change with test-first work, targeted repair gates,
    independent review, full verification, and remote checks.
-5. Open and squash-merge the pull request without modifying the user's main
+6. Open and squash-merge the pull request without modifying the user's main
    checkout or deleting recovery evidence.
-6. Record every workflow or runtime failure for the next iteration.
+7. Record every workflow or runtime failure for the next iteration.
 
 ## Non-goals
 
 - No new Orcats runtime or DSL API.
 - No long-lived trigger service.
 - No dependency, release, publishing, secret, security, or public-API work.
-- No task larger than three changed files.
+- No simple-profile task larger than three changed files. Medium allows at most
+  six; challenging allows at most ten.
 - No force-push, history rewrite, hard reset, broad clean, branch deletion, or
   worktree deletion.
 
@@ -112,7 +115,8 @@ The launcher performs deterministic isolation before Orcats starts:
    directory.
 5. Run `bun install --frozen-lockfile` in that worktree.
 6. Copy the workflow and configuration into its ignored `.orca/` directory.
-7. Export the launch timestamp so the workflow's deadline includes setup time.
+7. Export the launch timestamp and selected complexity profile so the workflow's
+   deadline includes setup time and uses the correct ceiling.
 8. Run the copied artifact through the standalone Orcats binary with Codex.
 9. Copy the monitor, report, and issue ledger back to the source checkout's
    ignored `.orca/improvement-loop/runs/<run-id>/` directory.
@@ -144,10 +148,11 @@ targetedTestArgs[], expectedFailurePattern, implementationBrief,
 expectedMinutes, risk
 ```
 
-Candidates must have `risk = "low"`, `expectedMinutes` from 5 through 10, two
-through three allowed paths, a test path among those paths, at least one
-distinct production path, and a targeted Bun test whose first argument is
-`test`. Candidates involving excluded scope are rejected before selection.
+Candidates must have `risk = "low"`, a test path, at least one distinct
+production path, and a targeted Bun test whose first argument is `test`.
+Profile limits are enforced before selection: simple is 5-10 minutes and two to
+three paths; medium is 20-30 minutes and two to six paths; challenging is 30-45
+minutes and two to ten paths. Candidates involving excluded scope are rejected.
 
 ### 3. Select and Plan
 
@@ -238,8 +243,10 @@ merge
 Each stage prints start, completion, and elapsed time through Orcats run output.
 The final monitoring JSON records stage duration, outcomes, repair iterations,
 validation evidence, and token usage when reported. A separate run report JSON
-records the selected candidate, directive names, red-state artifact, pull
-request URL, merge state, total duration, and SLA verdict.
+records the profile, selected candidate, exact rendered per-turn system prompts,
+red-state artifact, pull request URL, merge state, total duration, and SLA
+verdict. Unit tests prove those rendered directives are passed as the backend
+request configuration rather than only stored as metadata.
 
 The main agent runs the artifact through `orcats-flow`, polls real output rather
 than wall-clock alone, and reports each significant stage transition to the
@@ -248,10 +255,16 @@ worktree, plan, and Git evidence.
 
 ## Timing
 
-The simple-run acceptance ceiling is 10 minutes, measured from launcher start
-through confirmed merge; 5 through 10 minutes is the expected range, but a
-faster correct run passes. The hard allocations total 560 seconds, leaving 40
-seconds for launcher and reporting overhead:
+Timing profiles measure launcher start through confirmed merge:
+
+| Profile | Expected range | Hard ceiling | Maximum changed paths |
+|---|---:|---:|---:|
+| simple | 5-10 minutes | 10 minutes | 3 |
+| medium | 20-30 minutes | 30 minutes | 6 |
+| challenging | 30-45 minutes | 45 minutes | 10 |
+
+A faster correct run passes. The first live acceptance uses `simple`. Its hard
+allocations total 560 seconds, leaving 40 seconds for launcher and reporting:
 
 | Stage | Limit |
 |---|---:|
@@ -264,10 +277,10 @@ seconds for launcher and reporting overhead:
 | full verify | 75 seconds |
 | remote checks and merge | 90 seconds |
 
-The workflow checks the shared 10-minute deadline before every new stage. A
-stage conversation is cancelled at its own limit. Crossing the shared deadline
-is a failed acceptance run even if local code is correct; the workflow records
-an `sla-overrun` issue and does not merge.
+The workflow checks the selected profile deadline before every new stage. A
+stage conversation is cancelled at its own profile-scaled limit. Crossing the
+deadline is a failed run even if local code is correct; the workflow records an
+`sla-overrun` issue and does not merge.
 
 ## Failure Handling
 
@@ -314,6 +327,8 @@ The design is complete only when one current-state run proves all of the
 following:
 
 - a fresh worktree was created from current `origin/main`;
+- simple, medium, and challenging profiles validate their 10/30/45-minute
+  ceilings and 3/6/10-path limits; the live proof uses simple;
 - the scout selected one low-risk, testable, three-file-or-smaller improvement;
 - both a named skill directive and a stage prompt directive were applied;
 - exploration, plan, implementation, test, verification, review, pull request,
