@@ -382,3 +382,73 @@ Expected: audit returns `{}`; verification and whitespace check exit 0.
 git add package.json
 git commit -m "ci: enforce lint in verification"
 ```
+
+### Task 7: Fix compiled fallback resolution across package boundaries
+
+**Files:**
+- Modify: `src/cli/embedded.ts`
+- Create: `tests/cli-embedded.test.ts`
+
+**Interfaces:**
+- Consumes: `Bun.resolveSync`, project-local package discovery, and the
+  standalone embedded shim.
+- Produces: a fallback decision based on actual resolution from the flow
+  directory rather than ancestor file existence alone.
+
+- [ ] **Step 1: Add a resolver-invariant regression test and verify RED**
+
+Create a temporary outer `node_modules/@twelvehart/orcats/package.json` whose
+root export points to a missing file, then put a flow in a nested project. The
+test must assert this exact sequence:
+
+```typescript
+expect(canResolveOrca(flowPath)).toBe(false);
+expect(ensureOrcaResolvable(flowPath)).toBe(true);
+expect(canResolveOrca(flowPath)).toBe(true);
+```
+
+Use real filesystem calls and Bun's real resolver; do not mock
+`Bun.resolveSync`. Remove the temporary tree in `finally`.
+
+Run:
+
+```bash
+bun test tests/cli-embedded.test.ts
+```
+
+Expected: FAIL because `ensureOrcaResolvable` returns `false` after finding the
+unresolvable ancestor package file.
+
+- [ ] **Step 2: Require actual resolution before accepting a project package**
+
+At the start of `hasProjectPackage`, add exactly:
+
+```typescript
+if (!canResolveFrom(specifier, fromDir)) {
+  return false;
+}
+```
+
+Keep the existing physical-package and Bun-source self-reference checks. They
+still distinguish a real project dependency from the compiled binary's bundled
+module graph after resolution succeeds.
+
+- [ ] **Step 3: Verify focused GREEN and compiled behavior**
+
+```bash
+bun test tests/cli-embedded.test.ts tests/cli.test.ts
+bunx eslint src/cli/embedded.ts tests/cli-embedded.test.ts
+bun run typecheck
+bun run smoke:binary
+git diff --check
+```
+
+Expected: every command exits 0. The compiled binary must run both repository
+and temporary standalone flows, including from this nested release worktree.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/cli/embedded.ts tests/cli-embedded.test.ts
+git commit -m "fix(cli): honor actual package resolvability"
+```
