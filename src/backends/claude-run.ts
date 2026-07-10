@@ -222,8 +222,5 @@ function resolveClaudeTransport<Output>(
   if (config.model !== undefined || config.resumeSessionId !== undefined) {
     return "stream-json";
   }
-  if (transport === undefined || transport === "acp") {
-    return "acp";
-  }
   return "acp";
 }

@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 type Backend = "claude" | "codex";
@@ -191,7 +191,7 @@ function currentArgs(options: CaptureOptions, prompt: string): string[] {
 }
 
 function writeInlineSchema(): string {
-  const path = join(tmpdir(), `orca-acp-schema-${process.pid}.json`);
+  const path = join(tmpdir(), `orca-acp-schema-${String(process.pid)}.json`);
   writeFileSync(path, JSON.stringify({ type: "object", properties: { answer: { type: "string" } }, required: ["answer"], additionalProperties: false }));
   return path;
 }
@@ -243,7 +243,7 @@ async function captureAcp(options: CaptureOptions, cwd: string): Promise<ChildRe
     clientInfo: { name: "orca-ts-acp-spike", title: "Orca TS ACP Spike", version: "0.0.0" }
   });
   const session = await send("session/new", { cwd, mcpServers: [] });
-  const sessionId = String((session.result as { sessionId?: string } | undefined)?.sessionId ?? "");
+  const sessionId = (session.result as { sessionId?: string } | undefined)?.sessionId ?? "";
 
   if (options.scenario !== "handshake") {
     const promptPromise = send("session/prompt", {
@@ -251,7 +251,9 @@ async function captureAcp(options: CaptureOptions, cwd: string): Promise<ChildRe
       prompt: [{ type: "text", text: promptFor(options.scenario) }]
     });
     if (options.scenario === "cancel") {
-      setTimeout(() => notify("session/cancel", { sessionId }), 1_500);
+      setTimeout(() => {
+        notify("session/cancel", { sessionId });
+      }, 1_500);
     }
     await promptPromise;
   }
@@ -455,7 +457,7 @@ async function commandOutput(command: string, args: readonly string[]): Promise<
   return exitCode === 0 ? text : text || null;
 }
 
-main().catch((error) => {
+main().catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 });

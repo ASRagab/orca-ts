@@ -11,7 +11,7 @@ Start with the [quickstart](../quickstart/) if you want to run a flow. Start wit
 
 ## Supported boundaries
 
-- Package version: `0.2.2`.
+- Package version: `0.2.3`.
 - Normal install: `npm i @twelvehart/orcats`.
 - Optional standalone install: GitHub Release binary.
 - Supported backend tags: `claude`, `codex`, `opencode`, and `pi`.

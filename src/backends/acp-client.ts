@@ -52,7 +52,7 @@ export type AcpProcessSpawner = (
   options: AcpSpawnOptions
 ) => AcpProcess;
 
-export type AcpRequestHandler = (message: AcpRequestMessage) => Promise<unknown> | unknown;
+export type AcpRequestHandler = (message: AcpRequestMessage) => unknown;
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -83,7 +83,7 @@ export class AcpClient {
       readonly timer: ReturnType<typeof setTimeout>;
     }
   >();
-  private readonly closedState: Deferred<void> = Promise.withResolvers<void>();
+  private readonly closedState: Deferred<void> = Promise.withResolvers();
   private nextId = 0;
   private closed = false;
 
@@ -121,7 +121,13 @@ export class AcpClient {
         this.pending.delete(id);
         reject(new Error(`ACP request ${method} timed out after ${String(timeoutMs)}ms`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: (value) => resolve(value as T), reject, timer });
+      this.pending.set(id, {
+        resolve: (value) => {
+          resolve(value as T);
+        },
+        reject,
+        timer
+      });
     });
     this.write(message);
     return await response;
@@ -259,23 +265,19 @@ export function spawnAcpProcess(
     stdio: ["pipe", "pipe", "pipe"]
   });
 
-  if (!child.stdout || !child.stdin) {
-    throw new Error(`failed to capture stdio for ${command}`);
-  }
-
   const exit = Promise.withResolvers<number | null>();
   child.on("error", exit.reject);
   child.on("close", exit.resolve);
 
   return {
     stdout: child.stdout,
-    ...(child.stderr ? { stderr: child.stderr } : {}),
+    stderr: child.stderr,
     exit: exit.promise,
     write(data: string) {
-      child.stdin?.write(data);
+      child.stdin.write(data);
     },
     endStdin() {
-      child.stdin?.end();
+      child.stdin.end();
     },
     kill(signal?: NodeJS.Signals) {
       child.kill(signal);

@@ -186,7 +186,7 @@ export function createRunReporter(options: RunReporterOptions = {}): RunReporter
 
 export function createRunPresenter(options: RunPresenterOptions = {}): RunEventSink {
   const env = options.env ?? process.env;
-  const isTTY = options.isTTY ?? process.stderr.isTTY === true;
+  const isTTY = options.isTTY ?? process.stderr.isTTY;
   const writeDiagnostic =
     options.writeDiagnostic ??
     ((text: string) => {
@@ -285,7 +285,7 @@ function formatCycleProgress(head: string, event: CycleProgressEvent): string {
 
 function prefix(options: Pick<RunPresenterOptions, "env" | "isTTY"> = {}): string {
   const env = options.env ?? process.env;
-  const isTTY = options.isTTY ?? process.stderr.isTTY === true;
+  const isTTY = options.isTTY ?? process.stderr.isTTY;
   if (isTTY && !env.NO_COLOR && !env.CI) {
     return "\u001b[36morca\u001b[0m |";
   }

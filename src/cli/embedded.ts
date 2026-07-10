@@ -37,6 +37,22 @@ export function canResolveOrca(scriptPath: string): boolean {
 }
 
 function canResolveFrom(specifier: string, fromDir: string): boolean {
+  if (isBunExecutable()) {
+    const probe = Bun.spawnSync(
+      [
+        process.execPath,
+        "--eval",
+        `Bun.resolveSync(${JSON.stringify(specifier)}, ${JSON.stringify(fromDir)});`,
+      ],
+      {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      },
+    );
+    return probe.exitCode === 0;
+  }
+
   try {
     Bun.resolveSync(specifier, fromDir);
     return true;
@@ -46,6 +62,9 @@ function canResolveFrom(specifier: string, fromDir: string): boolean {
 }
 
 function hasProjectPackage(specifier: string, fromDir: string, includeSelfReference: boolean): boolean {
+  if (!canResolveFrom(specifier, fromDir)) {
+    return false;
+  }
   for (let dir = fromDir; ; dir = dirname(dir)) {
     if (existsSync(join(dir, "node_modules", ...specifier.split("/"), "package.json"))) {
       return true;

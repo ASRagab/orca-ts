@@ -92,24 +92,26 @@ export async function runAcpConversation<Output, B extends "claude" | "codex">(
   let markPromptActivity = (): void => {};
 
   try {
-    client = await runAcpPhase(options.backend, "initialization", async () => createAcpClient({
-      command: options.command,
-      args: options.args ?? [],
-      cwd: sessionCwd,
-      ...(options.env === undefined ? {} : { env: options.env }),
-      ...(options.spawnProcess === undefined ? {} : { spawnProcess: options.spawnProcess }),
-      requestTimeoutMs: options.requestTimeoutMs ?? 600_000,
-      handleRequest: (message) => handleClientRequest(message, sessionCwd, options.config?.readOnly === true),
-      onIncomingMessage: () => {
-        markPromptActivity();
-      }
-    }));
+    client = await runAcpPhase(options.backend, "initialization", () =>
+      Promise.resolve(createAcpClient({
+        command: options.command,
+        args: options.args ?? [],
+        cwd: sessionCwd,
+        ...(options.env === undefined ? {} : { env: options.env }),
+        ...(options.spawnProcess === undefined ? {} : { spawnProcess: options.spawnProcess }),
+        requestTimeoutMs: options.requestTimeoutMs ?? 600_000,
+        handleRequest: (message) => handleClientRequest(message, sessionCwd, options.config?.readOnly === true),
+        onIncomingMessage: () => {
+          markPromptActivity();
+        }
+      }))
+    );
     options.setProcess(client.process);
     const acpClient = client;
     options.setCancel(() => cancelAcpTurn(acpClient, activeSessionId, activePrompt, options.cancelTimeoutMs));
     const done = acpClient.done.then(
       () => ({ type: "success" as const }),
-      (error) => ({ type: "failed" as const, error })
+      (error: unknown) => ({ type: "failed" as const, error })
     );
 
     const updates = consumeAcpMessages(
@@ -149,7 +151,9 @@ export async function runAcpConversation<Output, B extends "claude" | "codex">(
       options.requestTimeoutMs ?? 600_000,
       options.inactivityTimeoutMs ?? DefaultAcpInactivityTimeoutMs
     );
-    markPromptActivity = watchdog.markActivity;
+    markPromptActivity = () => {
+      watchdog.markActivity();
+    };
     activePrompt = runAcpPhase(options.backend, "prompt execution", () => Promise.race([
       acpClient.request<AcpPromptResponse>("session/prompt", {
       sessionId: activeSessionId,
@@ -621,10 +625,6 @@ async function runAcpPhase<T>(
 
 function backendLabel(backend: "claude" | "codex"): string {
   return backend === "claude" ? "Claude" : "Codex";
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

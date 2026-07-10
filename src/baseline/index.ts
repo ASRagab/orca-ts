@@ -31,6 +31,8 @@ export interface BaselineRepairResult {
   readonly usage?: Usage | undefined;
 }
 
+type BaselineRepairOutput<T = void> = BaselineRepairResult | T;
+
 export interface BaselineGateResult {
   readonly policy: BaselinePolicy;
   readonly status: "clean" | "repaired";
@@ -44,7 +46,7 @@ export interface RunBaselineGateOptions {
   readonly commands: readonly VerificationCommand[];
   readonly policy?: BaselinePolicy;
   readonly commandTool?: CommandTool;
-  readonly repair?: (issues: readonly BaselineGateIssue[]) => Promise<BaselineRepairResult | void>;
+  readonly repair?: (issues: readonly BaselineGateIssue[]) => Promise<BaselineRepairOutput>;
   readonly monitor?: Pick<WorkflowMonitor, "stage" | "recordOutcome" | "recordFailure">;
   readonly snapshotDir?: string;
   readonly maxIterations?: number;
@@ -205,7 +207,7 @@ async function runBaselineGateInner(options: RunBaselineGateOptions): Promise<Ba
 
   let usage: Usage | undefined;
   const loop = await fixLoop<BaselineGateIssue>(
-    async () => ok(latest.passed ? [] : [{ message: renderValidationFailure(latest.logs), fixable: true as const }]),
+    () => Promise.resolve(ok(latest.passed ? [] : [{ message: renderValidationFailure(latest.logs), fixable: true as const }])),
     async (issues) => {
       const repaired = await options.repair?.(issues);
       usage = addUsage(usage, repaired?.usage);

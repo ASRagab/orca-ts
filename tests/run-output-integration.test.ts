@@ -31,24 +31,20 @@ describe("run output integration", () => {
     try {
       const monitor = new WorkflowMonitor("codex", { reporter: captureReporter(events), statusIntervalMs: 0 });
 
-      await monitor.stage("inspect", async () => undefined);
+      await monitor.stage("inspect", () => Promise.resolve());
       monitor.recordCycle({ iteration: 1, measure: 2, usage: { input: 1, output: 2 } });
       await monitor.writeLog(root);
 
-      expect(monitor.toJson()).toEqual(
-        expect.objectContaining({
-          backend: "codex",
-          stages: [expect.objectContaining({ name: "inspect", status: "completed" })],
-          progress: [
-            expect.objectContaining({
-              iteration: 1,
-              measure: 2,
-              delta: 0,
-              stopReasonSoFar: "running",
-            }),
-          ],
-        }),
-      );
+      const log = monitor.toJson();
+      expect(log.backend).toBe("codex");
+      expect(log.stages).toHaveLength(1);
+      expect(log.stages[0]?.name).toBe("inspect");
+      expect(log.stages[0]?.status).toBe("completed");
+      expect(log.progress).toHaveLength(1);
+      expect(log.progress[0]?.iteration).toBe(1);
+      expect(log.progress[0]?.measure).toBe(2);
+      expect(log.progress[0]?.delta).toBe(0);
+      expect(log.progress[0]?.stopReasonSoFar).toBe("running");
       expect(events.map((event) => event.type)).toEqual([
         "run_started",
         "stage",
@@ -56,9 +52,12 @@ describe("run output integration", () => {
         "cycle_progress",
         "artifact",
       ]);
-      expect(events.at(-1)).toEqual(
-        expect.objectContaining({ type: "artifact", artifact: "monitor-log" }),
-      );
+      const finalEvent = events.at(-1);
+      expect(finalEvent?.type).toBe("artifact");
+      if (finalEvent?.type !== "artifact") {
+        throw new Error("Expected final monitor event to be an artifact");
+      }
+      expect(finalEvent.artifact).toBe("monitor-log");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -88,9 +87,12 @@ describe("run output integration", () => {
       .run(2, { overrides: { reporter: captureReporter(events) } });
 
     expect(result._unsafeUnwrap().stopReason).toBe("converged");
-    expect(events).toContainEqual(
-      expect.objectContaining({ type: "cycle_progress", iteration: 1, measure: 1 }),
-    );
+    expect(
+      events.some(
+        (event) =>
+          event.type === "cycle_progress" && event.iteration === 1 && event.measure === 1,
+      ),
+    ).toBe(true);
 
     const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];
@@ -148,9 +150,12 @@ describe("run output integration", () => {
       runLoopFiring(definition, undefined, { reporter: firingReporter }),
     );
 
-    expect(events).toContainEqual(
-      expect.objectContaining({ type: "cycle_progress", iteration: 1, measure: 0 }),
-    );
+    expect(
+      events.some(
+        (event) =>
+          event.type === "cycle_progress" && event.iteration === 1 && event.measure === 0,
+      ),
+    ).toBe(true);
   });
 
   test("flow CLI reports preflight, stages, and failures on stderr while preserving stdout", async () => {

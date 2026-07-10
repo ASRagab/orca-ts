@@ -69,13 +69,17 @@ try {
   );
   await writeFile(
     join(projectDir, "src", "imports.ts"),
-    `import { flow, flowArgs, ok, z, type Result } from "${PackageName}";
+    `import { flow, flowArgs, ok, runBaselineGate, z, type Result } from "${PackageName}";
 import { defineLoop, manual, stdout } from "${PackageName}/loop";
 import { BackendTagSchema, orThrow, type RuntimeError } from "${PackageName}/model";
 import { fakeBackend } from "${PackageName}/testing";
 
 const schema = z.object({ ready: z.boolean() });
 const result: Result<string, RuntimeError> = ok("ready");
+const baselineOptions: Parameters<typeof runBaselineGate>[0] = {
+  commands: [],
+  repair: async () => {}
+};
 orThrow(result);
 void flow;
 void flowArgs;
@@ -85,6 +89,7 @@ void defineLoop;
 void manual;
 void stdout;
 void fakeBackend;
+void baselineOptions;
 `
   );
 

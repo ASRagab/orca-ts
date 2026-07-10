@@ -6,8 +6,6 @@ import {
   captureDirtyBaselineSnapshot,
   resolveBaselinePolicy,
   runBaselineGate,
-  type BaselineGateIssue,
-  type BaselinePolicy,
   type CommandTool,
   type VerificationCommand,
   type VerificationCommandResult,
@@ -58,11 +56,11 @@ describe("baseline gate", () => {
     const result = await runBaselineGate({
       commands: [{ command: "bun", args: ["test"] }],
       commandTool,
-      repair: async (issues) => {
+      repair: (issues) => {
         repairCalls += 1;
         expect(issues[0]?.message).toContain("bun test");
         expect(calls).toEqual(["git status --porcelain=v1", "bun test"]);
-        return { usage: { input: 5, output: 7 } };
+        return Promise.resolve({ usage: { input: 5, output: 7 } });
       },
     });
 
@@ -81,16 +79,18 @@ describe("baseline gate", () => {
       throw new Error(`unexpected command: ${render(command)}`);
     });
 
-    await expect(
+    const error = await rejectionError(
       runBaselineGate({
         policy: "strict",
         commands: [{ command: "bun", args: ["test"] }],
         commandTool,
-        repair: async () => {
+        repair: () => {
           repairCalls += 1;
+          return Promise.resolve(undefined);
         },
       }),
-    ).rejects.toThrow("strict policy");
+    );
+    expect(error.message).toContain("strict policy");
     expect(repairCalls).toBe(0);
   });
 
@@ -102,12 +102,12 @@ describe("baseline gate", () => {
       throw new Error(`unexpected command: ${render(command)}`);
     });
 
-    await expect(
+    expect((await rejectionError(
       runBaselineGate({
         commands: [{ command: "bun", args: ["test"] }],
         commandTool,
       }),
-    ).rejects.toThrow("accept-dirty");
+    )).message).toContain("accept-dirty");
     expect(calls).toEqual(["git status --porcelain=v1"]);
   });
 
@@ -137,9 +137,9 @@ describe("baseline gate", () => {
         commandTool,
         snapshotDir,
         now: () => Date.UTC(2026, 6, 5, 12, 0, 0),
-        repair: async () => {
+        repair: () => {
           snapshotExistedAtRepair = readdirSync(snapshotDir).length === 1;
-          return { usage: { input: 3, output: 4, reasoning: 2 } };
+          return Promise.resolve({ usage: { input: 3, output: 4, reasoning: 2 } });
         },
       });
 
@@ -242,7 +242,7 @@ describe("baseline gate", () => {
           recordOutcome: (outcome) => outcomes.push(outcome),
           recordFailure: () => undefined,
         },
-        repair: async (_issues: readonly BaselineGateIssue[]) => ({ usage: { input: 8, output: 13 } }),
+        repair: () => Promise.resolve({ usage: { input: 8, output: 13 } }),
       });
 
       expect(outcomes).toEqual([
@@ -261,7 +261,7 @@ describe("baseline gate", () => {
 });
 
 function fakeCommandTool(handler: CommandHandler): CommandTool {
-  return { run: async (command) => handler(command) };
+  return { run: (command) => Promise.resolve(handler(command)) };
 }
 
 function success(command: VerificationCommand, stdout: string): VerificationCommandResult {
@@ -288,4 +288,16 @@ function failed(command: VerificationCommand, stderr: string): VerificationComma
 
 function render(command: VerificationCommand): string {
   return [command.command, ...(command.args ?? [])].join(" ");
+}
+
+async function rejectionError(promise: Promise<unknown>): Promise<Error> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof Error) {
+      return error;
+    }
+    throw new Error("promise rejected with a non-Error value");
+  }
+  throw new Error("expected promise to reject");
 }

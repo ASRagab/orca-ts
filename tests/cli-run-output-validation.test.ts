@@ -64,7 +64,9 @@ describe("CLI run-output validation", () => {
     expect(result.stderr).toBe("diagnostic\n");
     expect(result.signal).toBeNull();
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
-    expect(() => expectExitZero(result)).toThrow(/exitCode: 7/);
+    expect(() => {
+      expectExitZero(result);
+    }).toThrow(/exitCode: 7/);
     expect(formatCliProcessEvidence(result)).toContain("stdout:\npayload");
     expect(formatCliProcessEvidence(result)).toContain("stderr:\ndiagnostic");
   });
@@ -154,13 +156,10 @@ export default defineLoop({
       expect(after).toBe(before);
       expect(report.target).toBe(target);
       expect(report.scripts).toEqual(["test", "typecheck"]);
-      expect(report.checks).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ name: "git-status", status: "passed" }),
-          expect.objectContaining({ name: "typecheck", status: "passed" }),
-          expect.objectContaining({ name: "test", status: "passed" }),
-        ]),
-      );
+      const checks = report.checks.map(({ name, status }) => ({ name, status }));
+      expect(checks).toContainEqual({ name: "git-status", status: "passed" });
+      expect(checks).toContainEqual({ name: "typecheck", status: "passed" });
+      expect(checks).toContainEqual({ name: "test", status: "passed" });
       expectNoOrcaDiagnosticsOnStdout(result);
       expectStderrContainsDiagnostics(result, [
         "stage discover-scripts",

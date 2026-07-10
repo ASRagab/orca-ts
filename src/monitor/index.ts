@@ -336,8 +336,10 @@ function defaultRunReporter(writeStatus: ((line: string) => void) | undefined): 
   return createRunReporter({
     sinks: [
       createRunPresenter({
-        isTTY: process.stderr.isTTY === true,
-        writeDiagnostic: (text) => writer(text.endsWith("\n") ? text.slice(0, -1) : text),
+        isTTY: process.stderr.isTTY,
+        writeDiagnostic: (text) => {
+          writer(text.endsWith("\n") ? text.slice(0, -1) : text);
+        },
       }),
     ],
   });

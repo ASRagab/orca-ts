@@ -8,7 +8,7 @@ Use Orcats when you want coding-agent work to be expressed as code instead of a 
 
 ## Status
 
-The package is version `0.2.2`. Install the public npm package for normal project use:
+The package is version `0.2.3`. Install the public npm package for normal project use:
 
 ```bash
 npm i @twelvehart/orcats
@@ -63,8 +63,8 @@ curl -fsSL https://github.com/ASRagab/orca-ts/releases/latest/download/install.s
 Pin a version or change the install directory with environment variables:
 
 ```bash
-ORCA_VERSION=0.2.2 ORCA_INSTALL_DIR="$HOME/.local/bin" \
-  bash <(curl -fsSL https://github.com/ASRagab/orca-ts/releases/download/v0.2.2/install.sh)
+ORCA_VERSION=0.2.3 ORCA_INSTALL_DIR="$HOME/.local/bin" \
+  bash <(curl -fsSL https://github.com/ASRagab/orca-ts/releases/download/v0.2.3/install.sh)
 ```
 
 The standalone binary embeds the runtime API, so it can run a flow that imports from `@twelvehart/orcats` even when the flow project has no `node_modules`. If the project has its own `@twelvehart/orcats` package dependency, that project copy wins.

@@ -1,6 +1,6 @@
 {
   "name": "@twelvehart/orcats",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "TypeScript-native reimagining of Orca: deterministic coding-agent flows with author-time type feedback.",
   "type": "module",
   "license": "Apache-2.0",
@@ -56,10 +56,11 @@
     "build:binary": "bun build src/cli/main.ts --compile --outfile dist/orcats",
     "build:types": "tsc -p tsconfig.build.json",
     "build:release": "bun run scripts/build-release-binaries.ts",
-    "lint": "eslint .",
+    "lint": "bun run docs:site:prepare && eslint .",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "docs:site:dev": "cd website && bun run dev",
+    "docs:site:prepare": "cd website && bun install --frozen-lockfile && bunx astro sync",
     "docs:site:build": "cd website && bun install --frozen-lockfile && bun run build",
     "docs:site:preview": "cd website && bun run preview",
     "docs:check": "bun run scripts/check-doc-links.ts",
@@ -72,7 +73,7 @@
     "validate:package": "bun run build:types && bun run scripts/validate-package-artifact.ts",
     "smoke:package": "bun run scripts/smoke-package.ts",
     "smoke:binary": "bun run scripts/smoke-binary.ts",
-    "verify": "bun run typecheck && bun test && bun run docs:site:build && bun run docs:check && bun run docs:symbols && bun run validate:fixtures && bun run validate:release && bun run build:types && bun run docs:signatures && bun run check:facade-gate && bun run smoke:binary"
+    "verify": "bun run lint && bun run typecheck && bun test && bun run docs:site:build && bun run docs:check && bun run docs:symbols && bun run validate:fixtures && bun run validate:release && bun run build:types && bun run docs:signatures && bun run check:facade-gate && bun run smoke:binary"
   },
   "dependencies": {
     "effect": "^3.21.2",
@@ -83,7 +84,7 @@
     "@eslint/js": "^9.39.1",
     "@types/bun": "^1.3.3",
     "eslint": "^9.39.1",
-    "eslint-plugin-boundaries": "^5.3.0",
+    "eslint-plugin-boundaries": "^6.0.2",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.4"
   },

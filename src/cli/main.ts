@@ -304,8 +304,10 @@ function createCliReporter(): RunReporter {
   return createRunReporter({
     sinks: [
       createRunPresenter({
-        isTTY: process.stderr.isTTY === true,
-        writeDiagnostic: (message) => process.stderr.write(message),
+        isTTY: process.stderr.isTTY,
+        writeDiagnostic: (message) => {
+          process.stderr.write(message);
+        },
       }),
     ],
   });

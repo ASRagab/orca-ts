@@ -8,7 +8,6 @@ import {
   flow,
   llm,
   loop,
-  type BackendTag,
   type Conversation,
   type ConversationEvent,
   type LlmBackend,
@@ -199,7 +198,7 @@ async function drainEvents(
   }
 }
 
-function makeBackend(backend: BenchBackend, cwd: string): LlmBackend<BackendTag> {
+function makeBackend(backend: BenchBackend, cwd: string): LlmBackend {
   if (backend === "codex") {
     return codex({ cwd, readOnly: true, ignoreUserConfig: true });
   }
@@ -242,7 +241,7 @@ function parseList<T extends string>(value: string, choices: readonly T[]): T[] 
     .filter((item): item is T => choices.includes(item as T));
 }
 
-main().catch((error) => {
+main().catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 });
