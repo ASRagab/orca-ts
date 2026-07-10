@@ -78,12 +78,25 @@ test("installs the embedded fallback when an ancestor package cannot resolve", (
   }
 });
 
-test("runs a bare flow through the source CLI embedded fallback", () => {
+test("runs a bare flow through the source CLI despite an unresolvable ancestor", () => {
   const root = mkdtempSync(join(tmpdir(), "orcats-source-cli-"));
-  const flowPath = join(root, "flow.ts");
+  const outerDir = join(root, "outer");
+  const packageDir = join(outerDir, "node_modules", "@twelvehart", "orcats");
+  const projectDir = join(outerDir, "project");
+  const flowPath = join(projectDir, "flow.ts");
+  const flowArg = join("outer", "project", "flow.ts");
   const cliPath = join(import.meta.dir, "..", "bin", "orcats");
 
   try {
+    mkdirSync(packageDir, { recursive: true });
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "@twelvehart/orcats",
+        exports: "./missing.js",
+      }),
+    );
     writeFileSync(
       flowPath,
       `import { flowArgs } from "@twelvehart/orcats";
@@ -93,7 +106,7 @@ process.stdout.write("source-cli-ok");
     );
 
     const result = Bun.spawnSync(
-      [process.execPath, cliPath, "--no-typecheck", flowPath],
+      [process.execPath, cliPath, "--no-typecheck", flowArg],
       {
         cwd: root,
         env: { ...process.env },
