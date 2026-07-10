@@ -174,7 +174,7 @@ the test diff is byte-identical to the saved red state.
 ### 6. Targeted Repair Loop
 
 Evaluate the selected targeted test and `bun run lint`. A `fixLoop` invokes the
-repair directive only when a gate fails. It allows at most two repair turns,
+repair directive only when a gate fails. It allows at most one targeted repair,
 stops repeated failure signatures as `stuck`, and stops when the 10-minute run
 deadline cannot accommodate delivery. After every repair, the workflow confirms
 the saved red-state test diff remains byte-identical.
@@ -250,17 +250,17 @@ worktree, plan, and Git evidence.
 
 The simple-run acceptance ceiling is 10 minutes, measured from launcher start
 through confirmed merge; 5 through 10 minutes is the expected range, but a
-faster correct run passes. The hard allocations total 570 seconds, leaving 30
+faster correct run passes. The hard allocations total 560 seconds, leaving 40
 seconds for launcher and reporting overhead:
 
 | Stage | Limit |
 |---|---:|
 | setup and preflight | 45 seconds |
-| scout | 75 seconds |
-| reproduce | 60 seconds |
-| implement | 120 seconds |
-| all repair turns | 45 seconds |
-| review | 60 seconds |
+| scout | 70 seconds |
+| reproduce | 50 seconds |
+| implement | 110 seconds |
+| all repair turns | 70 seconds |
+| review | 50 seconds |
 | full verify | 75 seconds |
 | remote checks and merge | 90 seconds |
 
