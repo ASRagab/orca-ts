@@ -112,6 +112,7 @@ test("scout evidence paths are stable, balanced, tracked, and capped", () => {
   const recent = [
     "src/c.ts",
     "tests/c.test.ts",
+    "tests/c.test.ts",
     "src/a.ts",
     "tests/a.test.ts",
     "src/c.ts",
@@ -332,9 +333,36 @@ export function chooseCandidate(
 }
 ```
 
-Add `validateCandidateEvidence()` that reports an issue unless every allowed
-path appears in `packet.paths` and at least one evidence string contains
-`<packet-path>:<positive-line-number>`.
+Add citation validation:
+
+```typescript
+export function validateCandidateEvidence(
+  candidate: Candidate,
+  packet: ScoutEvidencePacket,
+): string[] {
+  const issues: string[] = [];
+  const packetPaths = new Set(packet.paths);
+  for (const path of candidate.allowedPaths) {
+    if (!packetPaths.has(path)) {
+      issues.push(`candidate path absent from evidence packet: ${path}`);
+    }
+  }
+  const hasCitation = candidate.evidence.some((item) =>
+    packet.paths.some((path) => {
+      const marker = `${path}:`;
+      const index = item.indexOf(marker);
+      return (
+        index >= 0 &&
+        /^[1-9]\d*/.test(item.slice(index + marker.length))
+      );
+    }),
+  );
+  if (!hasCitation) {
+    issues.push("candidate evidence must cite an evidence packet path and line");
+  }
+  return issues;
+}
+```
 
 - [ ] **Step 5: Run Task 1 GREEN and negative checks**
 
