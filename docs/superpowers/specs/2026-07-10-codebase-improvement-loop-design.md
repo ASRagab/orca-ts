@@ -140,26 +140,40 @@ all evidence available for diagnosis and bounded reruns.
 
 ### 2. Scout
 
-Run one read-only structured Codex turn. It returns exactly three candidates:
+Split scouting into deterministic evidence gathering and one read-only
+structured Codex synthesis turn. The workflow first snapshots worktree status,
+lists tracked `src/` and `tests/` paths, scores recent source/test files, runs a
+bounded `rg` scan over the selected paths, and renders excerpts from at most
+eight tracked files. Ordering is stable, the evidence packet is capped at
+20,000 characters, and the report records its paths, character count, SHA-256
+digest, and command logs. A second status snapshot must match the first.
+
+The model receives only that packet and instructions not to inspect the
+repository or call tools. It returns exactly three candidates and a complete
+ranked-ID permutation:
 
 ```text
-id, title, problem, evidence[], allowedPaths[], testPath,
+candidates[]: id, title, problem, evidence[], allowedPaths[], testPath,
 targetedTestArgs[], expectedFailurePattern, implementationBrief,
 expectedMinutes, risk
+rankedCandidateIds[]: best-first candidate-ID permutation
 ```
 
 Candidates must have `risk = "low"`, a test path, at least one distinct
 production path, and a targeted Bun test whose first argument is `test`.
 Profile limits are enforced before selection: simple is 5-10 minutes and two to
 three paths; medium is 20-30 minutes and two to six paths; challenging is 30-45
-minutes and two to ten paths. Candidates involving excluded scope are rejected.
+minutes and two to ten paths. Every candidate path must be one of the excerpted
+tracked paths, and direct evidence must cite an excerpt path and line. The
+ranked IDs must be unique and equal the candidate-ID set. Any gather failure,
+worktree change, model tool event, timeout, invalid citation, invalid ranking,
+or insufficient evidence fails the run before reproduction.
 
 ### 3. Select and Plan
 
-Choose deterministically by lowest expected minutes, then fewest paths, then ID.
-Persist the selected contract to `.orca/improvement-loop/plan.json`. This is a
-deterministic stage rather than another model turn, avoiding the previous
-planning latency while retaining explicit plan evidence.
+Choose the first ID from the validated ranking and persist the selected contract
+plus the full ranking to `.orca/improvement-loop/plan.json`. Selection remains a
+deterministic stage after the single synthesis turn.
 
 ### 4. Reproduce
 
@@ -243,10 +257,11 @@ merge
 Each stage prints start, completion, and elapsed time through Orcats run output.
 The final monitoring JSON records stage duration, outcomes, repair iterations,
 validation evidence, and token usage when reported. A separate run report JSON
-records the profile, selected candidate, exact rendered per-turn system prompts,
-red-state artifact, pull request URL, merge state, total duration, and SLA
-verdict. Unit tests prove those rendered directives are passed as the backend
-request configuration rather than only stored as metadata.
+records the profile, evidence paths/count/digest and command logs, candidate
+ranking, selected candidate, exact rendered per-turn system prompts, red-state
+artifact, pull request URL, merge state, total duration, and SLA verdict. Unit
+tests prove those rendered directives are passed as the backend request
+configuration rather than only stored as metadata.
 
 The main agent runs the artifact through `orcats-flow`, polls real output rather
 than wall-clock alone, and reports each significant stage transition to the
@@ -268,14 +283,19 @@ allocations total 560 seconds, leaving 40 seconds for launcher and reporting:
 
 | Stage | Limit |
 |---|---:|
-| setup and preflight | 45 seconds |
-| scout | 70 seconds |
-| reproduce | 50 seconds |
-| implement | 110 seconds |
-| all repair turns | 70 seconds |
-| review | 50 seconds |
-| full verify | 75 seconds |
-| remote checks and merge | 90 seconds |
+| preflight | 35 seconds |
+| scout | 100 seconds |
+| reproduce | 65 seconds |
+| implement | 100 seconds |
+| repairs | 65 seconds |
+| review | 65 seconds |
+| verify | 40 seconds |
+| delivery | 90 seconds |
+
+The 100-second scout allocation is subdivided into at most 15 seconds for
+deterministic gathering, 75 seconds for the one tool-free structured synthesis
+turn, and 10 seconds for validation and reserve. The split does not change the
+560-second allocation or 600-second launcher-to-merge ceiling.
 
 The workflow checks the selected profile deadline before every new stage. A
 stage conversation is cancelled at its own profile-scaled limit. Crossing the

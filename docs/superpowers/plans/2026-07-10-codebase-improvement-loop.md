@@ -11,9 +11,10 @@ waits for checks, and squash-merges within its 10/30/45-minute profile ceiling.
 
 **Architecture:** A shell launcher creates a fresh worktree from `origin/main`
 and starts a self-executing Orcats workflow there. A pure TypeScript module owns
-directive validation, candidate selection, scope checks, deadlines, and remote
-check classification. The workflow owns agent turns, gates, review, monitoring,
-delivery, and issue evidence.
+directive validation, bounded scout-evidence selection, ranked candidate
+selection, scope checks, deadlines, and remote-check classification. The
+workflow owns deterministic evidence gathering, agent turns, gates, review,
+monitoring, delivery, and issue evidence.
 
 **Tech Stack:** Bun 1.3.14, TypeScript 5.9, Zod 4, Orcats 0.2.3, Codex CLI,
 GitHub CLI, Bun test.
@@ -34,7 +35,16 @@ GitHub CLI, Bun test.
 - Merge requires `CI / Verify`, every reported check green, and head-SHA match.
 - Launcher-to-merge ceilings are 600/1800/2700 seconds; simple stage
   allocations total 560 seconds and scale by 3/4.5 for larger profiles.
+- Scout keeps its 100-second allocation: at most 15 seconds gather stable
+  evidence from eight tracked source/test files, 75 seconds synthesize and rank
+  without tools, and 10 seconds validate or fail closed.
+- Scout evidence is capped at 20,000 characters and records paths, character
+  count, SHA-256 digest, command logs, and ranked candidate IDs.
+- Core Orcats API, global Codex configuration, and model policy stay unchanged.
 - `.orca/` stays ignored and never enters implementation commits.
+- User-approved subagent adaptation: each ignored-artifact task uses a
+  before/after snapshot diff, SHA-256 manifest, implementer report, and task
+  review instead of a Git commit/review-package range.
 - Main's pre-existing `package-lock.json` remains untouched.
 - Launcher never removes worktrees or branches.
 
@@ -75,6 +85,11 @@ improvement is committed only on generated
   `assertImmutableTestDiff`, `remoteCheckState`, `stageBudgetMs`, and
   `normalizeFailure`.
 - Consumes: `z` and `BackendConfig` from `@twelvehart/orcats`.
+
+Correction 3 later extends `ScoutResultSchema` with `rankedCandidateIds`, adds
+the evidence helpers, and changes `chooseCandidate` to consume the validated
+ranking. Its exact RED/GREEN steps supersede the original selection snippet
+below without changing the completed Task 1 baseline evidence.
 
 - [ ] **Step 1: Write failing policy tests**
 
@@ -500,15 +515,19 @@ const RED_DIFF_PATH = ".orca/improvement-loop/red-test.diff";
 const ISSUE_PATH = ".orca/improvement-loop/issues.jsonl";
 const REPORT_DIR = ".orca/improvement-loop/runs";
 const SIMPLE_STAGE_LIMITS = {
-  preflight: 45_000,
-  scout: 70_000,
-  reproduce: 50_000,
-  implement: 110_000,
-  repairs: 70_000,
-  review: 50_000,
-  verify: 75_000,
+  preflight: 35_000,
+  scout: 100_000,
+  reproduce: 65_000,
+  implement: 100_000,
+  repairs: 65_000,
+  review: 65_000,
+  verify: 40_000,
   delivery: 90_000,
 } as const;
+const SCOUT_GATHER_LIMIT_MS = 15_000;
+const SCOUT_MODEL_LIMIT_MS = 75_000;
+const SCOUT_EVIDENCE_MAX_FILES = 8;
+const SCOUT_EVIDENCE_MAX_CHARS = 20_000;
 const PROFILE_SCALE = { simple: 1, medium: 3, challenging: 4.5 } as const;
 
 interface RunReport {
@@ -638,8 +657,11 @@ awaiting so a timeout still proves which request configuration was applied.
    launcher run ID/time, select `profileLimits[profile]`, multiply each simple
    stage limit by `PROFILE_SCALE[profile]`, and start monitor.
 2. `preflight`: baseline gate, Codex/GitHub auth, HEAD equals `origin/main`.
-3. `scout`: read-only structured turn returning exactly three candidates for
-   the selected profile's time and path limits.
+3. `scout`: deterministically choose at most eight tracked source/test files,
+   run a bounded `rg` scan, render a stable 20,000-character evidence packet,
+   and verify the worktree did not change. Give only that packet to one
+   75-second structured synthesis turn. Reject tool events, invalid citations,
+   invalid ranked-ID permutations, and profile/path violations.
 4. `select-plan`: validate profile/tracked paths, choose, persist plan.
 5. `reproduce`: apply `$tdd`, permit only test path.
 6. `red-gate`: targeted test must fail with expected pattern; save diff.
@@ -1082,6 +1104,11 @@ ceilings and 6/10-path limits.
 
 - Consumes failed or successful run evidence.
 - Produces correction plus later proving run per new issue and final audit.
+
+Correction 3 follows the detailed test-first plan in
+`docs/superpowers/plans/2026-07-10-codebase-improvement-scout-correction.md`.
+It replaces monolithic model-led exploration with bounded deterministic
+evidence plus one ranked synthesis turn while preserving every later gate.
 
 - [ ] **Step 1: Write failing test for each new artifact defect**
 

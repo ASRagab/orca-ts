@@ -1,0 +1,570 @@
+# Deterministic Scout Evidence Correction Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> superpowers:subagent-driven-development (recommended) or
+> superpowers:executing-plans to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Replace the timing-unstable model-led repository scout with bounded
+deterministic evidence gathering plus one tool-free structured synthesis turn.
+
+**Architecture:** The parent workflow chooses at most eight tracked source/test
+files, renders a stable 20,000-character evidence packet, and proves gathering
+did not change the worktree. One unchanged-model turn synthesizes three
+candidates and a ranked-ID permutation from that packet; deterministic
+validation either selects rank one or stops before reproduction.
+
+**Tech Stack:** Bun 1.3.14, TypeScript 5.9, Zod 4, Orcats 0.2.3, Codex CLI,
+TypeScript compiler API, Bun test.
+
+## Global Constraints
+
+- Keep the public Orcats API, global Codex configuration, and model policy
+  unchanged.
+- Keep simple timing at 100 seconds for scout, 560 seconds allocated, and 600
+  seconds launcher-to-merge.
+- Split scout into at most 15 seconds gather, 75 seconds synthesis, and 10
+  seconds validation/reserve.
+- Read at most eight tracked paths: at most four `src/**/*.ts` files and at
+  most four `tests/**/*.test.ts` files.
+- Cap rendered evidence at 20,000 characters with stable path and line ordering.
+- Reject protected entrypoints, dependency/release/security/secret/generated,
+  documentation, skill, workflow, and `.orca/` paths.
+- Reject model tool events, invalid or incomplete rankings, uncited evidence,
+  off-packet candidate paths, and any gather-time worktree change.
+- Preserve strict baseline, immutable red test, targeted test/lint, independent
+  review, one full verify, ready PR, green checks, and SHA-locked squash merge.
+- `.orca/` is ignored. For each artifact task, use before/after snapshots,
+  SHA-256 manifests, implementer reports, and independent review; do not stage
+  ignored artifacts.
+
+## File Map
+
+| File | Responsibility |
+|---|---|
+| `.orca/workflows/codebase-improvement-lib.ts` | Evidence selection/rendering, ranked schema, citation validation. |
+| `.orca/workflows/codebase-improvement-lib.test.ts` | Pure RED/GREEN behavior tests. |
+| `.orca/workflows/codebase-improvement.ts` | Bounded gather, tool-event watcher, synthesis, report integration. |
+| `.orca/workflows/codebase-improvement-contract.test.ts` | Load-bearing AST/literal contracts and negative mutations. |
+| `.orca/workflows/codebase-improvement-artifacts.test.ts` | Runbook and retained-artifact agreement. |
+| `.orca/workflows/codebase-improvement.run.md` | Operator timing, evidence, and failure semantics. |
+| `docs/superpowers/specs/2026-07-10-codebase-improvement-loop-design.md` | Approved behavior and rationale. |
+| `docs/superpowers/plans/2026-07-10-codebase-improvement-loop.md` | Parent lifecycle and completion audit. |
+
+---
+
+### Task 1: Pure Evidence and Ranking Contract
+
+**Files:**
+
+- Modify: `.orca/workflows/codebase-improvement-lib.test.ts`
+- Modify: `.orca/workflows/codebase-improvement-lib.ts`
+
+**Interfaces:**
+
+- Produces:
+  `ScoutEvidenceFile`,
+  `ScoutEvidencePacket`,
+  `selectScoutEvidencePaths(trackedPaths, recentPaths, maxFiles)`,
+  `renderScoutEvidence(files, maxChars)`,
+  `validateCandidateEvidence(candidate, packet)`, and
+  `chooseCandidate(candidates, rankedCandidateIds)`.
+- Changes `ScoutResultSchema` to require exactly three candidates and a unique
+  ranked-ID permutation equal to their ID set.
+
+- [ ] **Step 1: Snapshot both Task 1 files**
+
+Run:
+
+```bash
+shasum -a 256 +  .orca/workflows/codebase-improvement-lib.ts +  .orca/workflows/codebase-improvement-lib.test.ts
+```
+
+Expected: two hashes saved in the Task 1 correction report.
+
+- [ ] **Step 2: Write failing evidence and ranking tests**
+
+Add these imports and tests to the existing test file:
+
+```typescript
+import {
+  renderScoutEvidence,
+  ScoutResultSchema,
+  selectScoutEvidencePaths,
+  validateCandidateEvidence,
+} from "./codebase-improvement-lib.ts";
+
+test("scout evidence paths are stable, balanced, tracked, and capped", () => {
+  const tracked = [
+    "src/a.ts",
+    "src/b.ts",
+    "src/c.ts",
+    "src/d.ts",
+    "src/e.ts",
+    "src/index.ts",
+    "tests/a.test.ts",
+    "tests/b.test.ts",
+    "tests/c.test.ts",
+    "tests/d.test.ts",
+    "tests/e.test.ts",
+    "README.md",
+  ];
+  const recent = [
+    "src/c.ts",
+    "tests/c.test.ts",
+    "src/a.ts",
+    "tests/a.test.ts",
+    "src/c.ts",
+  ];
+  expect(selectScoutEvidencePaths(tracked, recent, 8)).toEqual([
+    "src/c.ts",
+    "src/a.ts",
+    "src/b.ts",
+    "src/d.ts",
+    "tests/c.test.ts",
+    "tests/a.test.ts",
+    "tests/b.test.ts",
+    "tests/d.test.ts",
+  ]);
+});
+
+test("scout evidence is line-addressable and obeys the character cap", () => {
+  const packet = renderScoutEvidence(
+    [
+      { path: "src/a.ts", content: "export const a = 1;\nexport const b = 2;\n" },
+      { path: "tests/a.test.ts", content: "test(\"a\", () => expect(1).toBe(1));\n" },
+    ],
+    120,
+  );
+  expect(packet.text.length).toBeLessThanOrEqual(120);
+  expect(packet.text).toContain("src/a.ts:1");
+  expect(packet.paths).toEqual(["src/a.ts", "tests/a.test.ts"]);
+});
+
+test("ranked candidate IDs must be an exact permutation", () => {
+  const candidates = [
+    { ...candidate, id: "a" },
+    { ...candidate, id: "b" },
+    { ...candidate, id: "c" },
+  ];
+  expect(
+    ScoutResultSchema.parse({
+      candidates,
+      rankedCandidateIds: ["c", "a", "b"],
+    }).rankedCandidateIds,
+  ).toEqual(["c", "a", "b"]);
+  for (const rankedCandidateIds of [
+    ["a", "a", "b"],
+    ["a", "b", "missing"],
+    ["a", "b"],
+  ]) {
+    expect(
+      ScoutResultSchema.safeParse({ candidates, rankedCandidateIds }).success,
+    ).toBe(false);
+  }
+  expect(
+    ScoutResultSchema.safeParse({
+      candidates: [
+        { ...candidate, id: "a" },
+        { ...candidate, id: "a" },
+        { ...candidate, id: "c" },
+      ],
+      rankedCandidateIds: ["a", "b", "c"],
+    }).success,
+  ).toBe(false);
+});
+
+test("selection follows validated ranking and evidence stays in packet", () => {
+  const candidates = [
+    { ...candidate, id: "a", expectedMinutes: 5 },
+    { ...candidate, id: "b", expectedMinutes: 9 },
+    { ...candidate, id: "c", expectedMinutes: 6 },
+  ];
+  expect(chooseCandidate(candidates, ["b", "c", "a"]).id).toBe("b");
+  const packet = renderScoutEvidence(
+    [
+      { path: "src/tools/process.ts", content: "export const process = 1;\n" },
+      { path: "tests/tools.test.ts", content: "test(\"process\", () => {});\n" },
+    ],
+    1_000,
+  );
+  expect(
+    validateCandidateEvidence(
+      { ...candidate, evidence: ["src/tools/process.ts:1 drops output"] },
+      packet,
+    ),
+  ).toEqual([]);
+  expect(
+    validateCandidateEvidence(
+      { ...candidate, evidence: ["uncited claim"], allowedPaths: ["src/other.ts", candidate.testPath] },
+      packet,
+    ).join(" "),
+  ).toContain("evidence packet");
+});
+```
+
+- [ ] **Step 3: Run Task 1 tests and verify RED**
+
+Run:
+
+```bash
+bun test ./.orca/workflows/codebase-improvement-lib.test.ts
+```
+
+Expected: fail because the four new exports and ranked schema do not exist.
+
+- [ ] **Step 4: Implement the pure contract**
+
+Add these types and constants beside `ScoutResultSchema`:
+
+```typescript
+export interface ScoutEvidenceFile {
+  readonly path: string;
+  readonly content: string;
+  readonly matchLines?: readonly number[];
+}
+
+export interface ScoutEvidencePacket {
+  readonly paths: readonly string[];
+  readonly text: string;
+  readonly charCount: number;
+}
+
+const sourceScoutPath = /^src\/(?!.*(?:^|\/)index\.ts$).*\.ts$/;
+const testScoutPath = /^tests\/.*\.test\.ts$/;
+```
+
+Implement stable selection and rendering:
+
+```typescript
+export function selectScoutEvidencePaths(
+  trackedPaths: readonly string[],
+  recentPaths: readonly string[],
+  maxFiles: number,
+): string[] {
+  const touches = new Map<string, number>();
+  for (const path of recentPaths) {
+    touches.set(path, (touches.get(path) ?? 0) + 1);
+  }
+  const rank = (paths: readonly string[]): string[] =>
+    [...new Set(paths)]
+      .filter((path) => !isForbiddenPath(path))
+      .sort(
+        (left, right) =>
+          (touches.get(right) ?? 0) - (touches.get(left) ?? 0) ||
+          left.localeCompare(right),
+      );
+  const sourceLimit = Math.ceil(maxFiles / 2);
+  const testLimit = Math.floor(maxFiles / 2);
+  return [
+    ...rank(trackedPaths.filter((path) => sourceScoutPath.test(path))).slice(
+      0,
+      sourceLimit,
+    ),
+    ...rank(trackedPaths.filter((path) => testScoutPath.test(path))).slice(
+      0,
+      testLimit,
+    ),
+  ];
+}
+
+export function renderScoutEvidence(
+  files: readonly ScoutEvidenceFile[],
+  maxChars: number,
+): ScoutEvidencePacket {
+  const paths = [...files.map((file) => file.path)].sort();
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const perFileLimit = Math.floor(maxChars / Math.max(paths.length, 1));
+  const rendered = paths
+    .map((path) => {
+      const file = byPath.get(path)!;
+      const lines = file.content.split("\n");
+      const indexes =
+        file.matchLines !== undefined && file.matchLines.length > 0
+          ? [...new Set(
+              file.matchLines.flatMap((line) => [line - 2, line - 1, line]),
+            )]
+              .filter((index) => index >= 0 && index < lines.length)
+              .sort((left, right) => left - right)
+          : lines.map((_, index) => index).slice(0, 40);
+      return indexes
+        .map((index) => `${path}:${String(index + 1)} ${lines[index] ?? ""}`)
+        .join("\n")
+        .slice(0, perFileLimit);
+    })
+    .join("\n\n");
+  const text = rendered.slice(0, maxChars);
+  return { paths, text, charCount: text.length };
+}
+```
+
+Change the schema and selection:
+
+```typescript
+export const ScoutResultSchema = z
+  .object({
+    candidates: z.array(CandidateSchema).length(3),
+    rankedCandidateIds: z.array(z.string()).length(3),
+  })
+  .superRefine((value, context) => {
+    const candidateIds = [...value.candidates.map((item) => item.id)].sort();
+    const rankedIds = [...new Set(value.rankedCandidateIds)].sort();
+    if (
+      new Set(candidateIds).size !== 3 ||
+      rankedIds.length !== 3 ||
+      rankedIds.join("\n") !== candidateIds.join("\n")
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "rankedCandidateIds must be the candidate-ID permutation",
+      });
+    }
+  });
+
+export function chooseCandidate(
+  candidates: readonly Candidate[],
+  rankedCandidateIds: readonly string[],
+): Candidate {
+  const parsed = ScoutResultSchema.parse({ candidates, rankedCandidateIds });
+  return parsed.candidates.find(
+    (candidate) => candidate.id === parsed.rankedCandidateIds[0],
+  )!;
+}
+```
+
+Add `validateCandidateEvidence()` that reports an issue unless every allowed
+path appears in `packet.paths` and at least one evidence string contains
+`<packet-path>:<positive-line-number>`.
+
+- [ ] **Step 5: Run Task 1 GREEN and negative checks**
+
+Run:
+
+```bash
+bun test ./.orca/workflows/codebase-improvement-lib.test.ts
+```
+
+Expected: all Task 1 tests pass. Temporarily replace one ranked ID with
+`"missing"`; the permutation test must fail. Restore the source and rerun.
+
+- [ ] **Step 6: Record Task 1 snapshot and review**
+
+Record after hashes and a focused diff. A fresh reviewer checks the exact
+schema, stable ordering, caps, protected-path reuse, citation validation, and
+the negative mutation before Task 2 begins.
+
+---
+
+### Task 2: Bounded Gather and Tool-Free Synthesis
+
+**Files:**
+
+- Modify: `.orca/workflows/codebase-improvement-contract.test.ts`
+- Modify: `.orca/workflows/codebase-improvement.ts`
+
+**Interfaces:**
+
+- Consumes all Task 1 exports.
+- Produces `RunReport.scoutEvidence`, one bounded synthesis conversation,
+  tool-event cancellation, validated ranking, and unchanged downstream input.
+
+- [ ] **Step 1: Snapshot both Task 2 files**
+
+Run `shasum -a 256` for the contract test and workflow; store both hashes.
+
+- [ ] **Step 2: Write failing runtime contracts**
+
+Replace the old scout directives with these exact emitted literals:
+
+```typescript
+const REQUIRED_SCOUT_PROMPT_DIRECTIVES = [
+  "Use only the evidence packet below.",
+  "Do not inspect the repository or call tools.",
+  "Return exactly three supported candidates.",
+  "Return rankedCandidateIds as a best-first permutation of candidate IDs.",
+] as const;
+```
+
+Extend the AST/literal contract to require one declaration of each:
+
+```typescript
+const SCOUT_GATHER_LIMIT_MS = 15_000;
+const SCOUT_MODEL_LIMIT_MS = 75_000;
+const SCOUT_EVIDENCE_MAX_FILES = 8;
+const SCOUT_EVIDENCE_MAX_CHARS = 20_000;
+```
+
+Require exactly seven autonomous stage calls, exactly one scout call, the
+`assistant_tool_call` and `tool_result` event checks, a call to
+`selectScoutEvidencePaths`, evidence hashing, and before/after status
+comparison. Add negative mutations for `75_000 -> 76_000`, max files
+`8 -> 9`, removal of the no-tools directive, and deletion of either event
+type.
+
+- [ ] **Step 3: Run the contract and verify RED**
+
+Run:
+
+```bash
+bun test ./.orca/workflows/codebase-improvement-contract.test.ts
+```
+
+Expected: failures name missing split constants, evidence gather, ranking
+prompt, status comparison, and tool-event checks.
+
+- [ ] **Step 4: Implement deterministic gathering**
+
+Import `createHash` from `node:crypto` and the new Task 1 helpers. Inside the
+scout stage:
+
+1. Record `git status --porcelain=v1`.
+2. Run `git ls-files src tests` and
+   `git log -40 --format= --name-only -- src tests` within the shared
+   15-second gather deadline.
+3. Select eight paths with `selectScoutEvidencePaths`.
+4. Run one bounded `rg -n --no-heading -m 8` scan against only those paths;
+   accept exit code 1 as an empty match set, and parse each
+   `<path>:<line>:<text>` record into a per-path line-number map.
+5. Read only selected files through `fs().readText`, pass each path's parsed
+   line numbers as `matchLines`, render the packet, and compute `sha256` with
+   `createHash`.
+6. Record a second status and require byte equality.
+
+Append every gather command log to both `report.validation` and
+`report.scoutEvidence.commands`.
+
+Populate the report:
+
+```typescript
+scoutEvidence?: {
+  paths: string[];
+  charCount: number;
+  sha256: string;
+  ranking?: string[];
+  commands: CommandLog[];
+};
+```
+
+- [ ] **Step 5: Implement the watched synthesis turn**
+
+Change `scoutPrompt(profile, limits, evidence)` to emit the four required
+directives, candidate constraints, `Evidence packet:`, and the packet text.
+Create one conversation with `ScoutResultSchema` and a 75-second limit.
+Concurrently drain `conversation.events()`; on `assistant_tool_call` or
+`tool_result`, save the event type and cancel the conversation. After
+`awaitBounded` and drain completion, throw `scout attempted tool use` when a
+tool event was observed.
+
+Parse `rankedCandidateIds`, validate each candidate against profile, tracked
+paths, and `validateCandidateEvidence`, then select:
+
+```typescript
+candidate = chooseCandidate(
+  scoutResult.candidates,
+  scoutResult.rankedCandidateIds,
+);
+```
+
+Persist the ranking in both report and plan JSON.
+
+- [ ] **Step 6: Run Task 2 GREEN and mutation checks**
+
+Run:
+
+```bash
+bun test ./.orca/workflows/codebase-improvement-contract.test.ts
+bash skills/orcats-author/scripts/orca-typecheck-flow.sh +  ./.orca/workflows/codebase-improvement.ts
+```
+
+Expected: contract passes and typecheck prints `typecheck OK`. Run all four
+negative mutations independently; each must fail its named contract. Restore
+and rerun after every mutation.
+
+- [ ] **Step 7: Record Task 2 snapshot and review**
+
+Record hashes and focused diff. A fresh reviewer verifies one scout model call,
+15/75/10 timing, command deadline sharing, status immutability, no-tool event
+handling, report evidence, ranking selection, and unchanged later stages.
+
+---
+
+### Task 3: Artifacts, Static Gates, and Live Proof
+
+**Files:**
+
+- Modify: `.orca/workflows/codebase-improvement-artifacts.test.ts`
+- Modify: `.orca/workflows/codebase-improvement.run.md`
+- Modify:
+  `docs/superpowers/specs/2026-07-10-codebase-improvement-loop-design.md`
+- Modify:
+  `docs/superpowers/plans/2026-07-10-codebase-improvement-loop.md`
+- Append only after a proving run:
+  `.orca/improvement-loop/issues.jsonl`
+
+**Interfaces:**
+
+- Consumes Tasks 1-2.
+- Produces aligned operator guidance, deterministic verification, a successful
+  live run, linked issue corrections, merged PR proof, and final audit.
+
+- [ ] **Step 1: Write failing artifact assertions**
+
+Require the runbook to name `15 seconds`, `75 seconds`, `10 seconds`,
+`20,000`, `rankedCandidateIds`, evidence digest, no-tool failure, and
+unchanged 100/560/600 totals. Run the artifact test and observe failure before
+editing the runbook.
+
+- [ ] **Step 2: Align runbook, design, and parent plan**
+
+Document the exact gather commands, eight-file/20,000-character caps, report
+fields, ranked selection, failure conditions, timing split, and unchanged
+downstream gates. Remove the superseded model-led exploration wording.
+
+- [ ] **Step 3: Run the complete deterministic gate**
+
+Run:
+
+```bash
+bun test +  ./.orca/workflows/codebase-improvement-lib.test.ts +  ./.orca/workflows/codebase-improvement-contract.test.ts +  ./.orca/workflows/codebase-improvement-artifacts.test.ts
+bash skills/orcats-author/scripts/orca-typecheck-flow.sh +  ./.orca/workflows/codebase-improvement.ts
+bun run docs:check
+git diff --check
+bash ./.orca/workflows/codebase-improvement.sh --preflight-only
+```
+
+Expected: all artifact tests pass, typecheck is OK, documentation links pass,
+diff check passes, and fresh preflight exits zero from current `origin/main`.
+
+- [ ] **Step 4: Run one fresh simple live workflow with orcats-flow**
+
+Run in a managed background terminal:
+
+```bash
+bash ./.orca/workflows/codebase-improvement.sh --complexity=simple
+```
+
+Poll at intervals below 60 seconds. Report significant stages. Do not reuse any
+failed branch or worktree.
+
+- [ ] **Step 5: Require full delivery evidence**
+
+Inspect latest record, report, monitor, ledger, worktree, PR, checks, merge SHA,
+usage, and elapsed time. Required result: exit zero, evidence packet recorded,
+rank one selected, red/green proof present, zero final review blockers,
+`bun run verify` green, `CI / Verify` green, PR `MERGED`, matched head SHA,
+elapsed at most 600,000ms, and main's pre-existing `package-lock.json` hash
+unchanged.
+
+- [ ] **Step 6: Link every failed run to the proving run**
+
+Append correction records for runs `20260711020406-91166`,
+`20260711024606-61423`, `20260711031450-21409`, and
+`20260711031939-72337`. Each record names the actual proving run ID and remains
+`corrected` only when Step 5 succeeds.
+
+- [ ] **Step 7: Run broad review and completion audit**
+
+A fresh reviewer checks the cumulative ignored-artifact diff and the parent
+plan's objective matrix. Mark Tasks 5-6 complete only when every row has direct
+evidence. Then record final usage, mark the active goal complete, and report
+`gbrain: QUERY_USED`.
