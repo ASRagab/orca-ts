@@ -182,6 +182,12 @@ identifies a packet-grounded known-good adjacent input that uses the same
 production entrypoint, setup, and observation path as the target; tautological,
 mock-only, and unrelated controls are invalid. Only the selected candidate is
 hydrated with `controlBrief`; downstream reproduction remains unchanged.
+The reproduction turn runs its exact filtered control and full target commands
+before returning. It must strengthen a passing target assertion until it fails
+with the expected pattern; incidental runner, stack, or source text cannot
+satisfy that assertion. Prompt commands shell-quote non-plain arguments so the
+control pattern remains one argument. The parent independently repeats both
+gates before saving the immutable test diff.
 Profile limits are enforced before selection: simple is 5-10 minutes and two to
 three paths; medium is 20-30 minutes and two to six paths; challenging is 30-45
 minutes and two to ten paths. Every candidate path must be one of the excerpted

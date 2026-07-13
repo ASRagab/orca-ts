@@ -738,7 +738,11 @@ awaiting so a timeout still proves which request configuration was applied.
    Backends without normalized file-change events retain terminal completion.
    Add a top-level passing test named exactly `control <candidate.id>` that
    proves `controlBrief` through the same production entrypoint, setup, and
-   observation path as the target, plus the target regression.
+   observation path as the target, plus the target regression. Before returning,
+   run the exact control and target commands; reject target assertions satisfied
+   by incidental runner, stack, or source text. Render every prompt command with
+   shell-safe argument quoting so the control pattern remains one argument. The
+   parent repeats both gates.
 6. `red-gate`: sequentially run
    `bun test <testPath> --test-name-pattern '^control <candidate.id>$'`, require
    exactly one unskipped pass, then run `bun <targetedTestArgs...>` and require

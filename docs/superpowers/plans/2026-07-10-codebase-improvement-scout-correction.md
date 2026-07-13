@@ -786,3 +786,49 @@ Run `bash ./.orca/workflows/codebase-improvement.sh --complexity=simple` once.
 Require ready PR, green `CI / Verify`, unchanged head SHA, and SHA-locked squash
 merge within 600 seconds. Only after that proof append same-ID `corrected`
 records for the 12 non-seed open issues; the seed transition remains automatic.
+
+Run `20260713171459-43785` consumed this authorization and failed closed at the
+red gate after 112,181ms. Its control passed, but the target also passed because
+the regression searched all stderr for `undefined`; Bun's later uncaught-error
+diagnostic supplied that text even though the Orcats `run_finished` line omitted
+its error. No push, pull request, CI wait, or merge occurred.
+
+---
+
+## Correction 9: Self-Verified Isolated Red Proof
+
+**Goal:** Prevent a reproduction turn from returning a target test that passes
+through incidental runner, stack, or source text.
+
+**Architecture:** Keep the parent gates authoritative. Before the reproduction
+turn returns, require it to run the exact filtered control and full target
+commands itself. If the target passes, it strengthens only the target assertion
+until the control passes and the target fails with the expected pattern. The
+parent then repeats both commands independently before saving the immutable
+test diff. Prompt command rendering shell-quotes non-plain arguments so the
+space in `^control <candidate.id>$` cannot split the pattern.
+
+- [x] **Step 1: Write failing prompt and runbook contracts**
+
+The focused contract run had 36 passes and three expected failures for the two
+missing prompt directives and missing runbook proof.
+
+- [x] **Step 2: Implement the minimal reproduction directive**
+
+Require the exact two commands, prohibit incidental-output matches, and retain
+the existing no-production-edit and no-Git constraints.
+
+- [x] **Step 3: Verify focused GREEN**
+
+The contract and artifact suite passes 39 tests with 228 assertions.
+
+Review found that joining process arguments rendered the control pattern as two
+shell words. A behavior-first regression failed, command rendering gained
+shell-safe argument quoting, and the focused library and contract suite then
+passed 58 tests with 257 assertions.
+
+- [ ] **Step 4: Run a newly authorized complete simple proof**
+
+Do not reuse run `20260713171459-43785`, its branch, or its worktree. A new run
+must start from current `origin/main` and satisfy the unchanged ready-PR, green
+CI, matched-head, SHA-locked squash-merge, and 600-second gates.
