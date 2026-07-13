@@ -44,6 +44,8 @@ TypeScript compiler API, Bun test.
 |---|---|
 | `.orca/workflows/codebase-improvement-lib.ts` | Evidence selection/rendering, ranked schema, citation validation. |
 | `.orca/workflows/codebase-improvement-lib.test.ts` | Pure RED/GREEN behavior tests. |
+| `.orca/workflows/codebase-improvement-runtime.ts` | Shared async deadline and tool-free conversation guards. |
+| `.orca/workflows/codebase-improvement-runtime.test.ts` | Delayed-operation and forbidden-event behavior tests. |
 | `.orca/workflows/codebase-improvement.ts` | Bounded gather, tool-event watcher, synthesis, report integration. |
 | `.orca/workflows/codebase-improvement-contract.test.ts` | Load-bearing AST/literal contracts and negative mutations. |
 | `.orca/workflows/codebase-improvement-artifacts.test.ts` | Runbook and retained-artifact agreement. |
@@ -387,12 +389,17 @@ the negative mutation before Task 2 begins.
 
 **Files:**
 
+- Create: `.orca/workflows/codebase-improvement-runtime.test.ts`
+- Create: `.orca/workflows/codebase-improvement-runtime.ts`
 - Modify: `.orca/workflows/codebase-improvement-contract.test.ts`
 - Modify: `.orca/workflows/codebase-improvement.ts`
 
 **Interfaces:**
 
 - Consumes all Task 1 exports.
+- Produces `awaitWithinDeadline(label, remainingMs, operation)` and
+  `awaitToolFreeOutcome(conversation, awaitOutcome)` as internal testable
+  runtime guards.
 - Produces `RunReport.scoutEvidence`, one bounded synthesis conversation,
   tool-event cancellation, validated ranking, and unchanged downstream input.
 
@@ -400,7 +407,37 @@ the negative mutation before Task 2 begins.
 
 Run `shasum -a 256` for the contract test and workflow; store both hashes.
 
-- [ ] **Step 2: Write failing runtime contracts**
+- [ ] **Step 2: Write failing runtime behavior tests**
+
+Create `codebase-improvement-runtime.test.ts` before the helper exists. Require
+`awaitWithinDeadline` to reject a fake delayed filesystem or command operation
+at the shared remaining deadline. Parameterize `assistant_tool_call` and
+`tool_result`; use a fake conversation whose outcome settles only when
+`cancel()` runs, proving event draining is concurrent rather than sequential.
+Both cases must reject with `scout attempted tool use: <event-type>` and call
+`cancel()` exactly once.
+
+Run:
+
+```bash
+bun test ./.orca/workflows/codebase-improvement-runtime.test.ts
+```
+
+Expected: fail because the runtime helper module does not exist.
+
+- [ ] **Step 3: Implement the runtime guards and verify GREEN**
+
+`awaitWithinDeadline` reads the shared remaining milliseconds, rejects
+immediately when non-positive, races the supplied operation against one timer,
+and clears that timer in `finally`. `awaitToolFreeOutcome` starts draining
+`conversation.events()` before awaiting the supplied outcome closure; either
+forbidden event records its type and cancels the conversation. After both
+promises settle, it throws the named tool-use error or returns the outcome.
+
+Run the focused runtime test. Expected: all delayed-operation and both
+forbidden-event cases pass with no warning or dangling timer.
+
+- [ ] **Step 4: Write failing static workflow contracts**
 
 Replace the old scout directives with these exact emitted literals:
 
@@ -429,7 +466,7 @@ comparison. Add negative mutations for `75_000 -> 76_000`, max files
 `8 -> 9`, removal of the no-tools directive, and deletion of either event
 type.
 
-- [ ] **Step 3: Run the contract and verify RED**
+- [ ] **Step 5: Run the contract and verify RED**
 
 Run:
 
@@ -440,7 +477,7 @@ bun test ./.orca/workflows/codebase-improvement-contract.test.ts
 Expected: failures name missing split constants, evidence gather, ranking
 prompt, status comparison, and tool-event checks.
 
-- [ ] **Step 4: Implement deterministic gathering**
+- [ ] **Step 6: Implement deterministic gathering**
 
 Import `createHash` from `node:crypto` and the new Task 1 helpers. Inside the
 scout stage:
@@ -453,9 +490,11 @@ scout stage:
 4. Run one bounded `rg -n --no-heading -m 8` scan against only those paths;
    accept exit code 1 as an empty match set, and parse each
    `<path>:<line>:<text>` record into a per-path line-number map.
-5. Read only selected files through `fs().readText`, pass each path's parsed
-   line numbers as `matchLines`, render the packet, and compute `sha256` with
-   `createHash`.
+5. Read only selected files through `fs().readText`, wrapping every read with
+   `awaitWithinDeadline` and the same absolute gather remainder. Pass each
+   path's parsed line numbers as `matchLines`, render the packet, compute
+   `sha256` with `createHash`, and check the shared remainder after both bounded
+   synchronous operations.
 6. Record a second status and require byte equality.
 
 Append every gather command log to both `report.validation` and
@@ -473,15 +512,14 @@ scoutEvidence?: {
 };
 ```
 
-- [ ] **Step 5: Implement the watched synthesis turn**
+- [ ] **Step 7: Implement the watched synthesis turn**
 
 Change `scoutPrompt(profile, limits, evidence)` to emit the four required
 directives, candidate constraints, `Evidence packet:`, and the packet text.
-Create one conversation with `ScoutResultSchema` and a 75-second limit.
-Concurrently drain `conversation.events()`; on `assistant_tool_call` or
-`tool_result`, save the event type and cancel the conversation. After
-`awaitBounded` and drain completion, throw `scout attempted tool use` when a
-tool event was observed.
+Create one conversation with `ScoutResultSchema` and a 75-second limit. Call
+`awaitToolFreeOutcome(conversation, () => awaitBounded(conversation, ...))`;
+the tested helper owns concurrent event draining, cancellation, and the named
+tool-use failure.
 
 Parse `rankedCandidateIds`, validate each candidate against profile, tracked
 paths, and `validateCandidateEvidence`, then select:
@@ -495,24 +533,27 @@ candidate = chooseCandidate(
 
 Persist the ranking in both report and plan JSON.
 
-- [ ] **Step 6: Run Task 2 GREEN and mutation checks**
+- [ ] **Step 8: Run Task 2 GREEN and mutation checks**
 
 Run:
 
 ```bash
 bun test ./.orca/workflows/codebase-improvement-contract.test.ts
-bash skills/orcats-author/scripts/orca-typecheck-flow.sh +  ./.orca/workflows/codebase-improvement.ts
+bun test ./.orca/workflows/codebase-improvement-runtime.test.ts
+bash skills/orcats-author/scripts/orca-typecheck-flow.sh \
+  ./.orca/workflows/codebase-improvement.ts
 ```
 
 Expected: contract passes and typecheck prints `typecheck OK`. Run all four
 negative mutations independently; each must fail its named contract. Restore
 and rerun after every mutation.
 
-- [ ] **Step 7: Record Task 2 snapshot and review**
+- [ ] **Step 9: Record Task 2 snapshot and review**
 
-Record hashes and focused diff. A fresh reviewer verifies one scout model call,
-15/75/10 timing, command deadline sharing, status immutability, no-tool event
-handling, report evidence, ranking selection, and unchanged later stages.
+Record hashes and focused diff for all four Task 2 files. A fresh reviewer
+verifies one scout model call, 15/75/10 timing, command/read deadline sharing,
+status immutability, behavior-tested no-tool handling, report evidence, ranking
+selection, and unchanged later stages.
 
 ---
 

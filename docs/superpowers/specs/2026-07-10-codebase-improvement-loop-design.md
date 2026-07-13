@@ -169,6 +169,12 @@ ranked IDs must be unique and equal the candidate-ID set. Any gather failure,
 worktree change, model tool event, timeout, invalid citation, invalid ranking,
 or insufficient evidence fails the run before reproduction.
 
+An internal runtime guard races every asynchronous gather operation against the
+same absolute gather deadline. A second guard drains conversation events
+concurrently with the outcome and cancels on either normalized tool event.
+Behavior tests use delayed fake operations and fake conversations so deadline
+and cancellation ordering cannot pass through source-text checks alone.
+
 ### 3. Select and Plan
 
 Choose the first ID from the validated ranking and persist the selected contract
