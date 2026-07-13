@@ -391,6 +391,56 @@ describe("Claude live backend constructor", () => {
     expect(await conversation.awaitResult()).toEqual({ type: "cancelled", reason: "stop" });
   });
 
+  test("rejects Claude ACP cancellation failures without settling an outcome", async () => {
+    let process: FakeAcpProcess | undefined;
+    let promptId: AcpId | undefined;
+    const backend = claude({
+      acpCancelTimeoutMs: 1,
+      spawnAcpProcess: () => {
+        process = fakeAcpProcess((message, push) => {
+          if (message.method === "initialize") {
+            push(response(message.id, { protocolVersion: 1, agentCapabilities: {} }));
+          }
+          if (message.method === "session/new") {
+            push(response(message.id, { sessionId: "claude-acp-cancel-failure" }));
+          }
+          if (message.method === "session/prompt") {
+            promptId = message.id;
+          }
+        });
+        const write = process.write.bind(process);
+        process.write = (data) => {
+          const message = JSON.parse(data.trim()) as Record<string, unknown>;
+          if (message.method === "session/cancel") {
+            throw new Error("process refused cancellation");
+          }
+          write(data);
+        };
+        return process;
+      }
+    });
+
+    const conversation = backend.autonomous({ prompt: "run" });
+    await waitFor(() => process !== undefined && promptId !== undefined);
+    const cancellationError = await conversation.cancel("stop").then(
+      () => undefined,
+      (error: unknown) => error
+    );
+
+    let outcomeSettled = false;
+    void conversation.awaitResult().then(() => {
+      outcomeSettled = true;
+    });
+    await Promise.resolve();
+
+    expect(cancellationError).toBeInstanceOf(Error);
+    expect((cancellationError as Error).message).toBe(
+      "Claude ACP cancellation failed: process refused cancellation"
+    );
+    expect(outcomeSettled).toBe(false);
+    process?.close(null);
+  });
+
   test("fails and force-closes a silent Claude ACP prompt on inactivity timeout", async () => {
     let process: FakeAcpProcess | undefined;
     const backend = claude({
@@ -623,31 +673,38 @@ describe("Claude live backend constructor", () => {
     });
   });
 
-  test("cancels the child process", async () => {
-    let killed = false;
-    let releaseStdout!: () => void;
-    const stdoutBlocked = new Promise<void>((resolve) => {
-      releaseStdout = resolve;
-    });
+  test("waits for the stream-json child to exit during cancellation", async () => {
+    const spawned = Promise.withResolvers<undefined>();
+    const exit = Promise.withResolvers<number | null>();
+    const signals: NodeJS.Signals[] = [];
     const backend = claudeStreamJson({
-      spawnProcess: () => ({
-        stdout: blockedStream(stdoutBlocked),
-        stderr: lineStream([]),
-        exit: stdoutBlocked.then(() => null),
-        write: () => {},
-        endStdin: () => {},
-        kill: () => {
-          killed = true;
-          releaseStdout();
-        }
-      })
+      spawnProcess: () => {
+        spawned.resolve(undefined);
+        return {
+          stdout: blockedStream(exit.promise.then(() => undefined)),
+          stderr: lineStream([]),
+          exit: exit.promise,
+          write: () => {},
+          endStdin: () => {},
+          kill: (signal = "SIGTERM") => {
+            signals.push(signal);
+          }
+        };
+      }
     });
 
     const conversation = backend.autonomous({ prompt: "run" });
-    await Promise.resolve();
-    await conversation.cancel("stop");
+    await spawned.promise;
+    const cancellation = conversation.cancel("stop");
+    const beforeExit = await Promise.race([
+      cancellation.then(() => "settled" as const),
+      delay(10).then(() => "pending" as const)
+    ]);
+    exit.resolve(null);
+    await cancellation;
 
-    expect(killed).toBe(true);
+    expect(beforeExit).toBe("pending");
+    expect(signals).toEqual(["SIGTERM"]);
     expect(await conversation.awaitResult()).toEqual({ type: "cancelled", reason: "stop" });
   });
 });

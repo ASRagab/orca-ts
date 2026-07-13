@@ -7,6 +7,7 @@ import {
   unsupportedFeature
 } from "../model/index.ts";
 import { BoundedAsyncQueue } from "./queue.ts";
+import { isConversationSettlementReserved } from "./settlement-reservation.ts";
 
 export type Outcome<B extends BackendTag = BackendTag> =
   | { readonly type: "success"; readonly result: BackendResult<B> }
@@ -39,6 +40,7 @@ export class StreamConversation<B extends BackendTag> implements Conversation<B>
   private readonly outcome: Promise<Outcome<B>>;
   private settle!: (outcome: Outcome<B>) => void;
   private settled = false;
+  private cancellation: Promise<void> | undefined;
 
   constructor(private readonly options: StreamConversationOptions<B>) {
     this.queue = new BoundedAsyncQueue(options.capacity ?? 32);
@@ -80,21 +82,49 @@ export class StreamConversation<B extends BackendTag> implements Conversation<B>
   }
 
   succeed(result: BackendResult<B>): void {
+    if (this.cancellation !== undefined || isConversationSettlementReserved(this)) {
+      return;
+    }
     this.complete({ type: "success", result });
   }
 
   fail(error: RuntimeError): void {
+    if (this.cancellation !== undefined || isConversationSettlementReserved(this)) {
+      return;
+    }
     this.complete({ type: "failed", error });
   }
 
-  async cancel(reason?: string): Promise<void> {
+  cancel(reason?: string): Promise<void> {
     if (this.settled) {
-      return;
+      return Promise.resolve();
+    }
+    if (this.cancellation !== undefined) {
+      return this.cancellation;
     }
 
-    this.abortController.abort(reason);
-    await this.options.onCancel?.(reason);
-    this.complete(reason === undefined ? { type: "cancelled" } : { type: "cancelled", reason });
+    const cancellation = Promise.withResolvers<undefined>();
+    this.cancellation = cancellation.promise;
+
+    let cleanup: Promise<void>;
+    try {
+      this.abortController.abort(reason);
+      cleanup = Promise.resolve(this.options.onCancel?.(reason));
+    } catch (error) {
+      cancellation.reject(error);
+      return cancellation.promise;
+    }
+
+    void cleanup.then(
+      () => {
+        this.complete(reason === undefined ? { type: "cancelled" } : { type: "cancelled", reason });
+        cancellation.resolve(undefined);
+      },
+      (error: unknown) => {
+        cancellation.reject(error);
+      }
+    );
+    return cancellation.promise;
   }
 
   private complete(outcome: Outcome<B>): void {

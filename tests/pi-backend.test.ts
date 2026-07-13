@@ -145,31 +145,55 @@ describe("Pi live backend constructor", () => {
     });
   });
 
-  test("cancels the child process", async () => {
-    let killed = false;
-    let releaseStdout!: () => void;
-    const stdoutBlocked = new Promise<void>((resolve) => {
-      releaseStdout = resolve;
-    });
+  test("waits for the child to exit during cancellation", async () => {
+    const spawned = Promise.withResolvers<undefined>();
+    const exit = Promise.withResolvers<number | null>();
+    const signals: NodeJS.Signals[] = [];
     const backend = pi({
-      spawnProcess: () => ({
-        stdout: blockedStream(stdoutBlocked),
-        stderr: lineStream([]),
-        exit: stdoutBlocked.then(() => null),
-        write: () => {},
-        endStdin: () => {},
-        kill: () => {
-          killed = true;
-          releaseStdout();
-        }
-      })
+      spawnProcess: () => {
+        spawned.resolve(undefined);
+        return {
+          stdout: blockedStream(exit.promise.then(() => undefined)),
+          stderr: lineStream([]),
+          exit: exit.promise,
+          write: () => {},
+          endStdin: () => {},
+          kill: (signal = "SIGTERM") => {
+            signals.push(signal);
+          }
+        };
+      }
     });
 
     const conversation = backend.autonomous({ prompt: "run" });
-    await Promise.resolve();
-    await conversation.cancel("stop");
+    await spawned.promise;
+    const cancellation = conversation.cancel("stop");
+    const beforeExit = await Promise.race([
+      cancellation.then(() => "settled" as const),
+      delay(10).then(() => "pending" as const)
+    ]);
+    exit.resolve(null);
+    await cancellation;
 
-    expect(killed).toBe(true);
+    expect(beforeExit).toBe("pending");
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(await conversation.awaitResult()).toEqual({ type: "cancelled", reason: "stop" });
+  });
+
+  test("does not spawn after immediate cancellation", async () => {
+    let spawned = false;
+    const backend = pi({
+      spawnProcess: () => {
+        spawned = true;
+        return fakeProcess([]);
+      }
+    });
+
+    const conversation = backend.autonomous({ prompt: "run" });
+    await conversation.cancel("stop");
+    await Promise.resolve();
+
+    expect(spawned).toBe(false);
     expect(await conversation.awaitResult()).toEqual({ type: "cancelled", reason: "stop" });
   });
 });
@@ -208,4 +232,12 @@ async function drainEvents(events: AsyncIterable<unknown>): Promise<unknown[]> {
     collected.push(event);
   }
   return collected;
+}
+
+function delay(ms: number): Promise<undefined> {
+  const gate = Promise.withResolvers<undefined>();
+  setTimeout(() => {
+    gate.resolve(undefined);
+  }, ms);
+  return gate.promise;
 }

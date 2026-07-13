@@ -76,6 +76,77 @@ describe("StreamConversation", () => {
     expect(await conversation.awaitResult()).toEqual({ type: "cancelled", reason: "stop" });
   });
 
+  test("first cancellation reserves the outcome and shares cleanup", async () => {
+    const cleanup = Promise.withResolvers<undefined>();
+    const cancellationReasons: Array<string | undefined> = [];
+    const conversation = new StreamConversation({
+      backend: "codex",
+      async onCancel(reason) {
+        cancellationReasons.push(reason);
+        await cleanup.promise;
+      }
+    });
+
+    const first = conversation.cancel("first");
+    const second = conversation.cancel("second");
+    conversation.succeed({
+      backend: "codex",
+      sessionId: sessionId("codex", "late-success"),
+      output: "late"
+    });
+    conversation.fail({ _tag: "BackendFailed", backend: "codex", message: "late failure" });
+
+    let outcomeSettled = false;
+    void conversation.awaitResult().then(() => {
+      outcomeSettled = true;
+    });
+    await Promise.resolve();
+
+    expect(first).toBe(second);
+    expect(cancellationReasons).toEqual(["first"]);
+    expect(conversation.signal.reason).toBe("first");
+    expect(outcomeSettled).toBe(false);
+
+    cleanup.resolve(undefined);
+    await first;
+
+    expect(await conversation.awaitResult()).toEqual({
+      type: "cancelled",
+      reason: "first"
+    });
+  });
+
+  test("failed cancellation leaves the outcome pending despite late completion", async () => {
+    const cancellationError = new Error("child still running");
+    const conversation = new StreamConversation({
+      backend: "codex",
+      onCancel() {
+        throw cancellationError;
+      }
+    });
+
+    const cancellation = conversation.cancel("stop");
+    const caught = await cancellation.then(
+      () => undefined,
+      (error: unknown) => error
+    );
+    conversation.succeed({
+      backend: "codex",
+      sessionId: sessionId("codex", "late-success"),
+      output: "late"
+    });
+    conversation.fail({ _tag: "BackendFailed", backend: "codex", message: "late failure" });
+
+    let outcomeSettled = false;
+    void conversation.awaitResult().then(() => {
+      outcomeSettled = true;
+    });
+    await Promise.resolve();
+
+    expect(caught).toBe(cancellationError);
+    expect(outcomeSettled).toBe(false);
+  });
+
   test("fails reserved user interaction events", async () => {
     const conversation = new StreamConversation({ backend: "codex" });
     const emitted = await conversation.emit({ type: "user_question", question: "Need input?" });

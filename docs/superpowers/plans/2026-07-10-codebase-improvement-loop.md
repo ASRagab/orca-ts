@@ -31,15 +31,24 @@ GitHub CLI, Bun test.
   profile requires one test plus a distinct production path.
 - Exclude dependencies, lockfiles, releases, publishing, secrets, security,
   public APIs, workflow artifacts, and destructive Git operations.
+- Red proof is valid only after the exact filtered positive control passes and
+  the full target command fails with `expectedFailurePattern`; both commands
+  share the unchanged reproduce allocation.
 - Targeted test and lint repair once; full `bun run verify` once.
 - Merge requires `CI / Verify`, every reported check green, and head-SHA match.
 - Launcher-to-merge ceilings are 600/1800/2700 seconds; simple stage
   allocations total 560 seconds and scale by 3/4.5 for larger profiles.
-- Scout keeps its 100-second allocation: at most 15 seconds gather stable
-  evidence from eight tracked source/test files, 75 seconds synthesize and rank
-  without tools, and 10 seconds validate or fail closed.
+- Scout keeps its 100-second allocation: at most 10 seconds gather stable
+  evidence from at most four tracked source and four tracked test files, at
+  most 80 seconds synthesize and rank without tools, and 10 seconds validate or
+  fail closed. Synthesis uses at most two fresh 40-second conversations and
+  retries only the first attempt's exact timeout cancellation.
 - Scout evidence is capped at 20,000 characters and records paths, character
   count, SHA-256 digest, command logs, and ranked candidate IDs.
+- Gather commands are exactly `git status --porcelain=v1`,
+  `git ls-files src tests`,
+  `git log -40 --format= --name-only -- src tests`, one
+  `rg -n --no-heading -m 8` scan over selected paths, and the repeated status.
 - Core Orcats API, global Codex configuration, and model policy stay unchanged.
 - `.orca/` stays ignored and never enters implementation commits.
 - User-approved subagent adaptation: each ignored-artifact task uses a
@@ -82,14 +91,19 @@ improvement is committed only on generated
 - Produces: `WorkflowConfigSchema`, `ScoutResultSchema`, `Candidate`,
   `ComplexityProfile`, `profileLimits`, `stageConfig`, `renderDirective`,
   `chooseCandidate`, `validateCandidateForProfile`, `validateChangedPaths`,
-  `assertImmutableTestDiff`, `remoteCheckState`, `stageBudgetMs`, and
-  `normalizeFailure`.
+  `controlTestName`, `controlTestArgs`, `assertImmutableTestDiff`,
+  `remoteCheckState`, `stageBudgetMs`, and `normalizeFailure`.
 - Consumes: `z` and `BackendConfig` from `@twelvehart/orcats`.
 
 Correction 3 later extends `ScoutResultSchema` with `rankedCandidateIds`, adds
 the evidence helpers, and changes `chooseCandidate` to consume the validated
 ranking. Its exact RED/GREEN steps supersede the original selection snippet
 below without changing the completed Task 1 baseline evidence.
+
+Correction 7 later requires every candidate to provide a packet-grounded
+`controlBrief`. It derives the exact test name as `control <candidate.id>` and
+the filtered command arguments as `test <testPath> --test-name-pattern
+^control <candidate.id>$`.
 
 - [ ] **Step 1: Write failing policy tests**
 
@@ -118,6 +132,8 @@ const candidate = {
   testPath: "tests/tools.test.ts",
   targetedTestArgs: ["test", "tests/tools.test.ts"],
   expectedFailurePattern: "last diagnostic",
+  controlBrief:
+    "A normal timed-out command preserves its final diagnostic through the same formatter.",
   implementationBrief: "Preserve buffered stderr when timeout fires.",
   expectedMinutes: 6,
   risk: "low" as const,
@@ -282,6 +298,7 @@ export const CandidateSchema = z
     testPath: z.string().trim().min(1),
     targetedTestArgs: z.array(z.string()).min(2),
     expectedFailurePattern: z.string().trim().min(1),
+    controlBrief: z.string().trim().min(1),
     implementationBrief: z.string().trim().min(1),
     expectedMinutes: z.number().int().min(5).max(45),
     risk: z.literal("low"),
@@ -306,6 +323,19 @@ export const ScoutResultSchema = z.object({
   candidates: z.array(CandidateSchema).length(3),
 });
 export type Candidate = z.infer<typeof CandidateSchema>;
+
+export function controlTestName(candidate: Candidate): string {
+  return `control ${candidate.id}`;
+}
+
+export function controlTestArgs(candidate: Candidate): string[] {
+  return [
+    "test",
+    candidate.testPath,
+    "--test-name-pattern",
+    `^${controlTestName(candidate)}$`,
+  ];
+}
 
 export function renderDirective(stage: string, directive: z.infer<typeof DirectiveSchema>): string {
   return [
@@ -524,8 +554,9 @@ const SIMPLE_STAGE_LIMITS = {
   verify: 40_000,
   delivery: 90_000,
 } as const;
-const SCOUT_GATHER_LIMIT_MS = 15_000;
-const SCOUT_MODEL_LIMIT_MS = 75_000;
+const SCOUT_GATHER_LIMIT_MS = 10_000;
+const SCOUT_MODEL_LIMIT_MS = 80_000;
+const SCOUT_ATTEMPT_LIMIT_MS = 40_000;
 const SCOUT_EVIDENCE_MAX_FILES = 8;
 const SCOUT_EVIDENCE_MAX_CHARS = 20_000;
 const PROFILE_SCALE = { simple: 1, medium: 3, challenging: 4.5 } as const;
@@ -566,22 +597,35 @@ interface RunIssue {
 }
 ```
 
-Bound every conversation with:
+Bound every conversation with the tested runtime helper:
 
 ```typescript
-async function awaitBounded<B extends BackendTag>(
-  conversation: Conversation<B>,
+interface BoundedConversation<T> {
+  awaitResult(): Promise<T>;
+  cancel(reason?: string): Promise<void>;
+}
+
+async function awaitBounded<T>(
+  conversation: BoundedConversation<T>,
   timeoutMs: number,
   stage: string,
-): Promise<Outcome<B>> {
+): Promise<T> {
   if (timeoutMs <= 0) throw new Error(`sla-overrun before ${stage}`);
-  const timer = setTimeout(() => {
-    void conversation.cancel(`${stage} exceeded ${String(timeoutMs)}ms`);
-  }, timeoutMs);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cancellationFailure = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      void conversation
+        .cancel(`${stage} exceeded ${String(timeoutMs)}ms`)
+        .catch(reject);
+    }, timeoutMs);
+  });
   try {
-    return await conversation.awaitResult();
+    return await Promise.race([
+      conversation.awaitResult(),
+      cancellationFailure,
+    ]);
   } finally {
-    clearTimeout(timer);
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -657,14 +701,30 @@ awaiting so a timeout still proves which request configuration was applied.
    launcher run ID/time, select `profileLimits[profile]`, multiply each simple
    stage limit by `PROFILE_SCALE[profile]`, and start monitor.
 2. `preflight`: baseline gate, Codex/GitHub auth, HEAD equals `origin/main`.
-3. `scout`: deterministically choose at most eight tracked source/test files,
-   run a bounded `rg` scan, render a stable 20,000-character evidence packet,
-   and verify the worktree did not change. Give only that packet to one
-   75-second structured synthesis turn. Reject tool events, invalid citations,
-   invalid ranked-ID permutations, and profile/path violations.
+3. `scout`: run the exact global-constraint commands, deterministically choose
+   at most four source and four test files, render a stable 20,000-character
+   evidence packet, record paths/count/SHA-256/command logs, and verify the
+   worktree did not change. Give only that packet to a tool-free structured
+   synthesis phase with at most 80 seconds total and at most two fresh
+   40-second conversations. Retry only when the first attempt ends in its exact
+   timeout cancellation. Persist every attempt record. Reject tool events as a
+   no-tool failure, invalid or incomplete `rankedCandidateIds`, uncited
+   evidence, off-packet paths, and profile/path violations. Select the first ID
+   in the validated ranking.
 4. `select-plan`: validate profile/tracked paths, choose, persist plan.
-5. `reproduce`: apply `$tdd`, permit only test path.
-6. `red-gate`: targeted test must fail with expected pattern; save diff.
+5. `reproduce`: apply `$tdd`, permit only the test path, and stop after the
+   successful matching normalized file-change result. Reject an off-target
+   file-change call; never accept a started, failed, or unmatched result.
+   Wait for bounded child-process termination before parent validation.
+   Backends without normalized file-change events retain terminal completion.
+   Add a top-level passing test named exactly `control <candidate.id>` that
+   proves `controlBrief` through the same production entrypoint, setup, and
+   observation path as the target, plus the target regression.
+6. `red-gate`: sequentially run
+   `bun test <testPath> --test-name-pattern '^control <candidate.id>$'`, require
+   exactly one unskipped pass, then run `bun <targetedTestArgs...>` and require
+   failure with `expectedFailurePattern`. Save the immutable diff only after
+   both gates validate.
 7. `implement`: apply `$tdd`, permit production paths, freeze test diff.
 8. `targeted-repair`: targeted test plus lint through one-fix `fixLoop`.
 9. `review`: exact review prompt and structured blockers.
@@ -1105,10 +1165,12 @@ ceilings and 6/10-path limits.
 - Consumes failed or successful run evidence.
 - Produces correction plus later proving run per new issue and final audit.
 
-Correction 3 follows the detailed test-first plan in
+Correction 3 historically followed the detailed test-first plan in
 `docs/superpowers/plans/2026-07-10-codebase-improvement-scout-correction.md`.
-It replaces monolithic model-led exploration with bounded deterministic
-evidence plus one ranked synthesis turn while preserving every later gate.
+It replaced monolithic repository scouting with bounded deterministic evidence.
+Its earlier timing and single-turn shape are superseded by the current contract
+above: at most two fresh 40-second attempts, with retry only for the first exact
+timeout cancellation. Every later gate remains unchanged.
 
 - [ ] **Step 1: Write failing test for each new artifact defect**
 
@@ -1135,8 +1197,8 @@ Repeat until one run passes and each new issue points to later proving run.
 fresh worktree -> worktree list + report base SHA
 skill directive -> config + report directive evidence
 prompt directive -> config + report directive evidence
-exploration/plan -> scout stage + plan JSON
-test-first -> red output + immutable diff + green output
+deterministic evidence/ranked plan -> scout stage + plan JSON
+test-first -> filtered control pass + target red output + immutable diff + green output
 implementation -> validated paths + commit
 verification -> targeted logs + full verify exit zero
 review -> findings + final zero-blocker result

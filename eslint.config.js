@@ -12,6 +12,7 @@ export default tseslint.config(
       "website/.astro/**",
       "website/dist/**",
       ".orca/**",
+      ".superpowers/**",
       "skills/**/assets/templates/**"
     ]
   },

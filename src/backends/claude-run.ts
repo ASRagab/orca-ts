@@ -14,6 +14,7 @@ import {
   type SubprocessProcess,
   type SubprocessSpawner
 } from "./subprocess-run.ts";
+import { terminateSubprocess } from "./subprocess-termination.ts";
 import type { AutonomousRequest, LlmBackend } from "./types.ts";
 import { StreamConversation } from "../conversation/index.ts";
 import { backendFailed, jsonSchemaFromZod, type BackendConfig } from "../model/index.ts";
@@ -154,11 +155,15 @@ export function claude(options: ClaudeBackendOptions = {}): LlmBackend<"claude">
             try {
               await cancelAcp();
             } catch (error) {
-              conversation.fail(backendFailed("claude", `Claude ACP cancellation failed: ${errorMessage(error)}`));
+              throw new Error(`Claude ACP cancellation failed: ${errorMessage(error)}`, {
+                cause: error
+              });
             }
             return;
           }
-          child?.kill("SIGTERM");
+          if (child) {
+            await terminateSubprocess(child);
+          }
         }
       });
 

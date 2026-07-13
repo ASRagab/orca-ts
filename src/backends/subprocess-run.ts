@@ -4,6 +4,8 @@ import {
   type BackendTag
 } from "../model/index.ts";
 import type { StreamConversation } from "../conversation/index.ts";
+import { reserveConversationSettlement } from "../conversation/settlement-reservation.ts";
+import { terminateSubprocess } from "./subprocess-termination.ts";
 
 const DefaultSubprocessInactivityTimeoutMs = 120_000;
 
@@ -79,17 +81,23 @@ interface SubprocessTimeout {
   readonly kind: SubprocessTimeoutKind;
 }
 
+interface SubprocessTerminationFailed {
+  readonly type: "termination_failed";
+  readonly error: unknown;
+}
+
+type SubprocessTimeoutSettlement = SubprocessTimeout | SubprocessTerminationFailed;
+
 /** Shared spawn → stdout-line-stream → consumer → outcome plumbing for
  * subprocess-stream backends (codex, claude, pi). Owns process spawn, line
  * splitting, stderr capture, non-zero-exit failure, cancellation checks, and
  * timeout settlement; the per-backend command/args builder and line consumer
  * plug in.
  *
- * The helper deliberately does NOT catch spawn / stream / consumer exceptions —
- * each driver wraps the call in its own try/catch/finally so spawn-error→fail and
- * resource teardown stay synchronous with the failure (matters for deterministic
- * cleanup ordering; see codex's ask_user bridge). Use {@link errorMessage} +
- * {@link backendFailed} in that catch. */
+ * The helper propagates spawn / stream / consumer exceptions unless a timeout
+ * has already reserved settlement. In that case timeout termination owns the
+ * outcome. Each driver wraps propagated errors so failure and resource teardown
+ * stay ordered; use {@link errorMessage} + {@link backendFailed} there. */
 export async function runSubprocessConversation<B extends BackendTag>(
   options: RunSubprocessOptions<B>
 ): Promise<void> {
@@ -112,19 +120,37 @@ export async function runSubprocessConversation<B extends BackendTag>(
   const stderr = collectText(process.stderr);
   await options.onStart?.(process);
 
-  const timeout: Deferred<SubprocessTimeout> = Promise.withResolvers<SubprocessTimeout>();
+  const timeout: Deferred<SubprocessTimeoutSettlement> =
+    Promise.withResolvers<SubprocessTimeoutSettlement>();
   const inactivityMs = options.inactivityTimeoutMs ?? DefaultSubprocessInactivityTimeoutMs;
   const wallClockMs = options.wallClockTimeoutMs ?? DefaultSubprocessWallClockTimeoutMs;
-  let timeoutSettled = false;
+  let timeoutStarted = false;
+  let releaseTimeoutSettlement: (() => void) | undefined;
   let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
 
   const settleTimeout = (kind: SubprocessTimeoutKind): void => {
-    if (timeoutSettled) {
+    if (timeoutStarted) {
       return;
     }
-    timeoutSettled = true;
-    process.kill("SIGTERM");
-    timeout.resolve({ type: "timeout", kind });
+    timeoutStarted = true;
+    releaseTimeoutSettlement = reserveConversationSettlement(conversation);
+    void terminateSubprocess(process).then(
+      () => {
+        timeout.resolve({ type: "timeout", kind });
+      },
+      (error: unknown) => {
+        timeout.resolve({ type: "termination_failed", error });
+      }
+    );
+  };
+  const hasTimeoutStarted = (): boolean => timeoutStarted;
+  const settleSubprocessTimeout = (settlement: SubprocessTimeoutSettlement): void => {
+    releaseTimeoutSettlement?.();
+    if (settlement.type === "termination_failed") {
+      conversation.fail(backendFailed(backend, errorMessage(settlement.error)));
+      return;
+    }
+    failSubprocessTimeout(conversation, backend, settlement.kind, inactivityMs, wallClockMs);
   };
   const resetInactivityTimer = (): void => {
     clearTimeout(inactivityTimer);
@@ -142,9 +168,17 @@ export async function runSubprocessConversation<B extends BackendTag>(
     const consumer = options.createConsumer();
     const lines = splitLines(process.stdout)[Symbol.asyncIterator]();
     for (;;) {
-      const next: IteratorResult<string> | SubprocessTimeout = await Promise.race([lines.next(), timeout.promise]);
-      if (isSubprocessTimeout(next)) {
-        failSubprocessTimeout(conversation, backend, next.kind, inactivityMs, wallClockMs);
+      const next: IteratorResult<string> | SubprocessTimeoutSettlement = await Promise.race([
+        lines.next(),
+        timeout.promise
+      ]);
+      if (isSubprocessTimeoutSettlement(next)) {
+        settleSubprocessTimeout(next);
+        return;
+      }
+      if (hasTimeoutStarted()) {
+        const completedTimeout = await timeout.promise;
+        settleSubprocessTimeout(completedTimeout);
         return;
       }
       if (next.done) {
@@ -154,7 +188,19 @@ export async function runSubprocessConversation<B extends BackendTag>(
       if (conversation.signal.aborted) {
         return;
       }
-      await consumer.consume(next.value);
+      const consumed: undefined | SubprocessTimeoutSettlement = await Promise.race([
+        consumer.consume(next.value).then(() => undefined),
+        timeout.promise
+      ]);
+      if (consumed !== undefined) {
+        settleSubprocessTimeout(consumed);
+        return;
+      }
+      if (hasTimeoutStarted()) {
+        const completedTimeout = await timeout.promise;
+        settleSubprocessTimeout(completedTimeout);
+        return;
+      }
       if (consumer.signal.aborted) {
         // Kill the child once the consumer has settled the conversation on a
         // terminal event (success, modeled failure, or early parse/tool error).
@@ -172,12 +218,28 @@ export async function runSubprocessConversation<B extends BackendTag>(
       return;
     }
 
-    const exit: number | null | SubprocessTimeout = await Promise.race([process.exit, timeout.promise]);
-    if (isSubprocessTimeout(exit)) {
-      failSubprocessTimeout(conversation, backend, exit.kind, inactivityMs, wallClockMs);
+    const exit: number | null | SubprocessTimeoutSettlement = await Promise.race([
+      process.exit,
+      timeout.promise
+    ]);
+    if (isSubprocessTimeoutSettlement(exit)) {
+      settleSubprocessTimeout(exit);
       return;
     }
-    const stderrText = (await stderr).trim();
+    const stderrResult: string | SubprocessTimeoutSettlement = await Promise.race([
+      stderr,
+      timeout.promise
+    ]);
+    if (isSubprocessTimeoutSettlement(stderrResult)) {
+      settleSubprocessTimeout(stderrResult);
+      return;
+    }
+    if (hasTimeoutStarted()) {
+      const completedTimeout = await timeout.promise;
+      settleSubprocessTimeout(completedTimeout);
+      return;
+    }
+    const stderrText = stderrResult.trim();
     if (conversation.signal.aborted) {
       return;
     }
@@ -192,8 +254,14 @@ export async function runSubprocessConversation<B extends BackendTag>(
       );
       return;
     }
-
     consumer.finish();
+  } catch (error) {
+    if (hasTimeoutStarted()) {
+      const completedTimeout = await timeout.promise;
+      settleSubprocessTimeout(completedTimeout);
+      return;
+    }
+    throw error;
   } finally {
     clearTimeout(inactivityTimer);
     clearTimeout(wallClockTimer);
@@ -279,8 +347,12 @@ function decodeChunk(decoder: TextDecoder, chunk: string | Uint8Array): string {
   return typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
 }
 
-function isSubprocessTimeout(value: IteratorResult<string> | number | null | SubprocessTimeout): value is SubprocessTimeout {
-  return typeof value === "object" && value !== null && (value as { readonly type?: unknown }).type === "timeout";
+function isSubprocessTimeoutSettlement(value: unknown): value is SubprocessTimeoutSettlement {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const type = (value as { readonly type?: unknown }).type;
+  return type === "timeout" || type === "termination_failed";
 }
 
 function failSubprocessTimeout<B extends BackendTag>(

@@ -1,5 +1,14 @@
 # Deterministic Scout Evidence Correction Implementation Plan
 
+> **Historical plan — scout timing superseded.** This file preserves the
+> completed correction that introduced deterministic evidence gathering. Do
+> not implement its 15/75 single-turn timing or its related constants and test
+> assertions. Current normative behavior is 10 seconds of gathering, at most
+> 80 seconds of synthesis across at most two fresh 40-second conversations,
+> retry only for the first attempt's exact timeout cancellation, and a final
+> 10-second validation reserve. See the operator runbook, current design, and
+> parent implementation plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use

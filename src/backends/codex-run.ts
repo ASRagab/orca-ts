@@ -98,6 +98,10 @@ export async function runCodexConversation<Output>(
       );
     }
 
+    if (conversation.signal.aborted) {
+      return;
+    }
+
     const args = codexExecJsonlArgs({
       prompt: composeBackendPrompt(request.prompt, config),
       ...(config.model === undefined ? {} : { model: config.model }),

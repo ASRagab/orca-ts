@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { codex, sessionId, z, type CodexProcess } from "../src/index.ts";
+import { terminateSubprocess } from "../src/backends/subprocess-termination.ts";
 
 describe("Codex live backend constructor", () => {
   test("starts codex exec JSONL and returns normalized conversation output", async () => {
@@ -92,9 +93,10 @@ describe("Codex live backend constructor", () => {
     });
   });
 
-  test("fails and kills a silent subprocess on inactivity timeout", async () => {
-    let killed = false;
+  test("inactivity timeout waits for subprocess exit before failing", async () => {
+    const terminationStarted = Promise.withResolvers<undefined>();
     const exit = Promise.withResolvers<number | null>();
+    const signals: NodeJS.Signals[] = [];
     const backend = codex({
       inactivityTimeoutMs: 20,
       wallClockTimeoutMs: 1_000,
@@ -102,17 +104,24 @@ describe("Codex live backend constructor", () => {
         stdout: neverStream(),
         stderr: lineStream([]),
         exit: exit.promise,
-        kill: () => {
-          killed = true;
-          exit.resolve(null);
+        kill: (signal = "SIGTERM") => {
+          signals.push(signal);
+          terminationStarted.resolve(undefined);
         }
       })
     });
 
-    const outcome = await backend.autonomous({ prompt: "run" }).awaitResult();
+    const outcome = backend.autonomous({ prompt: "run" }).awaitResult();
+    await terminationStarted.promise;
+    const beforeExit = await Promise.race([
+      outcome.then(() => "settled" as const),
+      delay(10).then(() => "pending" as const)
+    ]);
+    exit.resolve(null);
 
-    expect(killed).toBe(true);
-    expect(outcome).toEqual({
+    expect(beforeExit).toBe("pending");
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(await outcome).toEqual({
       type: "failed",
       error: {
         _tag: "BackendFailed",
@@ -122,32 +131,192 @@ describe("Codex live backend constructor", () => {
     });
   });
 
-  test("fails and kills a continuously active subprocess on wall-clock timeout", async () => {
-    let killed = false;
+  test("wall-clock timeout ignores terminal lines until subprocess exit", async () => {
+    const terminationStarted = Promise.withResolvers<undefined>();
     const exit = Promise.withResolvers<number | null>();
+    const signals: NodeJS.Signals[] = [];
     const backend = codex({
       inactivityTimeoutMs: 1_000,
       wallClockTimeoutMs: 30,
       spawnProcess: () => ({
-        stdout: continuousThreadStream(() => killed),
+        stdout: postTimeoutTerminalStream(terminationStarted.promise),
         stderr: lineStream([]),
         exit: exit.promise,
-        kill: () => {
-          killed = true;
-          exit.resolve(null);
+        kill: (signal = "SIGTERM") => {
+          signals.push(signal);
+          terminationStarted.resolve(undefined);
         }
       })
     });
 
-    const outcome = await backend.autonomous({ prompt: "run" }).awaitResult();
+    const outcome = backend.autonomous({ prompt: "run" }).awaitResult();
+    await terminationStarted.promise;
+    const beforeExit = await Promise.race([
+      outcome.then(() => "settled" as const),
+      delay(10).then(() => "pending" as const)
+    ]);
+    exit.resolve(null);
 
-    expect(killed).toBe(true);
-    expect(outcome).toEqual({
+    expect(beforeExit).toBe("pending");
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(await outcome).toEqual({
       type: "failed",
       error: {
         _tag: "BackendFailed",
         backend: "codex",
         message: "codex turn exceeded 30ms wall-clock limit"
+      }
+    });
+  });
+
+  test("wall-clock timeout reserves settlement during a blocked terminal consume", async () => {
+    const terminationStarted = Promise.withResolvers<undefined>();
+    const exit = Promise.withResolvers<number | null>();
+    const backend = codex({
+      capacity: 1,
+      inactivityTimeoutMs: 1_000,
+      wallClockTimeoutMs: 20,
+      spawnProcess: () => ({
+        stdout: lineStream([
+          JSON.stringify({
+            type: "item.completed",
+            item: { id: "msg", type: "agent_message", text: "queued" }
+          }),
+          JSON.stringify({ type: "turn.completed" })
+        ]),
+        stderr: lineStream([]),
+        exit: exit.promise,
+        kill: () => {
+          terminationStarted.resolve(undefined);
+        }
+      })
+    });
+
+    const conversation = backend.autonomous({ prompt: "run" });
+    const events = conversation.events()[Symbol.asyncIterator]();
+    const outcome = conversation.awaitResult();
+    await terminationStarted.promise;
+    expect(await events.next()).toEqual({
+      value: { type: "assistant_text_delta", text: "queued" },
+      done: false
+    });
+    const beforeExit = await Promise.race([
+      outcome.then(() => "settled" as const),
+      delay(10).then(() => "pending" as const)
+    ]);
+    exit.resolve(null);
+
+    expect(beforeExit).toBe("pending");
+    expect(await outcome).toEqual({
+      type: "failed",
+      error: {
+        _tag: "BackendFailed",
+        backend: "codex",
+        message: "codex turn exceeded 20ms wall-clock limit"
+      }
+    });
+  });
+
+  test("timeout reports termination rejection before late terminal success", async () => {
+    const terminationStarted = Promise.withResolvers<undefined>();
+    const terminationError = new Error("exit observation failed");
+    const exit = Promise.reject<number | null>(terminationError);
+    void exit.catch(() => undefined);
+    const backend = codex({
+      inactivityTimeoutMs: 1_000,
+      wallClockTimeoutMs: 5,
+      spawnProcess: () => ({
+        stdout: postTimeoutTerminalStream(terminationStarted.promise),
+        stderr: lineStream([]),
+        exit,
+        kill: () => {
+          terminationStarted.resolve(undefined);
+        }
+      })
+    });
+
+    const outcome = backend.autonomous({ prompt: "run" }).awaitResult();
+    const result = await Promise.race([
+      outcome,
+      delay(50).then(() => "pending" as const)
+    ]);
+
+    expect(result).toEqual({
+      type: "failed",
+      error: {
+        _tag: "BackendFailed",
+        backend: "codex",
+        message: "exit observation failed"
+      }
+    });
+  });
+
+  test("timeout settles when stdout rejects during subprocess termination", async () => {
+    const terminationStarted = Promise.withResolvers<undefined>();
+    const exit = Promise.withResolvers<number | null>();
+    const backend = codex({
+      inactivityTimeoutMs: 1_000,
+      wallClockTimeoutMs: 5,
+      spawnProcess: () => ({
+        stdout: rejectingStream(
+          terminationStarted.promise,
+          new Error("stdout failed during termination")
+        ),
+        stderr: lineStream([]),
+        exit: exit.promise,
+        kill: () => {
+          terminationStarted.resolve(undefined);
+        }
+      })
+    });
+
+    const outcome = backend.autonomous({ prompt: "run" }).awaitResult();
+    await terminationStarted.promise;
+    await Promise.resolve();
+    exit.resolve(null);
+    const result = await Promise.race([
+      outcome,
+      delay(50).then(() => "pending" as const)
+    ]);
+
+    expect(result).toEqual({
+      type: "failed",
+      error: {
+        _tag: "BackendFailed",
+        backend: "codex",
+        message: "codex turn exceeded 5ms wall-clock limit"
+      }
+    });
+  });
+
+  test("timeout settles when stderr remains open after subprocess exit", async () => {
+    const terminationStarted = Promise.withResolvers<undefined>();
+    const backend = codex({
+      inactivityTimeoutMs: 1_000,
+      wallClockTimeoutMs: 5,
+      spawnProcess: () => ({
+        stdout: lineStream([]),
+        stderr: neverStream(),
+        exit: Promise.resolve(0),
+        kill: () => {
+          terminationStarted.resolve(undefined);
+        }
+      })
+    });
+
+    const outcome = backend.autonomous({ prompt: "run" }).awaitResult();
+    await terminationStarted.promise;
+    const result = await Promise.race([
+      outcome,
+      delay(50).then(() => "pending" as const)
+    ]);
+
+    expect(result).toEqual({
+      type: "failed",
+      error: {
+        _tag: "BackendFailed",
+        backend: "codex",
+        message: "codex turn exceeded 5ms wall-clock limit"
       }
     });
   });
@@ -200,6 +369,89 @@ describe("Codex live backend constructor", () => {
     expect(await conversation.awaitResult()).toEqual({ type: "cancelled", reason: "stop" });
   });
 
+  test("cancellation waits for the Codex child to exit", async () => {
+    const spawned = Promise.withResolvers<undefined>();
+    const exit = Promise.withResolvers<number | null>();
+    const signals: NodeJS.Signals[] = [];
+    const backend = codex({
+      spawnProcess: () => {
+        spawned.resolve(undefined);
+        return {
+          stdout: blockedStream(exit.promise.then(() => undefined)),
+          stderr: lineStream([]),
+          exit: exit.promise,
+          kill: (signal = "SIGTERM") => {
+            signals.push(signal);
+          }
+        };
+      }
+    });
+
+    const conversation = backend.autonomous({ prompt: "run" });
+    await spawned.promise;
+    const cancellation = conversation.cancel("stop");
+    const beforeExit = await Promise.race([
+      cancellation.then(() => "settled" as const),
+      delay(10).then(() => "pending" as const)
+    ]);
+    exit.resolve(null);
+    await cancellation;
+
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(beforeExit).toBe("pending");
+    expect(await conversation.awaitResult()).toEqual({
+      type: "cancelled",
+      reason: "stop"
+    });
+  });
+
+  test("bounded cancellation escalates to SIGKILL and still waits for exit", async () => {
+    const exit = Promise.withResolvers<number | null>();
+    const signals: NodeJS.Signals[] = [];
+    const process: CodexProcess = {
+      stdout: lineStream([]),
+      exit: exit.promise,
+      kill: (signal = "SIGTERM") => {
+        signals.push(signal);
+      }
+    };
+
+    const termination = terminateSubprocess(process, 5, 50);
+    await delay(15);
+    const beforeExit = await Promise.race([
+      termination.then(() => "settled" as const),
+      delay(5).then(() => "pending" as const)
+    ]);
+    exit.resolve(null);
+    await termination;
+
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(beforeExit).toBe("pending");
+  });
+
+  test("bounded cancellation rejects when SIGKILL cannot produce exit", async () => {
+    const signals: NodeJS.Signals[] = [];
+    const process: CodexProcess = {
+      stdout: lineStream([]),
+      exit: new Promise<number | null>(() => {}),
+      kill: (signal = "SIGTERM") => {
+        signals.push(signal);
+      }
+    };
+
+    let terminationError: unknown;
+    try {
+      await terminateSubprocess(process, 1, 1);
+    } catch (error) {
+      terminationError = error;
+    }
+    expect(terminationError).toBeInstanceOf(Error);
+    expect((terminationError as Error).message).toBe(
+      "subprocess did not exit after SIGKILL"
+    );
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+
   test("does not spawn after immediate cancellation", async () => {
     let spawned = false;
     const backend = codex({
@@ -215,6 +467,39 @@ describe("Codex live backend constructor", () => {
 
     expect(spawned).toBe(false);
     expect(await conversation.awaitResult()).toEqual({ type: "cancelled", reason: "stop" });
+  });
+
+  test("does not spawn when interactive setup observes cancellation", async () => {
+    let cancellation: Promise<void> | undefined;
+    let spawned = false;
+    const backend = codex({
+      askUser: () => "yes",
+      createAskUserServer: ({ responder }) => ({
+        get url() {
+          cancellation = conversation.cancel("stop during setup");
+          return "http://127.0.0.1:12345";
+        },
+        ask: async (request) => await responder(request),
+        close: () => Promise.resolve()
+      }),
+      spawnProcess: () => {
+        spawned = true;
+        return fakeProcess([]);
+      }
+    });
+
+    const conversation = backend.autonomous({
+      prompt: "run",
+      config: { interactive: true }
+    });
+    await Promise.resolve();
+    await cancellation;
+
+    expect(spawned).toBe(false);
+    expect(await conversation.awaitResult()).toEqual({
+      type: "cancelled",
+      reason: "stop during setup"
+    });
   });
 
   test("maps backend config to codex args and prompt composition", async () => {
@@ -478,11 +763,28 @@ async function* neverStream(): AsyncIterable<string> {
   yield* [];
 }
 
-async function* continuousThreadStream(isKilled: () => boolean): AsyncIterable<string> {
-  while (!isKilled()) {
-    yield `${JSON.stringify({ type: "thread.started", thread_id: "codex-active" })}\n`;
-    await delay(2);
-  }
+async function* postTimeoutTerminalStream(
+  terminationStarted: Promise<undefined>
+): AsyncIterable<string> {
+  yield `${JSON.stringify({ type: "thread.started", thread_id: "codex-active" })}\n`;
+  await terminationStarted;
+  yield `${JSON.stringify({ type: "turn.completed" })}\n`;
+}
+
+function rejectingStream(
+  blocked: Promise<undefined>,
+  error: Error
+): AsyncIterable<string> {
+  return {
+    [Symbol.asyncIterator]() {
+      return {
+        async next(): Promise<IteratorResult<string>> {
+          await blocked;
+          throw error;
+        }
+      };
+    }
+  };
 }
 
 function delay(ms: number): Promise<undefined> {
