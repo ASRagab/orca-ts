@@ -877,3 +877,64 @@ Run `bash ./.orca/workflows/codebase-improvement.sh --complexity=simple`
 exactly once from this source worktree. Preserve every prior worktree and
 evidence file. Require the unchanged ready-PR, all-green checks, matched-head,
 SHA-locked squash-merge, and 600-second gates.
+
+Run `20260713175736-9351` consumed this authorization. It completed scout,
+isolated red proof, implementation, targeted gates, independent review, full
+verification, commit, push, and ready pull request creation in 275,454ms. Its
+first remote-check query ran before GitHub created a check run; `gh pr checks`
+returned exit 1 with `no checks reported`, and the workflow failed instead of
+polling. No second backend run was started.
+
+The authorized delivery was continued manually. `CI / Verify` and GitGuardian
+both passed for captured head
+`d5c1bd3602f96676a2b76ece3b306a020f29f3f7`. Pull request 40 was squash-merged
+with `--match-head-commit` at merge commit
+`e0adc736caa1202172adcff38f97a187e26e643f`. This proves the selected change's
+delivery, but does not rewrite the failed workflow report or satisfy the
+600-second end-to-end proof; manual merge occurred after 775,192ms.
+
+---
+
+## Correction 11: Pending Check-Startup Rollup
+
+**Goal:** Keep a newly created pull request in the remote-check polling loop
+while GitHub has not created its first check run, without hiding real GitHub
+CLI failures.
+
+**Architecture:** Classify only the exact exit-1 `no checks reported on the
+'<branch>' branch` result as startup-pending. Convert it to an empty check
+rollup, which existing `remoteCheckState([])` treats as pending. Retain the
+five-second poll, delivery deadline, head-SHA checks, and fail-closed handling
+for every other non-success result.
+
+- [x] **Step 1: Capture the root cause and delivery evidence**
+
+The failed query completed at `2026-07-13T18:02:12Z`; `CI / Verify` began five
+seconds later. Preserve the original exit-1 report separately from the manual
+all-green, matched-head merge evidence.
+
+- [x] **Step 2: Prove RED**
+
+The new helper test first failed because the export was absent, then failed on
+`false` versus expected `true`. The workflow wiring contract and runbook
+contract each failed on their missing startup-pending behavior.
+
+- [x] **Step 3: Implement the narrow correction**
+
+Add an exact-message predicate, return an empty rollup only for that result,
+and document the pending state. Tests require authentication failures and a
+successful command carrying the same text to remain non-matches.
+
+- [x] **Step 4: Complete deterministic verification**
+
+Run all workflow tests, flow typecheck, documentation checks, full
+`bun run verify`, and `git diff --check`. Do not start another live backend run.
+
+All 112 workflow tests passed with 419 assertions, flow typecheck printed
+`typecheck OK`, full verification passed 459 repository tests with one gated
+skip, and `git diff --check` exited zero.
+
+- [ ] **Step 5: Require a later authorized end-to-end proof**
+
+The remote-check issue remains open until a new run itself waits, merges at its
+captured head, reports success, and completes within its profile deadline.

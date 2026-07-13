@@ -41,6 +41,8 @@ GitHub CLI, Bun test.
   share the unchanged reproduce allocation.
 - Targeted test and lint repair once; full `bun run verify` once.
 - Merge requires `CI / Verify`, every reported check green, and head-SHA match.
+- The exact post-creation `no checks reported` GitHub CLI result is pending;
+  authentication, API, timeout, malformed-output, and other failures stay fatal.
 - Launcher-to-merge ceilings are 600/1800/2700 seconds; simple stage
   allocations total 560 seconds and scale by 3/4.5 for larger profiles.
 - Scout keeps its 100-second allocation: at most 10 seconds gather stable
@@ -687,7 +689,9 @@ async function confirmMerged(prUrl: string): Promise<void>;
 
 `readConfig` parses `WorkflowConfigSchema`. `writeJson` and `appendIssue` use
 `fs()` results and preserve existing JSONL. Git helpers use argument arrays.
-`readRemoteChecks` parses `gh pr checks --json name,workflow,bucket`.
+`readRemoteChecks` parses `gh pr checks --json name,workflow,bucket`. The exact
+exit-1 `no checks reported` startup result becomes an empty pending rollup;
+other failures still throw.
 `confirmMerged` requires `gh pr view --json state` to equal `MERGED`. Every
 failure message contains its command or file path; `describeOutcome` includes
 backend error or reason.
@@ -764,7 +768,8 @@ awaiting so a timeout still proves which request configuration was applied.
 11. `verify`: full gate, immutable test, profile path scope.
 12. `commit-push`: stage only validated paths, commit, push.
 13. `pull-request`: write body file, create ready PR, store URL.
-14. `remote-checks`: poll five seconds; require `CI / Verify`; no empty pass.
+14. `remote-checks`: poll five seconds; require `CI / Verify`; treat the exact
+    post-creation `no checks reported` result as pending, never as an empty pass.
 15. `merge`: resolve HEAD, squash with matching SHA, confirm `MERGED`.
 16. Resolve prior timeout issue.
 

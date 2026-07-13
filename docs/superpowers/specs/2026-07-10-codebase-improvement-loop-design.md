@@ -312,6 +312,9 @@ against `main`.
 Poll the pull request's check rollup until the expected `Verify` check from the
 `CI` workflow is present and every reported check succeeds, a check fails, or
 the delivery budget expires. Zero reported checks never authorizes merge.
+Immediately after pull-request creation, the exact GitHub CLI exit-1
+`no checks reported` result is an empty pending rollup and is polled again;
+authentication, API, timeout, malformed-output, and other failures remain fatal.
 Resolve the head SHA immediately before merge. Squash-merge with
 `--match-head-commit <sha>`. Confirm the pull request reports `MERGED` and print
 its URL.
