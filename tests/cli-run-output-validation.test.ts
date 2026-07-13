@@ -52,6 +52,48 @@ async function gitStatus(root: string): Promise<string> {
   return status.stdout;
 }
 
+async function runCliWithThrownValue(expression: string) {
+  const root = await mkdtemp(join(tmpdir(), "orca-output-thrown-value-"));
+  const flowPath = join(root, "failing-flow.ts");
+  await writeFile(flowPath, `throw ${expression};\n`);
+
+  try {
+    return await runCliProcess("bun", ["./bin/orcats", "--no-typecheck", flowPath], {
+      cwd: repoRoot,
+      timeoutMs: 5_000,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+function expectFailedRunDiagnosticContains(
+  result: Awaited<ReturnType<typeof runCliWithThrownValue>>,
+  expectedError: string,
+): void {
+  expect(result.exitCode).not.toBe(0);
+  const diagnostic = result.stderr
+    .split("\n")
+    .find((line) => line.startsWith("orcats | failed:"));
+  if (diagnostic === undefined || !diagnostic.includes(expectedError)) {
+    throw new Error(
+      `Expected stderr failed-run diagnostic to contain an error value such as "${expectedError}", but the emitted diagnostic omits the error field/value.\n${formatCliProcessEvidence(result)}`,
+    );
+  }
+}
+
+test("control cli-thrown-undefined-diagnostic", async () => {
+  const result = await runCliWithThrownValue('new Error("boom")');
+
+  expectFailedRunDiagnosticContains(result, "boom");
+});
+
+test("cli reports the error value when a flow throws undefined", async () => {
+  const result = await runCliWithThrownValue("undefined");
+
+  expectFailedRunDiagnosticContains(result, "undefined");
+});
+
 describe("CLI run-output validation", () => {
   test("process harness exposes captured evidence for failing commands", async () => {
     const result = await runCliProcess("bun", [

@@ -321,7 +321,8 @@ function describeError(error: unknown): string {
     return error.reason;
   }
   try {
-    return JSON.stringify(error);
+    const serialized = JSON.stringify(error) as string | undefined;
+    return serialized ?? String(error);
   } catch {
     return String(error);
   }
