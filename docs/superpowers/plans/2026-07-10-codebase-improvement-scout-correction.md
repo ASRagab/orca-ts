@@ -669,7 +669,7 @@ unchanged.
 - Modify: `.orca/workflows/codebase-improvement-lib.test.ts`
 - Modify: `.orca/workflows/codebase-improvement-lib.ts`
 
-- [ ] **Step 1: Write failing schema and hydration tests**
+- [x] **Step 1: Write failing schema and hydration tests**
 
 Add cases that reject a missing, blank, or non-rank-one `selectedControl`, retain
 the exact three-ID permutation checks, and require:
@@ -684,7 +684,7 @@ expect(
 ).toBe("known-good adjacent input");
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 ```bash
 bun test ./.orca/workflows/codebase-improvement-lib.test.ts
@@ -693,7 +693,7 @@ bun test ./.orca/workflows/codebase-improvement-lib.test.ts
 Expected: the new `selectedControl` cases fail because the schema and whole
 result selection API do not exist.
 
-- [ ] **Step 3: Implement minimal schema split and hydration**
+- [x] **Step 3: Implement minimal schema split and hydration**
 
 Factor common fields and refinements into `ScoutCandidateSchema`. Define:
 
@@ -708,7 +708,7 @@ Require `selectedControl.candidateId === rankedCandidateIds[0]`. Make
 `chooseCandidate(result)` find rank one and return
 `CandidateSchema.parse({ ...seed, controlBrief: result.selectedControl.brief })`.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run the Task 1 test command. Expected: every selected-control and existing
 candidate test passes.
@@ -725,7 +725,7 @@ candidate test passes.
 - Modify: `docs/backends.md`
 - Modify: `website/src/content/docs/reference/backends.md`
 
-- [ ] **Step 1: Write failing argument and propagation tests**
+- [x] **Step 1: Write failing argument and propagation tests**
 
 Require `codexExecJsonlArgs({ reasoningEffort: "low" })` and a captured
 `autonomous()` request to emit:
@@ -734,7 +734,7 @@ Require `codexExecJsonlArgs({ reasoningEffort: "low" })` and a captured
 ["exec", "--json", "-c", 'model_reasoning_effort="low"']
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 ```bash
 bun test tests/jsonl-backends.test.ts tests/codex-backend.test.ts
@@ -742,13 +742,13 @@ bun test tests/jsonl-backends.test.ts tests/codex-backend.test.ts
 
 Expected: both new assertions fail because the option is ignored.
 
-- [ ] **Step 3: Implement minimal Codex-only option**
+- [x] **Step 3: Implement minimal Codex-only option**
 
 Add `CodexReasoningEffort`, optional Codex-only `BackendConfig.reasoningEffort`,
 request-over-option precedence in `resolveCodexConfig`, and the exact `-c`
 argument above. Omitted configuration must retain byte-identical arguments.
 
-- [ ] **Step 4: Verify GREEN and docs**
+- [x] **Step 4: Verify GREEN and docs**
 
 Run the Task 2 tests, `bun run typecheck`, `bun run docs:check`, and
 `bun run docs:signatures`. Expected: all exit zero.
@@ -763,14 +763,14 @@ Run the Task 2 tests, `bun run typecheck`, `bun run docs:check`, and
 - Modify: `.orca/workflows/codebase-improvement.run.md`
 - Modify: this plan, parent plan, design, progress, and issue ledger.
 
-- [ ] **Step 1: Write failing workflow contracts**
+- [x] **Step 1: Write failing workflow contracts**
 
 Require one conditional `reasoningEffort: "low"` under `scoutConfig`, one
 rank-bound `selectedControl`, complete candidate/control report provenance, and
 unchanged seven-call backend isolation. Negative mutations `low` to `medium`
 and selected-control ID mismatch must fail.
 
-- [ ] **Step 2: Verify RED, implement, and verify GREEN**
+- [x] **Step 2: Verify RED, implement, and verify GREEN**
 
 ```bash
 bun test ./.orca/workflows/codebase-improvement-contract.test.ts \

@@ -159,8 +159,9 @@ evidence packet is capped at 20,000 characters. Protected public entrypoints
 plus dependency, release, security, secret, generated, documentation, skill,
 workflow, and `.orca/` paths are ineligible. The report records packet paths,
 character count, SHA-256 evidence digest, command logs in both validation and
-scout evidence, synthesis attempt records, the ranked IDs, and the selected
-candidate. The two worktree status snapshots must match byte for byte.
+scout evidence, synthesis attempt records, all three candidate seeds, the ranked
+IDs, `selectedControl`, and the hydrated selected candidate. The two worktree
+status snapshots must match byte for byte.
 
 The model receives only that packet and instructions not to inspect the
 repository or call tools. It returns exactly three candidate seeds, a complete
@@ -326,10 +327,10 @@ Each stage prints start, completion, and elapsed time through Orcats run output.
 The final monitoring JSON records stage duration, outcomes, repair iterations,
 validation evidence, and token usage when reported. A separate run report JSON
 records the profile, evidence paths/count/digest and command logs, candidate
-ranking, selected candidate, exact rendered per-turn system prompts, red-state
-artifact, pull request URL, merge state, total duration, and SLA verdict. Unit
-tests prove those rendered directives are passed as the backend request
-configuration rather than only stored as metadata.
+seeds, ranking, `selectedControl`, hydrated selected candidate, exact rendered
+per-turn system prompts, red-state artifact, pull request URL, merge state,
+total duration, and SLA verdict. Unit tests prove those rendered directives are
+passed as backend request configuration rather than only stored as metadata.
 
 The main agent runs the artifact through `orcats-flow`, polls real output rather
 than wall-clock alone, and reports each significant stage transition to the

@@ -45,6 +45,35 @@ describe("Codex live backend constructor", () => {
     });
   });
 
+  test("maps autonomous request reasoning effort to Codex args", async () => {
+    let args: readonly string[] = [];
+    const backend = codex({
+      reasoningEffort: "high",
+      config: { reasoningEffort: "medium" },
+      spawnProcess: (_command, actualArgs) => {
+        args = actualArgs;
+        return fakeProcess([
+          { type: "thread.started", thread_id: "codex-reasoning" },
+          { type: "item.completed", item: { id: "msg", type: "agent_message", text: "done" } },
+          { type: "turn.completed" }
+        ]);
+      }
+    });
+
+    await backend.autonomous({
+      prompt: "rank candidates",
+      config: { reasoningEffort: "low" }
+    }).awaitResult();
+
+    expect(args).toEqual([
+      "exec",
+      "--json",
+      "-c",
+      "model_reasoning_effort=\"low\"",
+      "rank candidates"
+    ]);
+  });
+
   test("reports startup failures as backend failures", async () => {
     const backend = codex({
       spawnProcess: () => {

@@ -100,10 +100,12 @@ the evidence helpers, and changes `chooseCandidate` to consume the validated
 ranking. Its exact RED/GREEN steps supersede the original selection snippet
 below without changing the completed Task 1 baseline evidence.
 
-Correction 7 later requires every candidate to provide a packet-grounded
-`controlBrief`. It derives the exact test name as `control <candidate.id>` and
-the filtered command arguments as `test <testPath> --test-name-pattern
-^control <candidate.id>$`.
+Correction 7 later introduced a packet-grounded positive control. Correction 8
+supersedes its all-candidate shape: the scout returns three control-free seeds,
+an exact ranking, and one `selectedControl` bound to rank one. Selection hydrates
+only that candidate's `controlBrief`. The Codex scout request alone uses low
+reasoning effort. The filtered command remains `test <testPath>
+--test-name-pattern ^control <candidate.id>$`.
 
 - [ ] **Step 1: Write failing policy tests**
 
@@ -574,6 +576,16 @@ interface RunReport {
   branch: string;
   appliedSystemPrompts: Partial<Record<"scout" | "reproduce" | "implement" | "repair" | "review", string>>;
   candidate?: Candidate;
+  scoutEvidence?: {
+    paths: string[];
+    charCount: number;
+    sha256: string;
+    attempts: TimeoutRetryRecord[];
+    candidates?: ScoutResult["candidates"];
+    ranking?: string[];
+    selectedControl?: ScoutResult["selectedControl"];
+    commands: CommandLog[];
+  };
   redDiffPath?: string;
   validation: CommandLog[];
   prUrl?: string;
@@ -676,12 +688,17 @@ backend error or reason.
 Inside exactly one `await flow(flowArgs())(async () => {})`:
 
 ```typescript
-const scoutConfig = stageConfig("scout", config.stages.scout, true);
+const scoutConfig = {
+  ...stageConfig("scout", config.stages.scout, true),
+  ...(activeSelected.tag === "codex"
+    ? { reasoningEffort: "low" as const }
+    : {}),
+};
 report.appliedSystemPrompts.scout = scoutConfig.systemPrompt ?? "";
-const scoutConversation = llm().autonomous(selected.backend, {
+const scoutConversation = llm().autonomous(selectedStageBackend, {
   prompt: scoutPrompt(profile, profileLimits[profile]),
   schema: ScoutResultSchema,
-  config: scoutConfig,
+  config: selectedStageConfig(scoutConfig),
 });
 
 const reproduceConfig = stageConfig("reproduce", config.stages.reproduce, false);
@@ -709,9 +726,11 @@ awaiting so a timeout still proves which request configuration was applied.
    40-second conversations. Retry only when the first attempt ends in its exact
    timeout cancellation. Persist every attempt record. Reject tool events as a
    no-tool failure, invalid or incomplete `rankedCandidateIds`, uncited
-   evidence, off-packet paths, and profile/path violations. Select the first ID
-   in the validated ranking.
-4. `select-plan`: validate profile/tracked paths, choose, persist plan.
+   evidence, off-packet paths, and profile/path violations. Require one
+   `selectedControl` whose ID equals rank one. Persist all three seeds, ranking,
+   and selected control in report provenance.
+4. `select-plan`: validate profile/tracked paths, hydrate rank one's
+   `controlBrief`, and persist seeds, ranking, control, and selected candidate.
 5. `reproduce`: apply `$tdd`, permit only the test path, and stop after the
    successful matching normalized file-change result. Reject an off-target
    file-change call; never accept a started, failed, or unmatched result.

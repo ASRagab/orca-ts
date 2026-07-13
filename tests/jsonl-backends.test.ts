@@ -45,6 +45,15 @@ describe("Codex JSONL Tier 1 fixtures", () => {
     ]);
   });
 
+  test("builds Codex reasoning-effort config override", () => {
+    expect(codexExecJsonlArgs({ reasoningEffort: "low" })).toEqual([
+      "exec",
+      "--json",
+      "-c",
+      "model_reasoning_effort=\"low\""
+    ]);
+  });
+
   test("builds read-only, schema, and resume args", () => {
     expect(
       codexExecJsonlArgs({

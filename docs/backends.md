@@ -18,9 +18,14 @@ The Codex child run lifecycle is internal to the backend adapter: config resolut
 
 Set `codex({ ignoreUserConfig: true })` for hermetic automation that should keep Codex auth but skip user `~/.codex/config.toml` settings such as MCP servers. Orca passes this through as `codex exec --ignore-user-config`. The option is off by default so normal flows still honor the operator's Codex setup.
 
+Codex subprocess requests may set `config.reasoningEffort` to `low`, `medium`,
+`high`, `xhigh`, `max`, or `ultra`. Orcats passes the value as the scoped
+`model_reasoning_effort` config override for that `codex exec` turn. The
+experimental Codex ACP path does not expose this setting.
+
 Codex parity status:
 
-- Backend config: model, approval policy, read-only mode, retry metadata, system prompt, self-managed git policy, and structured output are represented in the shared config model.
+- Backend config: model, Codex reasoning effort, approval policy, read-only mode, retry metadata, system prompt, self-managed git policy, and structured output are represented in the shared config model.
 - Sessions/resume: TypeScript-facing session handles are backend-branded; Codex thread ids are captured from JSONL and can be requested on subsequent calls.
 - Structured output: Zod schemas are converted to JSON Schema for supported live calls and validated again on return.
 - `ask_user`: autonomous conversations reject `ask_user`; explicit interactive conversations use an Orcats-owned MCP bridge.

@@ -12,6 +12,7 @@ import {
   unsupportedFeature,
   type BackendApprovalPolicy,
   type BackendSandboxMode,
+  type CodexReasoningEffort,
   type RuntimeError,
   type Usage
 } from "../model/index.ts";
@@ -47,6 +48,7 @@ export type CodexParseResult = ConversationCapture<"codex">;
 
 export interface CodexExecArgs {
   readonly model?: string;
+  readonly reasoningEffort?: CodexReasoningEffort;
   readonly approvalPolicy?: BackendApprovalPolicy;
   readonly sandbox?: BackendSandboxMode;
   readonly readOnly?: boolean;
@@ -64,6 +66,9 @@ export function codexExecJsonlArgs(args: CodexExecArgs = {}): readonly string[] 
     "--json",
     ...(args.ignoreUserConfig ? ["--ignore-user-config"] : []),
     ...(args.model ? ["--model", args.model] : []),
+    ...(args.reasoningEffort
+      ? ["-c", `model_reasoning_effort="${args.reasoningEffort}"`]
+      : []),
     ...(args.approvalPolicy ? ["-c", `approval_policy="${args.approvalPolicy}"`] : []),
     ...(args.mcpServerUrl ? ["-c", `mcp_servers.orcats.url=${JSON.stringify(args.mcpServerUrl)}`] : []),
     ...(args.outputSchemaPath ? ["--output-schema", args.outputSchemaPath] : [])

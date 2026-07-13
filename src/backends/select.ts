@@ -5,7 +5,10 @@ import { opencode } from "./opencode-run.ts";
 import { pi } from "./pi-run.ts";
 import type { LlmBackend } from "./types.ts";
 
-export type PortableBackendConfig = Omit<BackendConfig, "resumeSessionId" | "structuredOutput">;
+export type PortableBackendConfig = Omit<
+  BackendConfig,
+  "reasoningEffort" | "resumeSessionId" | "structuredOutput"
+>;
 
 export interface SelectBackendOptions {
   readonly default: BackendTag;

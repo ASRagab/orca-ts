@@ -4,6 +4,13 @@ import type { SessionId } from "./brand.ts";
 
 export type BackendApprovalPolicy = "never" | "on-request" | "on-failure" | "granular" | "untrusted";
 export type BackendSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
+export type CodexReasoningEffort =
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+  | "ultra";
 
 export interface BackendRetryConfig {
   readonly attempts: number;
@@ -17,6 +24,7 @@ export interface StructuredOutputConfig<Output = unknown> {
 
 export interface BackendConfig<B extends BackendTag = BackendTag, Output = unknown> {
   readonly model?: string;
+  readonly reasoningEffort?: B extends "codex" ? CodexReasoningEffort : never;
   readonly systemPrompt?: string;
   readonly approvalPolicy?: BackendApprovalPolicy;
   readonly readOnly?: boolean;
