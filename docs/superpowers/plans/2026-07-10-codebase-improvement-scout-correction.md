@@ -832,3 +832,48 @@ passed 58 tests with 257 assertions.
 Do not reuse run `20260713171459-43785`, its branch, or its worktree. A new run
 must start from current `origin/main` and satisfy the unchanged ready-PR, green
 CI, matched-head, SHA-locked squash-merge, and 600-second gates.
+
+---
+
+## Correction 10: Source-Built Runtime Provenance
+
+**Goal:** Make every proof execute the current source runtime and directly test
+all profile deadlines and path limits.
+
+**Architecture:** Every launcher mode installs the frozen source dependencies,
+rebuilds `dist/orcats`, verifies that the source binary resolves first on the
+launch PATH, and records its path, source HEAD, SHA-256, and version. Live
+execution receives the same PATH pin. A stale global installation is ignored.
+
+- [x] **Step 1: Record the stale-runtime failure**
+
+The pre-correction audit found that bare `orcats` resolved to the global
+installation and that its hash differed from the source binary. The existing
+source binary also predated current HEAD. No live run was started from that
+unproven runtime.
+
+- [x] **Step 2: Implement launcher and profile contracts**
+
+Require build-before-fetch ordering, executable source-binary resolution, the
+live PATH pin, runtime provenance in `latest.json`, and matching runbook text.
+Directly assert deadlines `600000/1800000/2700000` and path limits `3/6/10`.
+
+- [x] **Step 3: Complete deterministic verification**
+
+The workflow suite passed 111 tests. Flow typecheck, documentation gates, and
+the full `bun run verify` gate also exited zero.
+
+- [x] **Step 4: Run fresh source-pinned preflight**
+
+Preflight `20260713174754-60933` passed in 27,968ms with 68 workflow tests,
+flow typecheck, 444 repository tests plus one gated skip, and lint. It recorded
+source HEAD `d68fce0d12ca2e648380952e6974bf435bfbd8af`, binary SHA-256
+`83bc5f0493eca6db55bb65663970776fc8e1a13adf3aff0724150613585f10e9`,
+and Orcats `0.2.3`.
+
+- [ ] **Step 5: Run the authorized complete simple proof**
+
+Run `bash ./.orca/workflows/codebase-improvement.sh --complexity=simple`
+exactly once from this source worktree. Preserve every prior worktree and
+evidence file. Require the unchanged ready-PR, all-green checks, matched-head,
+SHA-locked squash-merge, and 600-second gates.

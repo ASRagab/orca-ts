@@ -10,7 +10,10 @@ improvement, proves it red-to-green, reports progress, opens a pull request,
 waits for checks, and squash-merges within its 10/30/45-minute profile ceiling.
 
 **Architecture:** A shell launcher creates a fresh worktree from `origin/main`
-and starts a self-executing Orcats workflow there. A pure TypeScript module owns
+and starts a self-executing Orcats workflow there. It rebuilds and PATH-pins the
+source checkout's compiled binary, recording its HEAD, SHA-256, and version, so
+a stale global install cannot change the runtime under proof. A pure TypeScript
+module owns
 directive validation, bounded scout-evidence selection, ranked candidate
 selection, scope checks, deadlines, and remote-check classification. The
 workflow owns deterministic evidence gathering, agent turns, gates, review,
@@ -25,6 +28,8 @@ GitHub CLI, Bun test.
 - Complexity defaults to simple; explicit medium/challenging ceilings are
   30/45 minutes and path limits are 6/10.
 - Live launcher passes `--baseline=strict` in a fresh `origin/main` worktree.
+- Every launcher mode rebuilds and pins `dist/orcats` from the source checkout;
+  global Orcats installations are not eligible for the proof runtime.
 - Stage directive: `{ skill?: string, prompt?: string }`; one field required.
 - First run applies `$tdd` to reproduce/implement and an exact review prompt.
 - One low-risk fix; simple/medium/challenging allow at most 3/6/10 paths; every
@@ -240,8 +245,12 @@ describe("remote checks", () => {
 test("stage budget respects global deadline", () => {
   expect(stageBudgetMs(1_000, 600_000, 1_100, 70_000)).toBe(70_000);
   expect(stageBudgetMs(1_000, 100_000, 90_000, 70_000)).toBe(11_000);
+  expect(profileLimits.simple.deadlineMs).toBe(600_000);
   expect(profileLimits.medium.deadlineMs).toBe(1_800_000);
   expect(profileLimits.challenging.deadlineMs).toBe(2_700_000);
+  expect(profileLimits.simple.maxPaths).toBe(3);
+  expect(profileLimits.medium.maxPaths).toBe(6);
+  expect(profileLimits.challenging.maxPaths).toBe(10);
 });
 ```
 

@@ -109,19 +109,27 @@ The first live run proves both forms: `reproduce` and `implement` use `$tdd`;
 The launcher performs deterministic isolation before Orcats starts:
 
 1. Resolve the repository root and reject a non-git directory.
-2. Fetch `origin/main`.
-3. Generate a unique run ID and branch `orca/improve-<run-id>`.
-4. Create a linked worktree from `origin/main` under the system temporary
+2. Install the source checkout's frozen dependencies, rebuild its compiled
+   `dist/orcats`, verify that binary resolves first on the launch PATH, and
+   record its source HEAD, SHA-256, and version.
+3. Fetch `origin/main`.
+4. Generate a unique run ID and branch `orca/improve-<run-id>`.
+5. Create a linked worktree from `origin/main` under the system temporary
    directory.
-5. Run `bun install --frozen-lockfile` in that worktree.
 6. Copy the workflow and configuration into its ignored `.orca/` directory.
-7. Export the launch timestamp and selected complexity profile so the workflow's
+7. Run `bun install --frozen-lockfile` in that worktree.
+8. Export the launch timestamp and selected complexity profile so the workflow's
    deadline includes setup time and uses the correct ceiling.
-8. Run the copied artifact through the standalone Orcats binary with Codex.
-9. Copy the monitor, report, and issue ledger back to the source checkout's
+9. Run the copied artifact through the PATH-pinned source binary with Codex.
+10. Copy the monitor, report, and issue ledger back to the source checkout's
    ignored `.orca/improvement-loop/runs/<run-id>/` directory.
-10. Print the worktree path, branch, elapsed time, exit code, monitor log, issue
+11. Print the worktree path, branch, runtime provenance, elapsed time, exit
+   code, monitor log, issue
    ledger, and pull-request URL when available.
+
+The source binary is rebuilt for preflight and live modes. A global Orcats
+installation is ignored even when it appears first on the operator's normal
+PATH.
 
 The launcher never removes the worktree or branch. A failed run therefore keeps
 all evidence available for diagnosis and bounded reruns.
