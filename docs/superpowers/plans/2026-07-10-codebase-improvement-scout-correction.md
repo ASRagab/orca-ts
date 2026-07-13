@@ -644,5 +644,145 @@ Append correction records for runs `20260711020406-91166`,
 
 A fresh reviewer checks the cumulative ignored-artifact diff and the parent
 plan's objective matrix. Mark Tasks 5-6 complete only when every row has direct
-evidence. Then record final usage, mark the active goal complete, and report
-`gbrain: QUERY_USED`.
+evidence. Then record final usage, leave the active goal status unchanged, and
+report `gbrain: QUERY_USED`.
+
+---
+
+## Correction 8: Rank-One Control and Bounded Scout Reasoning
+
+**Goal:** Restore the bounded scout after Correction 7 made every ranked
+candidate carry an unused positive-control plan.
+
+**Architecture:** Keep exactly three packet-grounded candidates and their exact
+ranking. Return one `selectedControl` bound to rank one, hydrate only the
+selected `Candidate.controlBrief`, and set Codex scout reasoning to `low` through
+request config. All downstream red/green, review, delivery, and merge gates stay
+unchanged.
+
+**Tech Stack:** TypeScript, Zod, Bun tests, Codex JSONL.
+
+### Task 1: Selected-Control Contract
+
+**Files:**
+
+- Modify: `.orca/workflows/codebase-improvement-lib.test.ts`
+- Modify: `.orca/workflows/codebase-improvement-lib.ts`
+
+- [ ] **Step 1: Write failing schema and hydration tests**
+
+Add cases that reject a missing, blank, or non-rank-one `selectedControl`, retain
+the exact three-ID permutation checks, and require:
+
+```typescript
+expect(
+  chooseCandidate({
+    candidates,
+    rankedCandidateIds: ["b", "c", "a"],
+    selectedControl: { candidateId: "b", brief: "known-good adjacent input" },
+  }).controlBrief,
+).toBe("known-good adjacent input");
+```
+
+- [ ] **Step 2: Verify RED**
+
+```bash
+bun test ./.orca/workflows/codebase-improvement-lib.test.ts
+```
+
+Expected: the new `selectedControl` cases fail because the schema and whole
+result selection API do not exist.
+
+- [ ] **Step 3: Implement minimal schema split and hydration**
+
+Factor common fields and refinements into `ScoutCandidateSchema`. Define:
+
+```typescript
+selectedControl: z.object({
+  candidateId: z.string(),
+  brief: z.string().trim().min(1),
+})
+```
+
+Require `selectedControl.candidateId === rankedCandidateIds[0]`. Make
+`chooseCandidate(result)` find rank one and return
+`CandidateSchema.parse({ ...seed, controlBrief: result.selectedControl.brief })`.
+
+- [ ] **Step 4: Verify GREEN**
+
+Run the Task 1 test command. Expected: every selected-control and existing
+candidate test passes.
+
+### Task 2: Codex Reasoning-Effort Request Config
+
+**Files:**
+
+- Modify: `tests/jsonl-backends.test.ts`
+- Modify: `tests/codex-backend.test.ts`
+- Modify: `src/model/backend-config.ts`
+- Modify: `src/backends/codex-jsonl.ts`
+- Modify: `src/backends/codex-run.ts`
+- Modify: `docs/backends.md`
+- Modify: `website/src/content/docs/reference/backends.md`
+
+- [ ] **Step 1: Write failing argument and propagation tests**
+
+Require `codexExecJsonlArgs({ reasoningEffort: "low" })` and a captured
+`autonomous()` request to emit:
+
+```typescript
+["exec", "--json", "-c", 'model_reasoning_effort="low"']
+```
+
+- [ ] **Step 2: Verify RED**
+
+```bash
+bun test tests/jsonl-backends.test.ts tests/codex-backend.test.ts
+```
+
+Expected: both new assertions fail because the option is ignored.
+
+- [ ] **Step 3: Implement minimal Codex-only option**
+
+Add `CodexReasoningEffort`, optional Codex-only `BackendConfig.reasoningEffort`,
+request-over-option precedence in `resolveCodexConfig`, and the exact `-c`
+argument above. Omitted configuration must retain byte-identical arguments.
+
+- [ ] **Step 4: Verify GREEN and docs**
+
+Run the Task 2 tests, `bun run typecheck`, `bun run docs:check`, and
+`bun run docs:signatures`. Expected: all exit zero.
+
+### Task 3: Scout-Only Wiring and Proof
+
+**Files:**
+
+- Modify: `.orca/workflows/codebase-improvement-contract.test.ts`
+- Modify: `.orca/workflows/codebase-improvement-artifacts.test.ts`
+- Modify: `.orca/workflows/codebase-improvement.ts`
+- Modify: `.orca/workflows/codebase-improvement.run.md`
+- Modify: this plan, parent plan, design, progress, and issue ledger.
+
+- [ ] **Step 1: Write failing workflow contracts**
+
+Require one conditional `reasoningEffort: "low"` under `scoutConfig`, one
+rank-bound `selectedControl`, complete candidate/control report provenance, and
+unchanged seven-call backend isolation. Negative mutations `low` to `medium`
+and selected-control ID mismatch must fail.
+
+- [ ] **Step 2: Verify RED, implement, and verify GREEN**
+
+```bash
+bun test ./.orca/workflows/codebase-improvement-contract.test.ts \
+  ./.orca/workflows/codebase-improvement-artifacts.test.ts
+```
+
+Update the prompt, parse/validate path, report fields, and docs. Run the same
+command until green, then run all acceptance checks and `bun run verify`.
+
+- [ ] **Step 3: Run exactly one authorized simple proof**
+
+Run `bash ./.orca/workflows/codebase-improvement.sh --complexity=simple` once.
+Require ready PR, green `CI / Verify`, unchanged head SHA, and SHA-locked squash
+merge within 600 seconds. Only after that proof append same-ID `corrected`
+records for the 12 non-seed open issues; the seed transition remains automatic.
