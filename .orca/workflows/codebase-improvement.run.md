@@ -922,3 +922,31 @@ with 1,022. Full deterministic verification passes 466 tests with one gated
 skip, zero failures, and 1,336 assertions. Fresh reviews, a new 14-artifact
 digest, three audits, and preflight remain pending. Another live run still
 requires fresh explicit authorization.
+
+## Correction 43
+
+The first frozen Correction 42 successor digest
+`14b684dc4829740debc908b96b1ce00cd47d605ff5958deca10aed485d87590f`
+is invalid. Its expiry harness advanced exact time after only the staged-ledger
+hash, so an early deadline decision still passed while later bindings retained
+a rename window. It also used `now_ms=6000` against deadline `5000`, so changing
+equality rejection from `-le` to `-lt` still passed.
+
+The harness now advances exact time only after the final hash-binding decision
+and uses `now_ms=5000`, exactly equal to the deadline. Two mutation proofs move
+the decision after the staged-ledger hash and weaken equality to strict-before.
+Both failed RED because the weakened launchers still returned exit 74. GREEN
+makes both mutants publish false success with exit 0, proving the production
+regression would fail under either weakening; the unmodified launcher exits 74.
+Post-rename recovery and stalled-clock signal handling remain green.
+
+The ledger preserves its exact 126-row prefix with SHA-256
+`9a83857191d0563a2a13acf078889086be3cdc902c3c280d665a721a2edfe5ef`;
+two append-only open rows bring it to 128 unique rows with SHA-256
+`2476a42e688b8d125a8d5765bd366f514a38ac99c81e711e1415d2b48d935ec9`.
+All four focused suites pass at 424 tests and 2,756 assertions: 84 library with
+323 assertions, 167 runtime with 682, 85 contract with 716, and 88 artifact
+with 1,035. Full deterministic verification passes 466 tests with one gated
+skip, zero failures, and 1,336 assertions. A new digest, three audits, and
+preflight remain pending. Another live run still requires fresh explicit
+authorization.

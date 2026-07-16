@@ -1168,6 +1168,35 @@ with 1,022. Full verification passes 466 tests with one gated skip, zero
 failures, and 1,336 assertions. Fresh reviews, a new digest, three audits, and
 preflight remain pending; another live run needs fresh explicit authorization.
 
+### Correction 43 terminal-deadline proof-sensitivity amendment
+
+The first frozen Correction 42 successor digest
+`14b684dc4829740debc908b96b1ce00cd47d605ff5958deca10aed485d87590f`
+is invalid. The regression changed exact time after only the staged-ledger hash,
+so relocating the decision there stayed green while later evidence bindings
+could consume the rename window. Its `now_ms=6000` with deadline `5000` also
+failed to distinguish `-le` from `-lt` at equality.
+
+The harness now changes exact time only after the final binding decision and
+sets it exactly equal to the deadline. One mutation moves the deadline decision
+after the staged-ledger hash; another weakens equality rejection to
+strict-before. Both mutation proofs failed RED because the invalid launchers
+still returned 74. GREEN makes both mutants return 0 while the production
+regression returns 74 without canonical publication. This binds the test to an
+authentic decision after every evidence binding, immediately before rename,
+with equality rejected. Post-rename recovery and stalled-clock signal handling
+remain unchanged.
+
+The exact 126-row ledger prefix has SHA-256
+`9a83857191d0563a2a13acf078889086be3cdc902c3c280d665a721a2edfe5ef`;
+two open rows bring it to 128 unique rows with SHA-256
+`2476a42e688b8d125a8d5765bd366f514a38ac99c81e711e1415d2b48d935ec9`.
+All four focused suites pass at 424 tests and 2,756 assertions: 84 library with
+323 assertions, 167 runtime with 682, 85 contract with 716, and 88 artifact
+with 1,035. Full verification passes 466 tests with one gated skip, zero
+failures, and 1,336 assertions. A new digest, three audits, and preflight remain
+pending; another live run needs fresh explicit authorization.
+
 Before the first live run:
 
 1. Run pure ranked-fallback tests and real temporary-Git restoration tests.

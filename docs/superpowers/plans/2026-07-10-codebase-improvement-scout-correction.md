@@ -1883,6 +1883,24 @@ canonical ledger worker, and preflight only after its final rename returns.
   artifact with 1,022. Full verification passes 466 tests with one gated skip,
   zero failures, and 1,336 assertions. Fresh reviews, a new digest, three audits,
   and preflight remain pending; another live run requires fresh authorization.
+- [x] Correction 43 proof-sensitivity checkpoint: frozen digest
+  `14b684dc4829740debc908b96b1ce00cd47d605ff5958deca10aed485d87590f`
+  is invalid. The expiry harness advanced exact time after only the staged-ledger
+  hash and used `now_ms=6000` against deadline `5000`. An early relocated
+  decision and a strict-before `-lt` equality mutant therefore both remained
+  green. The harness now flips exact time after the final binding decision and
+  uses exact equality. Both mutation proofs failed RED because the weakened
+  launchers still returned 74 and pass GREEN by returning 0; the production
+  regression exits 74. Post-rename recovery and stalled-clock signal handling
+  remain green. The exact 126-row prefix retains SHA-256
+  `9a83857191d0563a2a13acf078889086be3cdc902c3c280d665a721a2edfe5ef`;
+  two open rows bring the ledger to 128 unique rows with SHA-256
+  `2476a42e688b8d125a8d5765bd366f514a38ac99c81e711e1415d2b48d935ec9`.
+  All four focused suites pass at 424 tests and 2,756 assertions: 84 library
+  with 323 assertions, 167 runtime with 682, 85 contract with 716, and 88
+  artifact with 1,035. Full verification passes 466 tests with one gated skip,
+  zero failures, and 1,336 assertions. A new digest, three audits, and preflight
+  remain pending; another live run requires fresh authorization.
 - [x] Historical Correction 21 gates: flow typecheck, exact launcher ledger
   validation, lint, documentation link, symbol and signature checks, shell
   syntax, diff checks, and `bun run verify`. Full verification recorded 461
