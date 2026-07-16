@@ -36,6 +36,8 @@ if (!packageJson.exports?.["."]) {
 
 if (!packageJson.scripts?.["build:binary"]) {
   failures.push("package.json must include build:binary");
+} else if (!packageJson.scripts["build:binary"].includes("--compile-autoload-package-json")) {
+  failures.push("build:binary must enable runtime package.json loading");
 }
 
 if (!packageJson.scripts?.["build:release"]) {
