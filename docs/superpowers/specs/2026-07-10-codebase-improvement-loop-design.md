@@ -1053,6 +1053,62 @@ with 1,006. Flow typecheck passes. Full deterministic verification, a new
 digest, three zero-finding audits, preflight, and the authorized live run remain
 pending.
 
+Correction 40 records that the frozen fourteen-artifact digest
+`65f7e553e851d657cdc220ec72660dfc5dba1b356fa31a461dd54ed5077b816b`,
+three zero-finding audits, and preflight `20260716182959-15561` passed before
+authorized live run `20260716183318-48343` exited 1 after 17,815ms. No backend,
+push, pull request, CI, or merge started. The compiled Bun runtime could not
+resolve the copied workflow's installed `typescript` dependency because its
+build omitted runtime package metadata loading.
+
+Local and release binaries now enable
+`--compile-autoload-package-json`. An initial source validator bound both build
+paths to that setting, and the local-binary smoke executes a repository flow
+importing a project package. That smoke failed RED with the retained resolution
+error and passed GREEN; typecheck, touched-file lint, release validation,
+embedded-loader tests, and an inert import of the retained runtime pass. The
+release-artifact amendment below replaces the source validator. The exact
+123-row ledger prefix has SHA-256
+`71e942097fd6ec015bb6a4d267144048f39705f5a2e89496bde57bdf5e7066c8`;
+one open row brings it to 124 unique rows with SHA-256
+`fcd8e718290c2d15facac74bb1641fa3a94c60432af2b57e48caa95e4dc04758`.
+All four focused suites pass at 419 tests and 2,727 assertions, and full
+verification passes 461 tests with one gated skip and 1,317 assertions. A
+successor digest, audits, and preflight remain pending. The consumed live
+authorization does not permit another invocation.
+
+### Correction 40 release-artifact proof amendment
+
+Static AST validation is not the final release-build proof. Four adversarial
+mutants showed that a source checker can bind the apparent Bun argv while dead
+calls, nested loops, contradictory flags, or helper transformations change the
+executed behavior. The verify-blocking proof must execute the release builder's
+real entrypoint and then execute its host-native artifact.
+
+`scripts/build-release-binaries.ts` accepts either no arguments or the paired
+smoke arguments `--only-target=<target>` and `--release-dir=<path>`. No arguments
+preserve the release contract: rebuild all four supported targets under
+`dist/release`. Smoke mode accepts exactly one supported target, requires a
+nonexistent explicit output directory, and never removes that caller-selected
+directory. Unknown, duplicate, partial, or unsupported arguments fail before
+filesystem mutation.
+
+`scripts/smoke-binary.ts` maps the current host OS and architecture to one of
+the four supported Bun targets, creates a disposable parent directory, and
+invokes the release script through its CLI entrypoint in smoke mode. It runs the
+unarchived release binary against the same repository flow that imports
+`typescript`, verifies the sentinel output, and removes only its own disposable
+parent in `finally`. Unsupported hosts fail explicitly. The normal local-binary
+help, version, repository-flow, external-flow, and respawn checks remain.
+
+The executable smoke replaces `scripts/release-build-validation.ts` and its
+unit test; `scripts/validate-release.ts` retains release metadata validation but
+no longer claims to prove runtime behavior from source syntax. Parser tests lock
+default and smoke modes plus every rejected argument class. A mutation proof
+removes the package-autoload flag from the release argv, observes the release
+artifact smoke fail with the retained `typescript` resolution error, restores
+the flag, and observes GREEN before full verification.
+
 Before the first live run:
 
 1. Run pure ranked-fallback tests and real temporary-Git restoration tests.
