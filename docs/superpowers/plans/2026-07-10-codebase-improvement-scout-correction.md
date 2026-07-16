@@ -1864,6 +1864,25 @@ canonical ledger worker, and preflight only after its final rename returns.
   artifact with 1,016. Full verification passes 466 tests with one gated skip,
   zero failures, and 1,336 assertions. A new digest, three audits, and preflight
   remain pending; another live run requires fresh authorization.
+- [x] Correction 42 terminal-ledger commit checkpoint: Correction 41 expired
+  before first publication and missed the interval between latest publication
+  and canonical-ledger rename. The worker could rename before the wrapper's
+  exact post-action check, and matching committed hashes converted that timeout
+  back to success. Terminal commit now makes a fresh exact deadline decision
+  immediately before rename. A boundary harness keeps 4.9 seconds of polling
+  budget and advances only the exact clock after hash binding. RED expected
+  exit 74 but received 0 with a committed ledger; GREEN exits 74, retracts
+  success-shaped latest evidence, and preserves the ledger. Post-rename
+  recovery and the stalled-clock signal guard remain green. The exact 125-row
+  prefix retains SHA-256
+  `952d97ef59e8f4d5895c1a27b679614fbfbbf2d5e2b70c81e80d280bc84ae72a`;
+  one open row brings the ledger to 126 unique rows with SHA-256
+  `9a83857191d0563a2a13acf078889086be3cdc902c3c280d665a721a2edfe5ef`.
+  All four focused suites pass at 422 tests and 2,743 assertions: 84 library
+  with 323 assertions, 167 runtime with 682, 85 contract with 716, and 86
+  artifact with 1,022. Full verification passes 466 tests with one gated skip,
+  zero failures, and 1,336 assertions. Fresh reviews, a new digest, three audits,
+  and preflight remain pending; another live run requires fresh authorization.
 - [x] Historical Correction 21 gates: flow typecheck, exact launcher ledger
   validation, lint, documentation link, symbol and signature checks, shell
   syntax, diff checks, and `bun run verify`. Full verification recorded 461

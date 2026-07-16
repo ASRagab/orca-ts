@@ -894,3 +894,31 @@ with 1,016. Full deterministic verification passes 466 tests with one gated
 skip, zero failures, and 1,336 assertions. A fresh successor digest, three
 audits, and preflight remain pending. Another live run still requires fresh
 explicit authorization.
+
+## Correction 42
+
+The first Correction 41 review found that its live regression expired before
+the first latest publication, not between latest publication and the canonical
+ledger rename. The terminal ledger worker could finish its validations, rename
+the canonical ledger, and then have the wrapper's exact post-action check
+return timeout. The caller treated the matching committed ledger hash as
+authoritative and converted that timeout back to success.
+
+The terminal-commit ledger action now makes one fresh exact deadline decision
+immediately before its canonical rename. A deterministic harness leaves 4.9
+seconds of shell-native polling budget, advances only the exact clock after the
+terminal ledger hash binding, and expires before the rename. RED expected exit
+74 but received 0 and committed the ledger. GREEN exits 74, retracts
+success-shaped latest evidence, and leaves the canonical ledger unchanged. The
+post-rename interruption recovery and stalled-clock signal guard remain green.
+
+The ledger preserves its exact 125-row prefix with SHA-256
+`952d97ef59e8f4d5895c1a27b679614fbfbbf2d5e2b70c81e80d280bc84ae72a`;
+one append-only open row brings it to 126 unique rows with SHA-256
+`9a83857191d0563a2a13acf078889086be3cdc902c3c280d665a721a2edfe5ef`.
+All four focused suites pass at 422 tests and 2,743 assertions: 84 library with
+323 assertions, 167 runtime with 682, 85 contract with 716, and 86 artifact
+with 1,022. Full deterministic verification passes 466 tests with one gated
+skip, zero failures, and 1,336 assertions. Fresh reviews, a new 14-artifact
+digest, three audits, and preflight remain pending. Another live run still
+requires fresh explicit authorization.

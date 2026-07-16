@@ -2032,6 +2032,33 @@ with 1,016. Full verification passes 466 tests with one gated skip, zero
 failures, and 1,336 assertions. A new digest, three audits, and preflight remain
 pending. The consumed live run still requires fresh explicit authorization.
 
+- [x] **Step 2ai: Bind the exact deadline inside terminal-ledger commit**
+
+Correction 41's live regression expired before first publication and therefore
+did not exercise the interval between latest publication and canonical-ledger
+rename. The ledger worker could rename after its last binding validation, the
+wrapper could detect expiry only afterward, and the caller could recover that
+timeout as success from the matching committed hash.
+
+The terminal-commit action now reads exact time immediately before its
+canonical rename and refuses equality or expiry. A deterministic harness keeps
+4.9 seconds of shell-native polling budget, advances only the exact clock after
+terminal-ledger hash binding, and expires before rename. RED expected exit 74
+but received 0 with a committed ledger. GREEN exits 74, retracts success-shaped
+latest evidence, preserves the canonical ledger, and keeps post-rename recovery
+plus the stalled-clock signal guard green.
+
+The exact 125-row prefix retains SHA-256
+`952d97ef59e8f4d5895c1a27b679614fbfbbf2d5e2b70c81e80d280bc84ae72a`;
+one open Correction 42 row brings the ledger to 126 unique rows with SHA-256
+`9a83857191d0563a2a13acf078889086be3cdc902c3c280d665a721a2edfe5ef`.
+All four focused suites pass at 422 tests and 2,743 assertions: 84 library with
+323 assertions, 167 runtime with 682, 85 contract with 716, and 86 artifact
+with 1,022. Full verification passes 466 tests with one gated skip, zero
+failures, and 1,336 assertions. Fresh reviews, a new 14-artifact digest, three
+audits, and preflight remain pending. The consumed live run still requires
+fresh explicit authorization.
+
 - [x] **Step 3: Append every terminal and final proving audit entry**
 
 Record each terminal-protocol, final pre-lock, or proving-audit gap as one
@@ -2041,8 +2068,8 @@ three Correction 26 rows, two Correction 27 rows, two Correction 28 rows,
 three Correction 29 rows, two Correction 30 rows, four Correction 31 rows,
 four Correction 32 rows, eleven Correction 33 rows, two Correction 34 rows,
 three Correction 35 rows, one Correction 36 row, one Correction 37 row, two
-Correction 38 rows, one Correction 39 row, one Correction 40 row, and one
-Correction 41 row.
+Correction 38 rows, one Correction 39 row, one Correction 40 row, one
+Correction 41 row, and one Correction 42 row.
 The launcher, not the workflow, will resolve every latest-open ID at the
 terminal canonical-ledger commit.
 
