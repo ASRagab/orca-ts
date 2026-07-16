@@ -1843,7 +1843,7 @@ canonical ledger worker, and preflight only after its final rename returns.
   one open row brings the ledger to 124 unique rows with SHA-256
   `fcd8e718290c2d15facac74bb1641fa3a94c60432af2b57e48caa95e4dc04758`.
   All four focused suites pass at 419 tests and 2,727 assertions, and full
-  verification passes 466 tests with one gated skip and 1,336 assertions.
+  verification passes 466 tests with one gated skip, zero failures, and 1,336 assertions.
   Successor digest, audits, and preflight remain pending; another live run
   requires fresh explicit authorization.
 - [x] Historical Correction 21 gates: flow typecheck, exact launcher ledger

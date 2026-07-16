@@ -2000,7 +2000,7 @@ one append-only open Correction 40 row brings it to 124 unique rows with
 SHA-256
 `fcd8e718290c2d15facac74bb1641fa3a94c60432af2b57e48caa95e4dc04758`.
 All four focused suites pass at 419 tests and 2,727 assertions, and full
-deterministic verification passes 466 tests with one gated skip and 1,336
+deterministic verification passes 466 tests with one gated skip, zero failures, and 1,336
 assertions. A successor digest, three audits, and preflight remain pending. The
 consumed live run cannot be retried without fresh explicit authorization.
 
