@@ -24,12 +24,16 @@ GitHub CLI, Bun test.
 
 ## Global Constraints
 
-- Default backend `codex`; runtime override stays supported.
+- The proving workflow is Codex-only. An unset or empty `ORCA_BACKEND` defaults
+  to `codex`; explicit `codex` is accepted, and every other value is rejected
+  before monitor, preflight, filesystem, config, command, or backend side
+  effects.
 - Complexity defaults to simple; explicit medium/challenging ceilings are
   30/45 minutes and path limits are 6/10.
 - Live launcher passes `--baseline=strict` in a fresh `origin/main` worktree.
-- Every launcher mode rebuilds and pins `dist/orcats` from the source checkout;
-  global Orcats installations are not eligible for the proof runtime.
+- Every launcher mode builds and pins `dist/orcats` from a clean archive of the
+  committed source HEAD; dirty source-worktree bytes and global Orcats
+  installations are not eligible for the proof runtime.
 - Stage directive: `{ skill?: string, prompt?: string }`; one field required.
 - First run applies `$tdd` to reproduce/implement and an exact review prompt.
 - One low-risk fix; simple/medium/challenging allow at most 3/6/10 paths; every
@@ -37,24 +41,47 @@ GitHub CLI, Bun test.
 - Exclude dependencies, lockfiles, releases, publishing, secrets, security,
   public APIs, workflow artifacts, and destructive Git operations.
 - Red proof is valid only after the exact filtered positive control passes and
-  the full target command fails with `expectedFailurePattern`; both commands
-  share the unchanged reproduce allocation.
+  the statically identified added RED test fails under its anchored exact-name
+  selector with one marker-bound `(fail)` record and canonical Bun summary. One
+  unchanged
+  reproduce allocation covers all ranks, lazy controls, gates, evidence writes,
+  exact restoration, pre/post rejected-artifact budget assertions, and a final
+  post-RED-persistence budget assertion.
+- The control and added RED assertion must resolve to the same exported
+  production entrypoint through lexical symbol identity. Aliases preserve
+  export identity; shadowing or untainted reassignment clears an outer origin,
+  and a different export from the same allowed production file is invalid.
+- Reproduction preserves every baseline test byte and adds exactly one raw
+  contiguous top-level-test insertion. Any other byte change or inserted
+  disabling directive token is invalid.
+- The RED assertion ends in an allowlisted built-in Bun matcher. Only `not`,
+  `resolves`, and `rejects` property modifiers may precede it; called modifiers
+  and unknown terminal or intermediate properties are invalid.
+- Fall back only for a typed invalid proof. Timeout markers, signal-killed
+  commands with `exitCode: null`, backend, scope, persistence, budget, and
+  restoration failures stop immediately.
 - Targeted test and lint repair once; full `bun run verify` once.
 - Merge requires `CI / Verify`, every reported check green, and head-SHA match.
 - The exact post-creation `no checks reported` GitHub CLI result is pending;
   authentication, API, timeout, malformed-output, and other failures stay fatal.
 - Launcher-to-merge ceilings are 600/1800/2700 seconds; simple stage
   allocations total 560 seconds and scale by 3/4.5 for larger profiles.
+- A bounded command cannot succeed while any member of its process group
+  remains. Residual members receive `TERM`, then `KILL`; a would-be zero status
+  becomes `125` before evidence finalization.
 - Scout keeps its 100-second allocation: at most 10 seconds gather stable
   evidence from at most four tracked source and four tracked test files, at
   most 80 seconds synthesize and rank without tools, and 10 seconds validate or
   fail closed. Synthesis uses at most two fresh 40-second conversations and
   retries only the first attempt's exact timeout cancellation.
 - Scout evidence is capped at 20,000 characters and records paths, character
-  count, SHA-256 digest, command logs, and ranked candidate IDs.
+  count, SHA-256 digest, command logs, latest first-parent commit evidence,
+  ranked candidate IDs, rejected attempts, and the accepted control.
 - Gather commands are exactly `git status --porcelain=v1`,
   `git ls-files src tests`,
-  `git log -40 --format= --name-only -- src tests`, one
+  `git log -40 --format= --name-only -- src tests`,
+  `git show` with the latest-commit format, `--name-only`, `--first-parent`, and
+  `HEAD`, one
   `rg -n --no-heading -m 8` scan over selected paths, and the repeated status.
 - Core Orcats API, global Codex configuration, and model policy stay unchanged.
 - `.orca/` stays ignored and never enters implementation commits.
@@ -97,9 +124,11 @@ improvement is committed only on generated
 
 - Produces: `WorkflowConfigSchema`, `ScoutResultSchema`, `Candidate`,
   `ComplexityProfile`, `profileLimits`, `stageConfig`, `renderDirective`,
-  `chooseCandidate`, `validateCandidateForProfile`, `validateChangedPaths`,
-  `controlTestName`, `controlTestArgs`, `assertImmutableTestDiff`,
-  `remoteCheckState`, `stageBudgetMs`, and `normalizeFailure`.
+  `chooseCandidate`, `hydrateCandidate`, `runRankedCandidateFallback`,
+  `validateCandidateForProfile`, `validateChangedPaths`, `controlTestName`,
+  `controlTestArgs`, `assertImmutableTestDiff`, `remoteCheckState`,
+  `stageBudgetMs`, `withSelectedModel`, `mergeUsage`, `assertCurrentBranch`,
+  `resolveOpenIssueForProvingRun`, and `normalizeFailure`.
 - Consumes: `z` and `BackendConfig` from `@twelvehart/orcats`.
 
 Correction 3 later extends `ScoutResultSchema` with `rankedCandidateIds`, adds
@@ -108,11 +137,12 @@ ranking. Its exact RED/GREEN steps supersede the original selection snippet
 below without changing the completed Task 1 baseline evidence.
 
 Correction 7 later introduced a packet-grounded positive control. Correction 8
-supersedes its all-candidate shape: the scout returns three control-free seeds,
-an exact ranking, and one `selectedControl` bound to rank one. Selection hydrates
-only that candidate's `controlBrief`. The Codex scout request alone uses low
-reasoning effort. The filtered command remains `test <testPath>
---test-name-pattern ^control <candidate.id>$`.
+superseded its all-candidate shape: the scout returns three control-free seeds,
+an exact ranking, and one `selectedControl` bound to rank one. Correction 13
+adds bounded ranked fallback: rank one is hydrated first, later controls are
+generated lazily, and the candidate is selected only after genuine RED. The
+Codex scout request alone uses low reasoning effort. The filtered command
+remains `test <testPath> --test-name-pattern ^control <candidate.id>$`.
 
 - [ ] **Step 1: Write failing policy tests**
 
@@ -498,9 +528,9 @@ test("workflow carries required lifecycle and safety controls", async () => {
     "appliedSystemPrompts",
     'monitor.stage("preflight"',
     'monitor.stage("scout"',
-    'monitor.stage("select-plan"',
     'monitor.stage("reproduce"',
     'monitor.stage("red-gate"',
+    'monitor.stage("select-plan"',
     'monitor.stage("implement"',
     'monitor.stage("targeted-repair"',
     'monitor.stage("review"',
@@ -574,6 +604,20 @@ const SCOUT_EVIDENCE_MAX_FILES = 8;
 const SCOUT_EVIDENCE_MAX_CHARS = 20_000;
 const PROFILE_SCALE = { simple: 1, medium: 3, challenging: 4.5 } as const;
 
+interface RejectedCandidateEvidence {
+  candidate: Candidate;
+  control: ScoutResult["selectedControl"];
+  reason: string;
+  redDiff: string;
+  validation: CommandLog[];
+  snapshotSha256: string;
+  rank: number;
+  artifactPath: string;
+  baselineStatus: string;
+  baselineDiff: string;
+  restoration?: ExactRestorationEvidence;
+}
+
 interface RunReport {
   runId: string;
   profile: ComplexityProfile;
@@ -595,15 +639,21 @@ interface RunReport {
     candidates?: ScoutResult["candidates"];
     ranking?: string[];
     selectedControl?: ScoutResult["selectedControl"];
+    acceptedControl?: ScoutResult["selectedControl"];
+    latestCommit?: string;
     commands: CommandLog[];
   };
   redDiffPath?: string;
+  rejectedCandidates: RejectedCandidateEvidence[];
   validation: CommandLog[];
   prUrl?: string;
   matchedHeadSha?: string;
   merged: boolean;
   sla: "pending" | "passed" | "failed";
   stopReason?: string;
+  initialReviewFindings?: ReviewFinding[];
+  finalReviewFindings?: ReviewFinding[];
+  finalReviewBlockerCount?: number;
   usage?: Usage;
 }
 
@@ -619,6 +669,9 @@ interface RunIssue {
   provingRunId?: string;
 }
 ```
+
+The following original helper sketch is historical. Correction 18's
+absolute-completion contract below supersedes its callback-timing behavior.
 
 Bound every conversation with the tested runtime helper:
 
@@ -679,11 +732,11 @@ Implement these signatures unchanged:
 async function readConfig(): Promise<WorkflowConfig>;
 async function writeJson(path: string, value: unknown): Promise<void>;
 async function appendIssue(issue: RunIssue): Promise<void>;
-async function changedPaths(): Promise<string[]>;
-async function pathDiff(path: string): Promise<string>;
-async function assertTrackedPaths(paths: readonly string[]): Promise<void>;
+async function changedPaths(remaining: () => number): Promise<string[]>;
+async function pathDiff(path: string, remaining: () => number): Promise<string>;
+async function assertTrackedPaths(paths: readonly string[], timeoutMs: number): Promise<void>;
 function describeOutcome(outcome: Outcome): string;
-async function readRemoteChecks(prUrl: string): Promise<RemoteCheck[]>;
+async function readRemoteChecks(prUrl: string): Promise<{ readonly checks: RemoteCheck[]; readonly log: CommandLog }>;
 async function confirmMerged(prUrl: string): Promise<void>;
 ```
 
@@ -703,16 +756,9 @@ Inside exactly one `await flow(flowArgs())(async () => {})`:
 ```typescript
 const scoutConfig = {
   ...stageConfig("scout", config.stages.scout, true),
-  ...(activeSelected.tag === "codex"
-    ? { reasoningEffort: "low" as const }
-    : {}),
+  reasoningEffort: "low" as const,
 };
 report.appliedSystemPrompts.scout = scoutConfig.systemPrompt ?? "";
-const scoutConversation = llm().autonomous(selectedStageBackend, {
-  prompt: scoutPrompt(profile, profileLimits[profile]),
-  schema: ScoutResultSchema,
-  config: selectedStageConfig(scoutConfig),
-});
 
 const reproduceConfig = stageConfig("reproduce", config.stages.reproduce, false);
 report.appliedSystemPrompts.reproduce = reproduceConfig.systemPrompt ?? "";
@@ -727,14 +773,17 @@ report.appliedSystemPrompts.review = reviewConfig.systemPrompt ?? "";
 Pass each named config to its matching `llm().autonomous` call. Record before
 awaiting so a timeout still proves which request configuration was applied.
 
-1. Resolve baseline and `--complexity=$profile` args, select Codex, read
+1. Reject a non-empty `ORCA_BACKEND` other than `codex` before creating the
+   monitor or performing any config, filesystem, command, or backend work. Then
+   resolve baseline and `--complexity=$profile` args, select default Codex, read
    launcher run ID/time, select `profileLimits[profile]`, multiply each simple
-   stage limit by `PROFILE_SCALE[profile]`, and start monitor.
+   stage limit by `PROFILE_SCALE[profile]`, and start the monitor.
 2. `preflight`: baseline gate, Codex/GitHub auth, HEAD equals `origin/main`.
 3. `scout`: run the exact global-constraint commands, deterministically choose
    at most four source and four test files, render a stable 20,000-character
-   evidence packet, record paths/count/SHA-256/command logs, and verify the
-   worktree did not change. Give only that packet to a tool-free structured
+   evidence packet including the latest first-parent commit subject and paths,
+   record paths/count/SHA-256/command logs, and verify the worktree did not
+   change. Give only that packet to a tool-free structured
    synthesis phase with at most 80 seconds total and at most two fresh
    40-second conversations. Retry only when the first attempt ends in its exact
    timeout cancellation. Persist every attempt record. Reject tool events as a
@@ -742,36 +791,47 @@ awaiting so a timeout still proves which request configuration was applied.
    evidence, off-packet paths, and profile/path violations. Require one
    `selectedControl` whose ID equals rank one. Persist all three seeds, ranking,
    and selected control in report provenance.
-4. `select-plan`: validate profile/tracked paths, hydrate rank one's
-   `controlBrief`, and persist seeds, ranking, control, and selected candidate.
-5. `reproduce`: apply `$tdd`, permit only the test path, and stop after the
-   successful matching normalized file-change result. Reject an off-target
-   file-change call; never accept a started, failed, or unmatched result.
-   Wait for bounded child-process termination before parent validation.
-   Backends without normalized file-change events retain terminal completion.
-   Add a top-level passing test named exactly `control <candidate.id>` that
-   proves `controlBrief` through the same production entrypoint, setup, and
-   observation path as the target, plus the target regression. Before returning,
-   run the exact control and target commands; reject target assertions satisfied
-   by incidental runner, stack, or source text. Render every prompt command with
-   shell-safe argument quoting so the control pattern remains one argument. The
-   parent repeats both gates.
-6. `red-gate`: sequentially run
-   `bun test <testPath> --test-name-pattern '^control <candidate.id>$'`, require
-   exactly one unskipped pass, then run `bun <targetedTestArgs...>` and require
-   failure with `expectedFailurePattern`. Save the immutable diff only after
-   both gates validate.
-7. `implement`: apply `$tdd`, permit production paths, freeze test diff.
-8. `targeted-repair`: targeted test plus lint through one-fix `fixLoop`.
-9. `review`: exact review prompt and structured blockers.
-10. `review-repair`: one repair and repeated review when blockers exist.
-11. `verify`: full gate, immutable test, profile path scope.
-12. `commit-push`: stage only validated paths, commit, push.
-13. `pull-request`: write body file, create ready PR, store URL.
-14. `remote-checks`: poll five seconds; require `CI / Verify`; treat the exact
+4. `reproduce`: attempt IDs in rank order under one shared budget. Rank one
+   uses `selectedControl`; resolve later controls lazily in a tool-free turn
+   bounded by 10 seconds and remaining reproduce time. Before each attempt,
+   capture raw test bytes, SHA-256, exact Git status, and complete binary diff.
+   Apply `$tdd`, permit only the test path, and mark an edit applied only after
+   its successful matching normalized file-change result. Continue draining
+   events and always await terminal outcome so later backend failure and usage
+   remain visible. Off-target changes request cancellation and fail only after
+   terminal settlement; started, failed, or unmatched results never prove an
+   applied edit. Classify normalized evidence as none, unconfirmed, or applied.
+   The reusable event guard retains terminal-only behavior: none plus exactly
+   one expected Git path and a non-empty diff proves the edit; unconfirmed
+   evidence rejects the attempt. This does not make a non-Codex backend
+   selectable for the proving workflow.
+5. For each attempted rank, add a top-level passing test named exactly
+   `control <candidate.id>` plus the target regression. The child and parent
+   both run the exact control then target commands. Fall back only for a typed
+   invalid proof: failed, skipped, or miscounted control; passing target; wrong
+   pattern; no net change; or empty diff. A timeout marker or null exit code is
+   operational and stops the run.
+6. On typed rejection, persist candidate-local proof and baseline evidence,
+   restore raw bytes, then require snapshot SHA-256, exact status, and complete
+   binary diff equality before the next rank. Every operation remains on the
+   shared budget. Assert a positive remainder immediately before and after each
+   rejected-artifact write. On valid RED, save the immutable diff and recheck
+   the budget after persistence before accepting.
+7. `select-plan`: only after acceptance, persist seeds, ranking, original and
+   accepted controls, rejected attempts, and the hydrated selected candidate.
+8. `implement`: apply `$tdd`, permit production paths, freeze test diff.
+9. `targeted-repair`: targeted test plus lint through one-fix `fixLoop`.
+10. `review`: exact review prompt and structured blockers.
+11. `review-repair`: one repair and repeated review when blockers exist.
+12. `verify`: require persisted zero final blockers, full gate, immutable test,
+    and profile path scope.
+13. `commit-push`: stage only validated paths, commit, capture local HEAD, push.
+14. `pull-request`: write body file, create ready PR, require its head to match
+    the immutable locally captured SHA, and store the URL.
+15. `remote-checks`: poll five seconds; require `CI / Verify`; treat the exact
     post-creation `no checks reported` result as pending, never as an empty pass.
-15. `merge`: resolve HEAD, squash with matching SHA, confirm `MERGED`.
-16. Resolve prior timeout issue.
+16. `merge`: squash with the same local SHA and confirm `MERGED`.
+17. Resolve prior timeout issue only after merge and SLA success.
 
 Catch appends classified issue and rethrows. Finally writes monitor/report,
 prints evidence paths, and calls `selected.shutdown?.()`.
@@ -1209,19 +1269,725 @@ Its earlier timing and single-turn shape are superseded by the current contract
 above: at most two fresh 40-second attempts, with retry only for the first exact
 timeout cancellation. Every later gate remains unchanged.
 
-- [ ] **Step 1: Write failing test for each new artifact defect**
+Correction 12 bound delivery to the immutable locally captured post-commit SHA,
+made shutdown and artifact finalization truthful under partial failure, and
+persisted initial and final review evidence plus a literal final blocker count.
+Its three independently reviewed tasks preserved remote startup polling and all
+existing delivery gates.
 
-Add smallest real behavior test. Run it and observe expected failure before
-editing implementation.
+Correction 13 supersedes rank-one-only reproduction after run
+`20260713195408-86998` produced a valid control but a target that passed. It
+adds bounded ranked fallback, lazy later-rank controls, one shared reproduce
+budget, retained rejection artifacts, and exact restoration before another
+rank. Follow-up review required signal-killed gates to remain operational
+errors, a final budget check after RED persistence, and real temporary-Git tests
+for byte/status/complete-binary-diff restoration. Final review also required an
+enforcing non-positive-budget assertion, pre/post rejected-artifact checks, and
+independent status-only and corrupt-byte restoration tests. A second audit
+required a diff-only restoration test and scoped pre/write/post AST contracts
+for both rejected artifacts. Final re-review then found terminal-only backends
+were rejected despite exact Git proof; the correction adds three-state event
+evidence and mutation-protected terminal-only acceptance. Follow-up review
+bound the failed-proof guard to its typed rejection body and corrected its
+diagnostic. No later live proof may start until those contracts,
+documentation, evidence, and re-review are clean.
 
-- [ ] **Step 2: Implement minimal correction and verify**
+Correction 14 follows failed proving run `20260713224535-26481`. The run used
+the complete 65-second reproduce budget, but all three ranks repeated a false
+empty-package-name premise from fragmented source snippets and an unrelated
+test path. The reproduce agent correctly refused to manufacture RED and timed
+out while tracing the real embedded-resolution path. Keep the 65/560/600-second
+timing contract unchanged. Pair selected sources with related tests, render
+every hotspot plus fair context through exact 16-line boundaries, retain up to
+40 leading lines for files without hotspots, and fail closed above the
+20,000-character packet cap. Require unique target tests, one exclusive
+production path per candidate, citations for every allowed production path,
+and no auxiliary test paths; shared production support paths remain allowed.
+Preserve source-test reservations in the packet and report, require each target
+test to match one of its allowed production paths, and validate citations only
+against structured rendered source/test markers so commit-prefix text cannot
+spoof evidence.
+Require immediate unchanged exit when allowed paths disprove a candidate.
 
-Change only implicated artifact. Run focused test green, then all Task 4 gates.
+Correction 15 follows the final independent reliability audit. Repair and
+review allocations now count active work rather than consuming each other's
+inactive time. Pull-request head reads prove both ready state and the immutable
+SHA; remote-check parsing has one dominant startup/failure path; merge state is
+behavior-tested. Launcher evidence finalization changes a prior success to exit
+`74` on collection or publication failure while preserving earlier failures.
+New issue rows bind backend, worktree, branch, monitor path, and PR URL when
+known. Contract mutations protect preflight test arguments, progress output,
+unconditional monitor/report writes, effective timing, ready PR creation, head
+validation, startup polling, merge confirmation, and final SLA evaluation.
+Another live run requires a fresh explicit authorization.
 
-- [ ] **Step 3: Append linked correction entry**
+Correction 16 follows three fresh locked-digest audits. Post-turn Git probes now
+require the active stage remainder, so helper defaults cannot reset stage or
+launcher time. The launcher binds and the workflow validates the retained
+branch before config, backend, or baseline work. The final all-green check rows,
+command log, timestamp, and unchanged head SHA are persisted before merge.
+Baseline repair usage is counted once. Pure behavior tests protect exact
+citation boundaries and latest-open seed resolution; AST mutations protect all
+node directives, targeted test/lint, the single full verify gate, issue/report
+writes, branch/CI bindings, and every timed Git probe. A successor live run
+still requires fresh explicit authorization after clean re-audit and preflight.
 
-Record issue ID, failing run, class, evidence, correction, status `corrected`,
-and next proving run ID as one JSON object line.
+Correction 17 follows the next locked-digest audits. Tested helpers now own
+directive-preserving model overlay, required-command failure handling, timeout
+clamping, targeted-gate issue projection, branch matching, and usage merging.
+The workflow delegates to those helpers and mutation contracts protect every
+callsite, usage turn, remainder consumer, branch log, and seed append. A
+successful seed transition overlays current backend, worktree, branch, monitor,
+and pull-request context even when its historical open row predates those
+fields. The parent helper signatures now match executable code. No live run may
+start until a new digest receives three zero-finding audits and preflight passes.
+
+Correction 18 follows the fresh quality and resilience audits of that locked
+state. Model-supplied failure markers must be specific and are matched as
+literal text, so a generic error word or regular-expression metacharacter
+cannot manufacture RED proof. The launcher validates the append-only source
+ledger, its immutable seed row, and every one-object JSON line before build,
+fetch, worktree, or backend work; invalid input exits `65` without rewriting the
+ledger. Every workspace-writing agent node compares a before/after content
+manifest of ignored `.orca` controls and evidence, including failure paths.
+After full verification, the workflow binds the candidate's exact path, mode,
+and object IDs to the pre-stage worktree, staged index, and committed tree, and
+pushes only after all three comparisons pass. Direct mutation contracts also
+protect implementation budget ownership, CI and usage reachability,
+finalization, complete failed-gate evidence, reproduction prompt evidence, full
+verification, merged-state checking, count-free ledger closure, and restoration
+failure propagation. The original fourteen audit findings are appended as open
+ledger rows and require the same later proving run as every earlier open finding.
+
+Follow-up hardening makes the integrity checks behavioral rather than
+token-shaped. Ignored manifests have entry, path-byte, content-byte, and
+absolute I/O deadlines; symbolic links hash their link text. Candidate
+worktree symlinks use Git blob hashing for the repository object format. One
+binary comparator and strict index/commit parsers reject malformed framing,
+wrong modes, ambiguous object IDs, and duplicate or missing paths. Every
+manifest is normalized with deterministic bytewise path ordering independent
+of input order or letter case. A full post-commit path query catches hook-added files before
+the committed manifest comparison and push. Temporary repositories and direct
+mutants prove successful, failed, and synchronous guard paths plus every
+delivery mismatch.
+
+The final locked-quality audit adds eleven ledger findings and binds the
+successor proof end to end. The exact fourteen-artifact digest now includes the
+ledger and links preflight bytes to live bytes. Candidate RED markers derive
+from candidate IDs; positive controls bind a pre-existing named test, baseline
+run, unchanged semantic fingerprint, the same exported entrypoint as the RED
+assertion, and a canonical Bun summary. Every conversation settlement and
+finalization action shares the
+absolute deadline. Delivery revalidates branch and origin URLs after agents,
+binds the exact single-parent commit range, requires typed all-pass CI evidence
+with no skips, retains PR base `main`, and proves the unchanged SHA after merge.
+Every typed ledger row is validated. The launcher alone resolves latest-open
+IDs by atomically committing a zero-open canonical ledger after the workflow's
+report and monitor are final. The primary checkout's `package-lock.json` hash
+remains unchanged.
+
+The finalization follow-up separates retryable evidence from the terminal
+report. Shutdown runs once, then the issue ledger and fresh monitor snapshot run
+as retryable artifacts, and exactly one non-retryable report runs last. Each
+action receives the fresh shared absolute remainder, an abort signal, its
+attempt number, and a generation-current predicate. Timeout aborts and
+invalidates the attempt; non-publication actions recheck the absolute remainder
+after completion so synchronous work that blocked the timer still fails. A late
+settlement may finish privately but cannot publish over its retry.
+
+Publication uses one explicit commit point instead of a generic post-action
+clock read. After writing a run-and-attempt-unique temporary file, and
+immediately before atomic rename, the publisher requests one authentic positive
+commit decision from the action context. The issue, monitor, or report action
+returns that exact decision through the wrapper, which treats it as terminal
+and never reclassifies the committed publication from a later clock read. The
+contract rejects commit calls before the temporary write, moved away from the
+immediate pre-rename position, after rename, forged return objects, and duplicate
+commit attempts. On pre-publication failure, cleanup removes only the action's
+own temporary file, preserves the original publication error as primary, and
+attaches any cleanup failure as secondary. After rename, the publisher returns
+immediately with no cleanup or other fallible work and no later clock read. The
+terminal report recomputes finish time, elapsed time, and SLA before this commit
+point, so a deadline failure cannot persist `sla: "passed"`.
+
+The proving backend is now pinned to default Codex. A non-empty
+`ORCA_BACKEND` other than `codex` fails before side effects, and the launcher
+passes Codex explicitly. Managed OpenCode terminal shutdown remains separate
+source-runtime work; it is neither selected nor claimed proven here. That
+deferral adds no artifact: the locked set remains the issue ledger, the same ten
+`.orca/workflows/` files, and these same three tracked plan/spec documents.
+
+A later audit invalidated the 300-test focused checkpoint and the successor
+digest beginning `3eb`. Timer callback scheduling was not proof that work
+completed before its deadline. Every timer-based helper now records an absolute
+completion time and treats equality as late. `awaitBounded` records terminal
+settlement time: an outcome already settled after the active deadline becomes
+an owned timeout without redundant cancellation, while a still-pending timeout
+cancels once and awaits bounded settlement. Timeout records retain terminal
+usage and normalized evidence in JSON-safe form.
+
+The one-time scout retry takes one total-remainder snapshot, reserves terminal
+settlement inside it, and retries only the first exact owned timeout while that
+snapshot still has positive retry time. It never retries after total expiry.
+`awaitWithinDeadline` and each manifest operation reject late success, late
+rejection, and exact-deadline equality before evidence can be committed. The
+non-Codex guard also moved ahead of monitor construction and every preflight,
+filesystem, config, command, and backend operation.
+
+The frozen fourteen-artifact checkpoint
+`e28a8885678089f1009b75829fa470ca03ba05f7fb4df0e18d901824d7b78530`
+is retained only as invalidated historical evidence. Its local GREEN was 319
+focused tests and 1,775 assertions, but the frozen audit found that the ledger
+proof covered only the immutable seed and the package-lock proof lacked a
+behavioral finalization matrix.
+
+The coverage correction exercises mutation, deletion, and reordering of the
+complete captured ledger prefix against both source and candidate ledgers. All
+six cases exit `65`, leave the source bytes unchanged, release the ledger lock,
+and leave no merge temporary file. Structural mutants also prove that a
+seed-only comparison and removal of either source or candidate prefix guard are
+rejected. The package-lock finalizer now has a six-case final existence and
+SHA-256 matrix: unchanged existing bytes succeed; changed, deleted, newly
+appeared, and different-byte recreation fail; identical-byte recreation
+succeeds. The scout deadline mutation diagnostic now names the shared
+10-second absolute deadline and rejects the stale 15-second wording.
+
+Ledger locking now uses `mkdir` plus one unique
+`owner.<pid>.<nonce>` marker. Acquisition verifies that marker is the lock
+directory's sole entry, belongs to the current live process, and still matches
+the exact acquired path. Each acquisition or recovery iteration starts with a
+bounded launcher-deadline check. Recovery removes only one exact inspected dead
+owner marker and then uses `rmdir`; empty locks use `rmdir` directly. A
+symbolic-link lock directory or marker, live owner, malformed state, and
+multiple-marker state remain untouched and fail closed at the deadline. The
+main lock path is never renamed or recursively deleted. Normal
+release and `TERM`, `INT`, or `HUP` cleanup remove only the caller's exact marker
+and merge temporaries. Replacement-race tests prove stale recovery and release
+cannot steal or delete a successor owner's marker.
+
+Package-lock protection stages preflight success privately, then performs its
+terminal commit-point recheck before stable success publication. After the
+source ledger validates, the full finalizer trap precedes ledger snapshot and
+prior-evidence invalidation. Preflight mode atomically moves prior preflight and
+latest success into run-unique same-directory quarantines; signal and failure
+paths repeat the same idempotent invalidation and attempt both paths after one
+rename fails. Live validation requires the claimed preflight to match its
+quarantined successful latest document.
+Changed, disappeared, or newly appeared package-lock state changes final status
+to `74`, clears a missing after-hash, discards staging, and leaves only
+failure-shaped latest evidence.
+
+Diagnostics print while successful latest and preflight evidence remains
+private. Atomic latest publication receives an immediate positive deadline
+decision. Claimable preflight receives a second fresh positive decision
+immediately before its rename. Signals are recorded while publication owns a
+commit boundary. Preflight authority transfers only after the final rename
+returns and no pending signal requires retraction. A live signal after latest
+publication and before canonical ledger rename exits with the signal status. A
+failed preflight decision or rename atomically moves latest
+back to private staging before failure rendering. If that move fails after
+deadline expiry, an atomic failure tombstone replaces the success-shaped latest
+document. If a signal arrives before ownership transfers while canonical
+quarantines and reused private fallbacks are occupied, cleanup clears or
+reallocates fresh current-run private paths, retries retraction, and verifies
+canonical preflight and latest success absent. After preflight authority
+transfers, finalization exits immediately with no later
+fallible cleanup. The parent post-run hash comparison supplies the final
+after-process check.
+
+Correction 19 follows the final bounded proving audits. Merge no longer consumes
+only the earlier remote-check snapshot: it polls GitHub again, requires the
+current complete check set to pass, persists that fresh typed evidence, and then
+reasserts the unchanged ready head before computing the merge timeout. Runtime
+archive creation disables Git replacement objects, binding built bytes to the
+literal captured commit even when local `refs/replace` exist. Ledger merge now
+preserves conventional `TERM`, `INT`, and `HUP` exits as `143`, `130`, and `129`.
+Terminal closure behavior seeds two independent open IDs and proves both latest
+states resolve. The existing failed-finalizer harness already executed the real
+failure merge and required exact source-ledger bytes; explicit latest-state
+assertions now make that evidence unmistakable.
+
+Correction 20 follows the resumed bounded proving audits. A signal could arrive
+after child-exit observation and still be overwritten by the final wait result;
+terminal finalization hashed the first monitor JSON returned by filesystem
+order; and fresh client-side CI evidence could not make an unprotected GitHub
+merge atomic. The bounded wrapper now reaps the child, restores caller traps,
+and then gives any recorded signal precedence. Terminal success requires one
+monitor whose filename stem matches its internal run ID and whose Codex summary
+contains one clean completed outcome with no failures. Merge now requires
+strict `Verify` protection from workflow `CI` on `main`, with administrator
+enforcement, before the final poll, unchanged-head check, and SHA-locked command.
+
+Correction 21 follows the terminal-binding audit. The terminal commit now
+rehashes the candidate ledger, staged canonical ledger, report, monitor, and a
+cycle-free `latest.json` projection while holding the ledger lock. The
+projection excludes `ledgerSha256`, `latestProjectionSha256`, and
+`terminalProof`; those claims are checked separately. Stable run-local issue
+evidence remains the candidate ledger until canonical rename. Post-rename
+recovery requires the exact terminal record, projection, embedded claims, and
+final-ledger hash.
+
+Correction 22 follows the final protection and terminal-worker audit. GitHub's
+required check context is `Verify`; `CI` is workflow metadata, not part of the
+context name. Preflight validates strict administrator-enforced protection as
+its first gate, and live mode revalidates it before claiming the attestation.
+The terminal ledger worker refuses a previously recorded signal, and failed
+terminal publication removes its success-shaped staging ledger.
+
+Correction 23 follows the source-identity audit. A context-only `Verify` rule
+could be satisfied by another producer. The launcher and workflow now require
+the protected check entry to bind `Verify` to GitHub Actions app ID `15368`, and
+reject a missing check entry, an unrestricted context, or a different app.
+
+Correction 24 follows loaded-host verification. Two process-heavy launcher
+harnesses passed in isolation but exceeded test-only 300-millisecond and
+five-second caps during exact-suite runs. Their test timeouts now allow loaded
+process startup while retaining every production deadline and assertion.
+
+Correction 25 follows the terminal-worker and protection-test audit. A child
+could execute after a signal landed between the final pre-spawn check and PID
+capture. A two-phase start and acknowledgement gate now keeps the child inert
+until the parent tracks it and rechecks signals. The preflight ordering test
+requires both calls to exist and proves the protection-call deletion mutant.
+Its final-wait signal harness targets the actual terminal wait after the new
+acknowledgement wait was added.
+
+Correction 26 follows the bounded-capture, terminal-stage, and latent-merge
+audit. Shell behavioral RED produced six expected failures plus one unrelated
+loaded-host timeout. It proved that command substitution could defer the parent
+signal trap and that signal or deadline paths after terminal staging could
+leave success-shaped evidence. `capture_before_deadline` now performs all 24
+bounded output captures from the main shell, and signal, timeout, and finalizer
+cleanup remove terminal staging before prior-evidence invalidation.
+
+The merge behavioral RED was 0/1: `Expected []`; `Received ["merge must persist
+its command result and confirm exact merged state even after a failed
+response"]`. Merge now persists its exact SHA-locked `CommandLog` regardless of
+result and always runs bounded authoritative confirmation. Recovery requires
+the exact pull request URL and repository, base `main`, head ref, head SHA,
+non-draft state, and `MERGED`. A passed command with failed confirmation
+surfaces the confirmation failure; dual failure preserves both errors in an
+`AggregateError`.
+
+Correction 27 follows the frozen terminal audit. Active-child deadline polling
+still invoked `bun` through command substitution, so a stalled clock deferred
+TERM for 2,174 milliseconds against a 1,500-millisecond bound. Another RED sent
+TERM immediately before the first preflight publication and received exit `0`
+instead of `143` because terminal ownership had been asserted before either
+rename.
+
+Launcher remainder checks now assign from Bash's built-in `SECONDS` counter in
+the main shell, and both finalizer timestamp reads use bounded main-shell
+capture. Signals retain direct cleanup authority through latest publication.
+Live transfers ownership only before canonical ledger commit; preflight
+transfers only after its final rename returns.
+
+- [x] **Step 1: Write failing test for each new artifact defect (historical checkpoint)**
+
+The earlier correction recorded its smallest behavior failures before editing
+implementation. The later finalization/backend-pin follow-up is tracked by the
+current pending verification step below and the detailed correction plan.
+
+- [x] **Step 2: Implement minimal correction and verify (historical checkpoint)**
+
+The pre-follow-up artifact state passed its focused tests and Task 4 gates. The
+later finalization and backend-pin changes invalidate that checkpoint for the
+current bytes.
+
+- [x] **Step 2a: Preserve the invalidated focused checkpoint**
+
+The earlier 300-test focused GREEN and digest beginning `3eb`, plus frozen
+digest
+`e28a8885678089f1009b75829fa470ca03ba05f7fb4df0e18d901824d7b78530`
+at 319 tests and 1,775 assertions, are retained only as historical evidence.
+Their respective audits invalidated them.
+
+- [x] **Step 2b: Verify the latest frozen-audit correction locally**
+
+The four focused workflow suites reached 327 tests and 1,963 assertions.
+
+- [x] **Step 2c: Run the definitive focused checkpoint**
+
+All four focused suites pass at 328 tests and 1,984 assertions after the
+terminal-publication and symlink-lock corrections.
+
+- [x] **Step 2d: Verify every remaining deterministic gate (historical checkpoint)**
+
+Flow typecheck, shell syntax, exact launcher ledger validation, documentation
+checks, diff checks, and `bun run verify` passed before the post-checkpoint
+finalization audit. That audit invalidated the checkpoint.
+
+- [x] **Step 2e: Close terminal-publication and stale-invalidation races
+  (historical checkpoint)**
+
+Behavior tests now cover expiry immediately before claimable preflight commit,
+signals after latest and preflight publication, same-directory quarantine that
+continues after one rename failure, matching latest-to-preflight claim evidence,
+failure tombstone replacement, and direct filesystem ordering behind the
+non-Codex guard. This result reached 331 focused tests and 2,016 assertions, but
+the later terminal-ledger protocol audit invalidated it.
+
+- [x] **Step 2f: Preserve the invalidated full-gate checkpoint**
+
+Flow typecheck, exact launcher ledger validation, lint, documentation link,
+symbol, signature, shell, diff, and full verification passed before the
+terminal-ledger protocol correction. Full verification then recorded 461
+passing tests, one gated skip, and 1,317 assertions. That evidence is historical
+for the current bytes.
+
+- [x] **Step 2g: Commit success only through the canonical ledger**
+
+The workflow now leaves candidate resolutions provisional. Failed-run merge
+keeps only each candidate ID's latest-open row. Live success rejects any
+concurrent source suffix, publishes `latest.json` as non-authoritative evidence,
+and commits only when the zero-open canonical ledger is atomically renamed with
+one terminal record binding the candidate ledger, report, monitor, and
+cycle-free latest-projection hashes. Stable run-local evidence remains the
+candidate ledger until that rename. The terminal lock protects fresh rehashing
+of every bound artifact and validation of latest's ledger, projection, and proof
+claims.
+Pre-rename TERM and SIGKILL cannot authorize success; post-rename recovery
+requires that exact record and final ledger hash. Terminal report timeout
+reserves time to republish failure artifacts. All four focused suites pass at
+340 tests and 2,061 assertions.
+
+- [x] **Step 2h: Preserve the terminal-protocol deterministic checkpoint**
+
+Flow typecheck, exact launcher ledger validation, lint, documentation link,
+symbol, signature, shell, diff, and full verification checks passed at the
+terminal-protocol checkpoint. Full verification recorded 461 passes, one gated
+skip, and 1,317 assertions. The final pre-lock audit invalidated those exact
+artifact bytes.
+
+- [x] **Step 2i: Close the final pre-lock audit findings**
+
+Terminal staging now keeps only each candidate ID whose latest candidate row is
+open, so a candidate-authored resolution cannot displace the launcher's
+authoritative resolution of a base-open issue. Runtime HEAD is captured before
+build; the launcher archives that immutable commit into a private directory,
+builds there, and copies only the executable into run evidence. A real
+failure-swallow mutant now converts a rejected required command into a synthetic
+zero-exit log and is rejected by the contract. Behavioral RED preceded both
+launcher repairs. The corrected focused checkpoint passes 342 tests with 2,086
+assertions.
+
+- [x] **Step 2j: Preserve the final pre-lock deterministic checkpoint**
+
+Flow typecheck, exact launcher ledger validation, lint, documentation link,
+symbol, signature, shell, diff, and full verification checks passed before the
+Correction 19 audit. Full verification recorded 461 passes, one gated skip, and
+1,317 assertions; that result is historical for current bytes.
+
+- [x] **Step 2k: Close the final bounded proving-audit findings**
+
+Behavioral RED proved replace-ref runtime substitution and signal-status loss.
+The CI contract rejected cached-only merge evidence. Terminal closure now proves
+two independent open IDs, and failed-run resolution filtering retains exact
+behavior assertions.
+
+- [x] **Step 2l: Preserve the Correction 19 deterministic checkpoint**
+
+All four focused suites pass at 342 tests and 2,103 assertions. Flow typecheck,
+exact ledger validation, lint, documentation link, symbol, signature, shell,
+diff, and full verification pass. Full verification records 461 passes, one
+gated skip, and 1,317 assertions. The resumed bounded audit invalidated those
+bytes.
+
+- [x] **Step 2m: Close resumed bounded-audit findings**
+
+Behavioral RED proved final-wait signal loss and stale or invalid monitor
+acceptance. A pure policy test rejected missing strict admin-enforced CI
+protection, and the merge contract rejected the old client-only sequence. The
+three new audit rows remain append-only and open until the successor live run's
+canonical ledger commit.
+
+- [x] **Step 2n: Close terminal cross-file binding findings**
+
+Behavioral RED proved report, monitor, latest metadata, and embedded-claim
+mutation could evade the staged proof, and proved interruption could leave
+success-shaped run-local issue evidence. Terminal commit now revalidates every
+bound artifact under the lock, binds the cycle-free latest projection, and
+keeps run-local issues candidate-only until canonical commit. Three audit rows
+remain append-only and open for the successor proving run.
+
+- [x] **Step 2o: Re-run every deterministic gate on Correction 21 bytes**
+
+All four focused workflow suites pass at 348 tests and 2,176 assertions. Flow
+typecheck, exact ledger validation, lint, documentation link, symbol, signature,
+shell, diff, and full verification pass. Full verification records 461 passes,
+one gated skip, and 1,317 assertions.
+
+- [x] **Step 2p: Re-run every deterministic gate on Correction 22 bytes**
+
+All four focused workflow suites pass at 352 tests and 2,208 assertions. Flow
+typecheck, exact ledger validation, shell syntax, diff checks, and full
+verification pass. Full verification records 461 passes, one gated skip, and
+1,317 assertions.
+
+- [x] **Step 2q: Re-run every deterministic gate on Corrections 23 and 24**
+
+All four focused workflow suites pass at 352 tests and 2,215 assertions. Flow
+typecheck, exact 80-row ledger validation, shell syntax, diff checks, and full
+verification pass. Full verification records 461 passes, one gated skip, and
+1,317 assertions.
+
+- [x] **Step 2r: Verify the Correction 25 runtime and test bytes**
+
+All four focused workflow suites pass at 353 tests and 2,227 assertions. The
+append-only ledger retains its exact 80-row prefix and adds two Correction 25
+rows for 82 total. Final deterministic gates run on these recorded bytes before
+the replacement fourteen-artifact digest is frozen.
+
+- [x] **Step 2s: Verify the Correction 26 recovery and cleanup bytes**
+
+All four focused workflow suites pass at 363 tests and 2,353 assertions. The
+ledger preserves the exact 82-row prefix with SHA-256
+`ed4306a940db3275dec36e3bd91e61e7a942bdecd1f57d46f351aa7f934f91ec`.
+Three append-only open Correction 26 rows bring it to 85 unique rows. The
+Correction 25 checkpoint remains historical at 353 tests, 2,227 assertions,
+and 82 rows. Full deterministic verification passes 461 tests with one gated
+skip, zero failures, and 1,317 assertions.
+
+The historical fourteen-artifact digest was recorded only as abbreviated
+`d603...4e60`. It is invalid and non-reconstructable; missing hexadecimal
+characters must not be invented. Final deterministic gates run on the
+Correction 26 bytes before the successor digest is computed.
+
+- [x] **Step 2t: Verify the Correction 27 polling and publication bytes**
+
+All four focused workflow suites pass at 365 tests and 2,367 assertions. The
+ledger preserves the exact 85-row prefix with SHA-256
+`6478fc33be4155396e3cd2aaa3355016b5c3107706580f4bcb90a3da8a4c0418`.
+Two append-only open Correction 27 rows bring it to 87 unique rows. Full
+deterministic verification passes 461 tests with one gated skip, zero failures,
+and 1,317 assertions.
+
+The frozen fourteen-artifact digest
+`b039dd863b146132233239d1003bb3f41f48f336b5160b2bc270169bbe7afc77`
+is invalid. Final deterministic gates run on the Correction 27 bytes before a
+new successor digest is computed.
+
+- [x] **Step 2u: Verify the Correction 28 semantic binding and harness bytes**
+
+All four focused workflow suites pass at 366 tests and 2,377 assertions.
+Semantic production taint retains the exported entrypoint through named,
+aliased, default, and namespace imports, and the RED assertion must match the
+control entrypoint. The concurrent same-ID ledger harness uses a bounded file
+handshake instead of a fixed delay and passes five consecutive focused runs.
+
+The ledger preserves the exact 87-row prefix with SHA-256
+`d1580b5f595fbbbf4325d08aee3afcce15f2a4a9fb19c4c1714673c3e06587ad`.
+Two append-only open Correction 28 rows bring it to 89 unique rows. Full
+deterministic verification passes 461 tests with one gated skip, zero failures,
+and 1,317 assertions. The frozen fourteen-artifact digest
+`89a9381f4734052151a3329d56fce2c96d2a0b6518123e9ae303e4a05890e0d8`
+is invalid.
+
+- [x] **Step 2v: Close the three Correction 29 proof gaps**
+
+Bind production taint to lexical symbol identity so shadowing declarations and
+untainted reassignments clear an outer origin. Require candidate source to be
+the exact baseline raw bytes plus one contiguous top-level-test insertion, and
+reject inserted disabling directive tokens. When both canonical quarantines and
+reused private fallbacks are occupied, preflight signal cleanup must clear or
+reallocate fresh current-run private paths, retry retraction, and verify
+canonical preflight and latest success absent.
+
+The fourteen-artifact digest
+`9c3824b40178183c2af42ea068063412d896f6f4ec5caa78faf07cc23da3dc24`
+is invalidated by these three findings. The ledger preserves its exact 89-row
+prefix with SHA-256
+`e897a979014f817046b766f9063e7021dceab6181e335cb9339aca3b466f3a32`;
+three append-only open Correction 29 rows bring it to 92 unique rows. A new
+digest, three zero-finding audits, preflight, and live run remain pending.
+
+- [x] **Step 2w: Close the two Correction 30 proof gaps**
+
+Require the additive RED assertion to invoke one allowlisted terminal Bun
+matcher after only recognized property modifiers. After every bounded command
+leader exits, require its process group to be empty; terminate residual members
+and convert a would-be success to exit `125` before finalization can continue.
+
+The fourteen-artifact digest
+`be08eb2843d4163f22d76edfa0617e7f7a98b34063f86afaa507f1c70ffe179a`
+is invalidated by these two findings. The ledger preserves its exact 92-row
+prefix with SHA-256
+`3c2e9579ff986a29c35a5038548b28e635a94f57606d17c28bcfcbf5a8daa013`;
+two append-only open Correction 30 rows bring it to 94 unique rows. A successor
+digest, three zero-finding audits, preflight, and live run remain pending.
+
+- [x] **Step 2x: Close the four Correction 31 proof gaps**
+
+Require the positive control's production result to reach an allowlisted
+terminal Bun matcher. Require the literal RED marker on the target's own
+`(fail)` record. Decode source as fatal UTF-8 while retaining any BOM. Assign
+every bounded command an inherited owner token, inspect for token-owning
+descendants across process groups and sessions, terminate them, and fail closed
+on residual ownership or inspection failure.
+
+The fourteen-artifact digest
+`c6749dcf831c1070755e602a57baf97e8f628e11284abda53cd0359f54e4d2d4`
+is invalidated by these four findings. The ledger preserves its exact 94-row
+prefix with SHA-256
+`6ba0aaa3319134b5f8b1261806adb68b2f782ac17c433e6221d7496660fc4b4d`;
+four append-only open Correction 31 rows bring it to 98 unique rows with
+SHA-256
+`89742959183b13b09b9ff6fb9e9fdb519aa5e83f2ac7e40e91983daf5de46fdd`.
+No successor digest was frozen before the next audit.
+
+- [x] **Step 2y: Close the four Correction 32 proof gaps**
+
+Reject a production matcher after unconditional `return` or `throw`, and fail
+closed on ambiguous control flow before the causal matcher. Match the RED
+marker as one exact token so a longer candidate marker cannot authorize the
+target. Isolate host owner enumeration from unrelated finalizer harnesses while
+retaining dedicated real descendant tests. Stream full process output through
+a pipefail-protected filter so only matched PID lines reach temporary storage.
+
+The ledger preserves its exact 98-row prefix with SHA-256
+`89742959183b13b09b9ff6fb9e9fdb519aa5e83f2ac7e40e91983daf5de46fdd`;
+four append-only open Correction 32 rows bring it to 102 unique rows with
+SHA-256
+`021909608578d7519d5c6c3381967cca3f74d14efc4a1256a8416ad158b82ed8`.
+All four focused suites pass at 384 tests and 2,496 assertions. A new digest,
+three zero-finding audits, preflight, and the authorized live run remain
+pending.
+
+- [x] **Step 2z: Close the eleven Correction 33 semantic proof gaps**
+
+Propagate label-scoped exits and fail closed on optional calls or indexes.
+Apply the same causal matcher, production-origin, reachability, and side-effect
+rules to the positive control and RED test. Invalidate exact provenance after
+evaluated nested writes, invoked local effects, or later production calls whose
+arguments are not recursively proven primitives. Require passive matcher
+arguments independent of the received value, reject `toSatisfy`, and preserve
+named and namespace production origins through non-optional `await`.
+
+Require the candidate marker to be absent from baseline source. Return the
+exact single added RED test's nonempty static name, run only its anchored and
+escaped exact-name selector, and require exactly one matching `(fail)` record
+plus one canonical Bun summary with zero passes, one failure, nonzero
+expectation calls, one test, and one file. Duplicate or contradictory summary
+fields fail closed. Control-name character hardening is adjacent but remains
+out of scope.
+
+The ledger preserves its exact 102-row prefix with SHA-256
+`021909608578d7519d5c6c3381967cca3f74d14efc4a1256a8416ad158b82ed8`;
+eleven append-only open Correction 33 rows bring it to 113 unique rows with
+SHA-256
+`d5afe4695fb80f65984ca311c01f566b3a6b2589e5e6d5c44735dd66aa78f547`.
+Fresh local evidence covers all four focused suites at 406 tests and 2,663
+assertions: 84 library, 157 runtime, 82 contract, and 83 artifact tests. Flow
+typecheck also passes. Full deterministic verification passes 461 tests with
+one gated skip, zero failures, and 1,317 assertions. A new digest, three
+zero-finding audits, preflight, and the authorized live run remain pending.
+
+- [x] **Step 2aa: Close the two Correction 34 matcher and prompt gaps**
+
+Require every matcher-argument const binding to resolve recursively to a
+primitive before it can support semantic proof. Effectful or aggregate-backed
+bindings fail closed. Align the reproduction prompt with the authoritative
+parent gates: the agent runs the filtered control and exact named RED command,
+not the whole test file.
+
+The ledger preserves its exact 113-row prefix with SHA-256
+`d5afe4695fb80f65984ca311c01f566b3a6b2589e5e6d5c44735dd66aa78f547`;
+two append-only open Correction 34 rows bring it to 115 unique rows with
+SHA-256
+`20fad41c836b40974ae56fc52ea5dbe8b5833d1a4aebf971f15e72e2b38e70a5`.
+
+- [x] **Step 2ab: Close the three Correction 35 matcher-passivity gaps**
+
+Reject matcher expectations backed by mutable const arrays or objects, and
+remove prototype-dependent `toBeOneOf` from causal proof. Preserve safe inline
+object literals by validating property values rather than identifier keys, and
+accept only the unshadowed global `undefined` primitive.
+
+The ledger preserves its exact 115-row prefix with SHA-256
+`20fad41c836b40974ae56fc52ea5dbe8b5833d1a4aebf971f15e72e2b38e70a5`;
+three append-only open Correction 35 rows bring it to 118 unique rows with
+SHA-256
+`aaf71fc52c3c038cd44cf56de00624383d70effbaa3943252ee69371f1e5ee28`.
+
+- [x] **Step 2ac: Close the Correction 36 global matcher-state gap**
+
+Write and byte-verify a deadline-bound Bun preload immediately after the
+reproduce budget starts. The preload disables `expect.extend`, freezes
+`expect.prototype` and `expect`, and prefixes both control commands, the exact
+named RED command, and post-fix targeted GREEN. Static analysis performs causal
+matcher validation before expect-integrity classification, then rejects
+aliases, extensions, escaped assertion objects, and `expect.prototype` writes.
+The preload contract rejects any pre-install proof-wrapper invocation.
+
+The ledger preserves its exact 118-row prefix with SHA-256
+`aaf71fc52c3c038cd44cf56de00624383d70effbaa3943252ee69371f1e5ee28`;
+one append-only open Correction 36 row brings it to 119 unique rows with
+SHA-256
+`bd6ea5690024400877747e9cd2b558014f5143d722005eee7717deb711a1af5f`.
+All four focused suites pass at 417 tests and 2,715 assertions: 84 library with
+323 assertions, 167 runtime with 682, 83 contract with 704, and 83 artifact
+with 1,006. Flow typecheck passes. Full deterministic verification, a new
+digest, three zero-finding audits, preflight, and the authorized live run remain
+pending.
+
+- [x] **Step 2ad: Close the Correction 37 pre-install wrapper gap**
+
+Trace transitive named proof wrappers from `matcherProofArgs` to runtime call
+sites. Reject direct, aliased, and hoisted pre-install execution plus indirect
+wrapper references, while accepting a safely hoisted wrapper invoked only after
+installation.
+
+The ledger preserves its exact 119-row prefix with SHA-256
+`bd6ea5690024400877747e9cd2b558014f5143d722005eee7717deb711a1af5f`;
+one append-only open Correction 37 row brings it to 120 unique rows with
+SHA-256
+`625e7d8935d663c872a49056f5ad849a4052143fb5663617ec9a82edd92d35a2`.
+
+- [x] **Step 2ae: Close the two Correction 38 wrapper-analysis false positives**
+
+Resolve proof-wrapper calls and references by TypeScript binding identity, not
+identifier text. Compare preload installation with reachable named-wrapper
+invocations rather than declaration position. Preserve direct, alias, and
+transitive pre-install rejection while accepting shadowed same-name bindings
+and safely hoisted declarations.
+
+The ledger preserves its exact 120-row prefix with SHA-256
+`625e7d8935d663c872a49056f5ad849a4052143fb5663617ec9a82edd92d35a2`;
+two append-only open Correction 38 rows bring it to 122 unique rows with
+SHA-256
+`189403f518f525ea4f16eecc56e338d828960f25796643e0e875bfbd5df9706e`.
+Focused matcher tests and flow typecheck pass. The full artifact suite exposed
+the Correction 39 harness-timeout gap.
+
+- [x] **Step 2af: Close the Correction 39 artifact-harness timeout gap**
+
+Give the five-case fresh-preflight integration harness a 15-second test timeout
+instead of Bun's five-second default. Keep every launcher, preflight, stage,
+and 600-second live deadline unchanged.
+
+The ledger preserves its exact 122-row prefix with SHA-256
+`189403f518f525ea4f16eecc56e338d828960f25796643e0e875bfbd5df9706e`;
+one append-only open Correction 39 row brings it to 123 unique rows with
+SHA-256
+`71e942097fd6ec015bb6a4d267144048f39705f5a2e89496bde57bdf5e7066c8`.
+All four focused suites pass at 419 tests and 2,727 assertions: 84 library with
+323 assertions, 167 runtime with 682, 85 contract with 716, and 83 artifact
+with 1,006. Flow typecheck passes. Full deterministic verification, a new
+digest, three zero-finding audits, preflight, and the authorized live run remain
+pending.
+
+- [x] **Step 3: Append every terminal and final proving audit entry**
+
+Record each terminal-protocol, final pre-lock, or proving-audit gap as one
+append-only open row, including the three Correction 20, three Correction 21,
+four Correction 22, one Correction 23, one Correction 24, two Correction 25,
+three Correction 26 rows, two Correction 27 rows, two Correction 28 rows,
+three Correction 29 rows, two Correction 30 rows, four Correction 31 rows,
+four Correction 32 rows, eleven Correction 33 rows, two Correction 34 rows,
+three Correction 35 rows, one Correction 36 row, one Correction 37 row, two
+Correction 38 rows, and one Correction 39 row.
+The launcher, not the workflow, will resolve every latest-open ID at the
+terminal canonical-ledger commit.
 
 - [ ] **Step 4: Rerun complete live workflow**
 
@@ -1235,15 +2001,24 @@ fresh worktree -> worktree list + report base SHA
 skill directive -> config + report directive evidence
 prompt directive -> config + report directive evidence
 deterministic evidence/ranked plan -> scout stage + plan JSON
-test-first -> filtered control pass + target red output + immutable diff + green output
+latest-commit evidence -> scout packet + report gather command
+ranked fallback -> pure ordering tests + typed rejection artifacts + exact restore
+test-first -> lexical binding + exact raw insert + reachable causal matcher + frozen matcher state + exact named RED failure and canonical one-test summary + control/RED/GREEN proof
+operational gate failures -> timeout/null-exit tests prove no candidate fallback
+absolute timing -> completion timestamps + owned settled timeout + one-snapshot retry
+backend -> Codex default/pin + non-Codex rejection before side effects
 implementation -> validated paths + commit
 verification -> targeted logs + full verify exit zero
-review -> findings + final zero-blocker result
-PR/merge -> PR state + merge commit + matched SHA
+review -> initial/final findings + persisted literal zero blocker count
+PR/merge -> strict admin CI app 15368 + ready PR + fresh rollup + SHA lock + logged attempt + bounded exact confirmation after every response
 progress -> live output + monitor JSON
 timing -> elapsed time <= selected profile deadline (live proof: 600000 ms)
 profiles -> unit evidence for 600000/1800000/2700000 ms and 3/6/10 paths
 iteration -> timeout correction plus every new issue/later run
+finalization -> bounded shutdown-once + retryable artifacts + one terminal report + canonical ledger renamed last + exact terminal record/hash recovery
+preflight signal cleanup -> fresh private retraction when quarantine/fallback paths are occupied
+process isolation -> no surviving bounded-command group or detached token owner after leader exit; temporary scan state is PID-only
+integrity -> literal specific RED marker + ignored .orca manifests + verified/index/commit equality
 preservation -> root package-lock.json unchanged
 ```
 
