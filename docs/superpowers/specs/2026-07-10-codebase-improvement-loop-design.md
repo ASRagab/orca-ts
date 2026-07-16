@@ -1073,7 +1073,7 @@ release-artifact amendment below replaces the source validator. The exact
 one open row brings it to 124 unique rows with SHA-256
 `fcd8e718290c2d15facac74bb1641fa3a94c60432af2b57e48caa95e4dc04758`.
 All four focused suites pass at 419 tests and 2,727 assertions, and full
-verification passes 461 tests with one gated skip and 1,317 assertions. A
+verification passes 466 tests with one gated skip and 1,336 assertions. A
 successor digest, audits, and preflight remain pending. The consumed live
 authorization does not permit another invocation.
 
@@ -1101,13 +1101,14 @@ unarchived release binary against the same repository flow that imports
 parent in `finally`. Unsupported hosts fail explicitly. The normal local-binary
 help, version, repository-flow, external-flow, and respawn checks remain.
 
-The executable smoke replaces `scripts/release-build-validation.ts` and its
-unit test; `scripts/validate-release.ts` retains release metadata validation but
-no longer claims to prove runtime behavior from source syntax. Parser tests lock
-default and smoke modes plus every rejected argument class. A mutation proof
-removes the package-autoload flag from the release argv, observes the release
-artifact smoke fail with the retained `typescript` resolution error, restores
-the flag, and observes GREEN before full verification.
+The host-native executable smoke replaces the release source-syntax validator
+`scripts/release-build-validation.ts` and its unit test;
+`scripts/validate-release.ts` retains release metadata validation but no longer
+claims to prove runtime behavior from source syntax. Parser tests lock default
+and smoke modes plus every rejected argument class. The autoload-removal
+mutation proof passed: removing the package-autoload flag from the release argv
+made the release artifact smoke fail with the retained `typescript` resolution
+error; restoring the flag returned GREEN before full verification.
 
 Before the first live run:
 

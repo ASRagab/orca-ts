@@ -1662,6 +1662,12 @@ canonical ledger worker, and preflight only after its final rename returns.
 - [x] Give the five-case fresh-preflight harness a 15-second test timeout while
   retaining every launcher, preflight, stage, and live deadline.
 - [x] Append one Correction 39 audit row without rewriting prior history.
+- [x] Record the frozen digest, zero-finding audits, passing preflight, and the
+  authorized live run's pre-backend compiled-loader failure.
+- [x] Enable Bun runtime package metadata loading in local and release binaries,
+  replace release source-syntax validation with the host-native release smoke,
+  and prove both compiled paths can import a project package.
+- [x] Append one Correction 40 live-run row without rewriting prior history.
 - [x] Historical checkpoint: all four focused suites, flow typecheck, shell
   syntax, diff checks, and full deterministic verification passed after the
   launcher corrections and before the finalization/backend-pin follow-up.
@@ -1818,6 +1824,28 @@ canonical ledger worker, and preflight only after its final rename returns.
   `71e942097fd6ec015bb6a4d267144048f39705f5a2e89496bde57bdf5e7066c8`.
   Full deterministic verification, the successor digest, three audits,
   preflight, and live run remain pending.
+- [x] Correction 40 loader checkpoint: frozen digest
+  `65f7e553e851d657cdc220ec72660dfc5dba1b356fa31a461dd54ed5077b816b`,
+  three literal `ZERO FINDINGS` audits, and preflight
+  `20260716182959-15561` passed. Authorized live run
+  `20260716183318-48343` exited 1 after 17,815ms before backend startup because
+  the compiled runtime could not resolve installed `typescript`. The local
+  binary smoke failed RED and passed GREEN after enabling runtime package
+  metadata loading. The host-native release smoke replaces release
+  source-syntax validation by invoking the real release-builder entrypoint and
+  executing its unarchived artifact. Its autoload-removal mutation proof failed
+  with the retained resolution error and passed after the flag was restored.
+  Strict release-option tests, typecheck, touched-file lint, release validation,
+  embedded-loader tests, and retained inert runtime import pass. The exact
+  123-row prefix
+  retains SHA-256
+  `71e942097fd6ec015bb6a4d267144048f39705f5a2e89496bde57bdf5e7066c8`;
+  one open row brings the ledger to 124 unique rows with SHA-256
+  `fcd8e718290c2d15facac74bb1641fa3a94c60432af2b57e48caa95e4dc04758`.
+  All four focused suites pass at 419 tests and 2,727 assertions, and full
+  verification passes 466 tests with one gated skip and 1,336 assertions.
+  Successor digest, audits, and preflight remain pending; another live run
+  requires fresh explicit authorization.
 - [x] Historical Correction 21 gates: flow typecheck, exact launcher ledger
   validation, lint, documentation link, symbol and signature checks, shell
   syntax, diff checks, and `bun run verify`. Full verification recorded 461

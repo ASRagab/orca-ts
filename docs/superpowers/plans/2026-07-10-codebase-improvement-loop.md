@@ -1976,6 +1976,34 @@ with 1,006. Flow typecheck passes. Full deterministic verification, a new
 digest, three zero-finding audits, preflight, and the authorized live run remain
 pending.
 
+- [x] **Step 2ag: Close the Correction 40 compiled-loader package gap**
+
+The frozen fourteen-artifact digest
+`65f7e553e851d657cdc220ec72660dfc5dba1b356fa31a461dd54ed5077b816b`,
+three zero-finding audits, and preflight `20260716182959-15561` were valid.
+Authorized live run `20260716183318-48343` exited 1 after 17,815ms before
+backend startup because the compiled Bun runtime could not resolve the copied
+workflow's installed `typescript` package.
+
+Enable Bun runtime package metadata loading in local and release compiled
+binary builds. The host-native release smoke replaces release source-syntax
+validation: it invokes the real release-builder entrypoint, then executes its
+unarchived artifact against a repository flow with a third-party package import.
+Its autoload-removal mutation proof failed with the retained resolution error
+and passed after the flag was restored. The local-binary smoke, strict
+release-option tests, typecheck, touched-file lint, release validation,
+embedded-loader tests, and retained inert runtime import pass.
+
+The ledger preserves its exact 123-row prefix with SHA-256
+`71e942097fd6ec015bb6a4d267144048f39705f5a2e89496bde57bdf5e7066c8`;
+one append-only open Correction 40 row brings it to 124 unique rows with
+SHA-256
+`fcd8e718290c2d15facac74bb1641fa3a94c60432af2b57e48caa95e4dc04758`.
+All four focused suites pass at 419 tests and 2,727 assertions, and full
+deterministic verification passes 466 tests with one gated skip and 1,336
+assertions. A successor digest, three audits, and preflight remain pending. The
+consumed live run cannot be retried without fresh explicit authorization.
+
 - [x] **Step 3: Append every terminal and final proving audit entry**
 
 Record each terminal-protocol, final pre-lock, or proving-audit gap as one
@@ -1985,14 +2013,16 @@ three Correction 26 rows, two Correction 27 rows, two Correction 28 rows,
 three Correction 29 rows, two Correction 30 rows, four Correction 31 rows,
 four Correction 32 rows, eleven Correction 33 rows, two Correction 34 rows,
 three Correction 35 rows, one Correction 36 row, one Correction 37 row, two
-Correction 38 rows, and one Correction 39 row.
+Correction 38 rows, one Correction 39 row, and one Correction 40 row.
 The launcher, not the workflow, will resolve every latest-open ID at the
 terminal canonical-ledger commit.
 
 - [ ] **Step 4: Rerun complete live workflow**
 
 Start from a new current `origin/main` worktree. Do not reuse partial branch.
-Repeat until one run passes and each new issue points to later proving run.
+Do not invoke another live run until fresh explicit authorization. Once
+authorized, continue until one run passes and each new issue points to a later
+proving run.
 
 - [ ] **Step 5: Audit every objective requirement**
 
