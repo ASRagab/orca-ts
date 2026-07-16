@@ -1846,6 +1846,24 @@ canonical ledger worker, and preflight only after its final rename returns.
   verification passes 466 tests with one gated skip, zero failures, and 1,336 assertions.
   Successor digest, audits, and preflight remain pending; another live run
   requires fresh explicit authorization.
+- [x] Correction 41 absolute-deadline checkpoint: successor digest
+  `16e2c3824553866e404fccd4eaf7e8b3930db28f81894a7e9e68c9c7ff866748`
+  is invalid. Whole-second launcher remainder accounting could publish live
+  canonical-ledger or preflight success up to 999 milliseconds after the exact
+  deadline. Default decisions now subtract a fresh validated `now_ms` from
+  `launcher_deadline_at_ms`; active-child polling stays shell-native, starts
+  from an exact remainder, and rechecks exact time after success. Deterministic
+  live and preflight expired-deadline harnesses failed RED with exit 0 and pass
+  GREEN by publishing no canonical success. The prior stalled-clock signal
+  harness remains green. The exact 124-row prefix retains SHA-256
+  `fcd8e718290c2d15facac74bb1641fa3a94c60432af2b57e48caa95e4dc04758`;
+  one open row brings the ledger to 125 unique rows with SHA-256
+  `952d97ef59e8f4d5895c1a27b679614fbfbbf2d5e2b70c81e80d280bc84ae72a`.
+  All four focused suites pass at 421 tests and 2,737 assertions: 84 library
+  with 323 assertions, 167 runtime with 682, 85 contract with 716, and 85
+  artifact with 1,016. Full verification passes 466 tests with one gated skip,
+  zero failures, and 1,336 assertions. A new digest, three audits, and preflight
+  remain pending; another live run requires fresh authorization.
 - [x] Historical Correction 21 gates: flow typecheck, exact launcher ledger
   validation, lint, documentation link, symbol and signature checks, shell
   syntax, diff checks, and `bun run verify`. Full verification recorded 461

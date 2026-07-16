@@ -1110,6 +1110,36 @@ mutation proof passed: removing the package-autoload flag from the release argv
 made the release artifact smoke fail with the retained `typescript` resolution
 error; restoring the flag returned GREEN before full verification.
 
+### Correction 41 absolute launcher-deadline amendment
+
+The first post-Correction 40 successor digest
+`16e2c3824553866e404fccd4eaf7e8b3930db28f81894a7e9e68c9c7ff866748`
+is invalid. Although the launcher recorded an exact
+`launcher_deadline_at_ms`, `remaining_launcher_ms` used whole-second
+`SECONDS`. The commit decisions before live latest and canonical-ledger
+publication and before preflight publication could therefore authorize success
+up to 999 milliseconds after the absolute deadline.
+
+The default remainder path now reads and validates fresh millisecond time and
+subtracts it from the absolute deadline. Active-child polling deliberately
+retains shell-native elapsed time so a stalled external clock cannot defer
+signal cleanup; each command starts from one exact remainder and successful
+completion receives another exact deadline check. The obsolete launcher-wide
+started-seconds state is removed. Live and preflight harnesses with
+`now_ms=100` and deadline `99` prove late success is unpublishable and the
+canonical ledger remains unchanged. The Correction 27 stalled-clock signal
+test remains load-bearing.
+
+The exact 124-row ledger prefix has SHA-256
+`fcd8e718290c2d15facac74bb1641fa3a94c60432af2b57e48caa95e4dc04758`;
+one open row brings it to 125 unique rows with SHA-256
+`952d97ef59e8f4d5895c1a27b679614fbfbbf2d5e2b70c81e80d280bc84ae72a`.
+All four focused suites pass at 421 tests and 2,737 assertions: 84 library with
+323 assertions, 167 runtime with 682, 85 contract with 716, and 85 artifact
+with 1,016. Full verification passes 466 tests with one gated skip, zero
+failures, and 1,336 assertions. A fresh successor digest, three audits, and
+preflight remain pending; another live run needs fresh explicit authorization.
+
 Before the first live run:
 
 1. Run pure ranked-fallback tests and real temporary-Git restoration tests.
@@ -1233,9 +1263,10 @@ following:
   and final state match;
 - shutdown ran once; retryable ledger and monitor artifacts preceded one
   terminal, atomic report; every publication returned one authentic immediate
-  pre-rename commit decision that the wrapper could not reclassify; stale
-  attempts could not publish; and the report could pass SLA only with a positive
-  absolute-deadline remainder at that commit point;
+  pre-rename commit decision from a fresh validated millisecond read and exact
+  absolute subtraction that the wrapper could not reclassify; equality,
+  expiry, and stale attempts could not publish; and the report could pass SLA
+  only with a positive absolute-deadline remainder at that commit point;
 - a signal recorded during the final child wait retained its conventional exit
   status after child reaping and trap restoration;
 - latest publication alone never transferred terminal authority; preflight

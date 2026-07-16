@@ -2004,6 +2004,34 @@ deterministic verification passes 466 tests with one gated skip, zero failures, 
 assertions. A successor digest, three audits, and preflight remain pending. The
 consumed live run cannot be retried without fresh explicit authorization.
 
+- [x] **Step 2ah: Close the Correction 41 sub-second publication gap**
+
+The first successor digest
+`16e2c3824553866e404fccd4eaf7e8b3930db28f81894a7e9e68c9c7ff866748`
+is invalid. A frozen runtime audit found that the launcher calculated an exact
+millisecond deadline but `remaining_launcher_ms` ignored it and used
+whole-second `SECONDS`. Live canonical-ledger or preflight success could
+therefore publish up to 999 milliseconds late.
+
+Default remainder decisions now validate a fresh `now_ms` value and subtract
+it from `launcher_deadline_at_ms`. Active-child polling stays shell-native to
+preserve prompt TERM, INT, and HUP handling, starts from one exact remainder,
+and performs an exact post-success check. Remove the obsolete launcher-wide
+started-seconds state. Deterministic live and preflight finalizer harnesses with
+`now_ms=100` and deadline `99` failed RED with exit 0, pass GREEN by failing
+closed, leave the canonical ledger unchanged, and preserve the Correction 27
+stalled-clock signal guard.
+
+The exact 124-row prefix retains SHA-256
+`fcd8e718290c2d15facac74bb1641fa3a94c60432af2b57e48caa95e4dc04758`;
+one open Correction 41 row brings the ledger to 125 unique rows with SHA-256
+`952d97ef59e8f4d5895c1a27b679614fbfbbf2d5e2b70c81e80d280bc84ae72a`.
+All four focused suites pass at 421 tests and 2,737 assertions: 84 library with
+323 assertions, 167 runtime with 682, 85 contract with 716, and 85 artifact
+with 1,016. Full verification passes 466 tests with one gated skip, zero
+failures, and 1,336 assertions. A new digest, three audits, and preflight remain
+pending. The consumed live run still requires fresh explicit authorization.
+
 - [x] **Step 3: Append every terminal and final proving audit entry**
 
 Record each terminal-protocol, final pre-lock, or proving-audit gap as one
@@ -2013,7 +2041,8 @@ three Correction 26 rows, two Correction 27 rows, two Correction 28 rows,
 three Correction 29 rows, two Correction 30 rows, four Correction 31 rows,
 four Correction 32 rows, eleven Correction 33 rows, two Correction 34 rows,
 three Correction 35 rows, one Correction 36 row, one Correction 37 row, two
-Correction 38 rows, one Correction 39 row, and one Correction 40 row.
+Correction 38 rows, one Correction 39 row, one Correction 40 row, and one
+Correction 41 row.
 The launcher, not the workflow, will resolve every latest-open ID at the
 terminal canonical-ledger commit.
 

@@ -863,3 +863,34 @@ deterministic verification passes 466 tests with one gated skip, zero failures, 
 assertions. A successor digest, three audits, and preflight remain pending. The
 authorized live run was consumed; a second live invocation requires fresh
 explicit authorization.
+
+## Correction 41
+
+The first successor digest
+`16e2c3824553866e404fccd4eaf7e8b3930db28f81894a7e9e68c9c7ff866748`
+is invalid. Its frozen runtime audit found that `remaining_launcher_ms`
+derived remaining budget from whole-second `SECONDS` even though the launcher
+had already recorded `launcher_deadline_at_ms`. Live latest and canonical-ledger
+publication, or preflight success publication, could therefore occur up to 999
+milliseconds after the absolute deadline.
+
+Publication decisions now read and validate a fresh millisecond clock and
+subtract it from the exact absolute deadline. Active-child polling retains its
+shell-native clock so a stalled external clock cannot defer signal cleanup; it
+starts from one exact remainder and rechecks the exact clock after a successful
+command. The obsolete launcher-wide started-seconds state is removed. Two
+deterministic finalizer harnesses fix `now_ms` at 100 and the deadline at 99;
+both live and preflight RED exited 0 before the fix and now fail closed without
+committing canonical success. The prior stalled-clock TERM harness remains
+green.
+
+The ledger preserves its exact 124-row prefix with SHA-256
+`fcd8e718290c2d15facac74bb1641fa3a94c60432af2b57e48caa95e4dc04758`;
+one append-only open row brings it to 125 unique rows with SHA-256
+`952d97ef59e8f4d5895c1a27b679614fbfbbf2d5e2b70c81e80d280bc84ae72a`.
+All four focused suites pass at 421 tests and 2,737 assertions: 84 library with
+323 assertions, 167 runtime with 682, 85 contract with 716, and 85 artifact
+with 1,016. Full deterministic verification passes 466 tests with one gated
+skip, zero failures, and 1,336 assertions. A fresh successor digest, three
+audits, and preflight remain pending. Another live run still requires fresh
+explicit authorization.
