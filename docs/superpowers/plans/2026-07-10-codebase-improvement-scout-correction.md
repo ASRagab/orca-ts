@@ -15,15 +15,20 @@
 > superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the timing-unstable model-led repository scout with bounded
-deterministic evidence gathering plus one tool-free structured synthesis turn.
+**Goal:** Replace the timing-unstable model-led repository scout with
+10-second deterministic evidence gathering, tool-free synthesis across at most
+two fresh synthesis conversations, each capped at 40 seconds within 80 seconds
+total, and 10-second validation.
 
 **Architecture:** The parent workflow chooses at most eight tracked source/test
-files, renders a stable 20,000-character evidence packet, and proves gathering
-did not change the worktree. One unchanged-model turn synthesizes three
-candidates and a ranked-ID permutation from that packet; deterministic
-validation attempts candidates in rank order under one shared reproduction
-budget and accepts only the first candidate with a genuine RED proof.
+files, renders a stable 10,000-character evidence packet, and proves gathering
+did not change the worktree within 10 seconds. Tool-free synthesis uses at most
+two fresh unchanged-model conversations, each capped at 40 seconds within 80
+seconds total; a second attempt occurs only after the first attempt's exact
+timeout cancellation. The final 10 seconds validate the packet and synthesis
+or fail closed. Deterministic reproduction then attempts candidates in rank
+order under one shared budget and accepts only the first candidate with a
+genuine RED proof.
 
 **Tech Stack:** Bun 1.3.14, TypeScript 5.9, Zod 4, Orcats 0.2.3, Codex CLI,
 TypeScript compiler API, Bun test.
@@ -34,11 +39,12 @@ TypeScript compiler API, Bun test.
   unchanged.
 - Keep simple timing at 100 seconds for scout, 560 seconds allocated, and 600
   seconds launcher-to-merge.
-- Split scout into at most 15 seconds gather, 75 seconds synthesis, and 10
+- Split scout into at most 10 seconds gather, at most two fresh synthesis
+  conversations each capped at 40 seconds within 80 seconds total, and 10
   seconds validation/reserve.
 - Read at most eight tracked paths: at most four `src/**/*.ts` files and at
   most four `tests/**/*.test.ts` files.
-- Cap rendered evidence at 20,000 characters with stable path and line ordering.
+- Cap rendered evidence at 10,000 characters with stable path and line ordering.
 - Reject protected entrypoints, dependency/release/security/secret/generated,
   documentation, skill, workflow, and `.orca/` paths.
 - Reject model tool events, invalid or incomplete rankings, uncited evidence,
@@ -1901,6 +1907,23 @@ canonical ledger worker, and preflight only after its final rename returns.
   artifact with 1,035. Full verification passes 466 tests with one gated skip,
   zero failures, and 1,336 assertions. A new digest, three audits, and preflight
   remain pending; another live run requires fresh authorization.
+- [x] Correction 44 compact-scout evidence checkpoint: authorized run
+  `20260717000416-46151` failed in scout before edits, push, PR, CI, or merge.
+  Its first scout attempt saw 73,245 model-visible input characters,
+  establishing prompt-size correlation; reasoning-effort causality remains
+  unproven.
+
+  Compact rendering emits one `File: <path>` header followed by numbered source
+  lines, while citations remain `<path>:<line>`. Offline replay over the exact
+  failed-run files rendered 9,998 characters under the 10,000-character cap and
+  retained every required hotspot. The 100-second scout allocation remains 10
+  seconds for gathering, at most two fresh 40-second synthesis attempts, and 10
+  seconds for validation.
+
+  Append-only ledger row 129 is retained; its current SHA-256 is
+  `96c1c4df54aa386adef1ceea1154b4925476095249966eafe0b9988351f6274a`.
+  Full verification, successor manifest/audits, and preflight remain pending.
+  Another live run requires fresh explicit authorization.
 - [x] Historical Correction 21 gates: flow typecheck, exact launcher ledger
   validation, lint, documentation link, symbol and signature checks, shell
   syntax, diff checks, and `bun run verify`. Full verification recorded 461

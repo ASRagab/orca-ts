@@ -220,14 +220,16 @@ path name. Assignment first maximizes covered sources, then total overlap, so a
 shared test cannot consume another source's only related behavior surface.
 The selected source-test assignments are preserved as structured metadata and
 rendered as a mandatory `Reserved source-test pairs` section.
-Rendering uses stable path and line order and reads at most eight tracked
-files: at most four `src/**/*.ts` paths and at most four
-`tests/**/*.test.ts` paths. Every hotspot line and the first line of a file
-without hotspots are mandatory. The latest-commit prefix shares the same cap.
+Rendering uses stable path and line order. It emits one `File: <path>` header
+followed by numbered source lines, while citations remain `<path>:<line>`.
+It reads at most eight tracked files: at most four `src/**/*.ts` paths and at
+most four `tests/**/*.test.ts` paths. Every hotspot line and the first line of a
+file without hotspots are mandatory. The latest-commit prefix shares the same
+cap.
 Files without hotspots retain up to their first 40 lines.
 Optional complete lines are added round-robin across files through 16 lines on
 each side of every hotspot. Mandatory overflow fails closed; no prefix, line,
-or final packet is sliced. The evidence packet is capped at 20,000 characters.
+or final packet is sliced. The evidence packet is capped at 10,000 characters.
 Protected public entrypoints plus dependency, release, security, secret,
 generated, documentation, skill, workflow, and `.orca/` paths are ineligible.
 The report records packet paths, source-test pairs, character count, SHA-256
@@ -1196,6 +1198,25 @@ All four focused suites pass at 424 tests and 2,756 assertions: 84 library with
 with 1,035. Full verification passes 466 tests with one gated skip, zero
 failures, and 1,336 assertions. A new digest, three audits, and preflight remain
 pending; another live run needs fresh explicit authorization.
+
+### Correction 44 compact-scout evidence amendment
+
+Authorized run `20260717000416-46151` failed in scout before edits, push, PR,
+CI, or merge. Its first scout attempt saw 73,245 model-visible input
+characters, establishing prompt-size correlation; reasoning-effort causality
+remains unproven.
+
+Compact rendering emits one `File: <path>` header followed by numbered source
+lines, while citations remain `<path>:<line>`. Offline replay over the exact
+failed-run files rendered 9,998 characters under the 10,000-character cap and
+retained every required hotspot. The 100-second scout allocation remains 10
+seconds for gathering, at most two fresh 40-second synthesis attempts, and 10
+seconds for validation.
+
+Append-only ledger row 129 is retained; its current SHA-256 is
+`96c1c4df54aa386adef1ceea1154b4925476095249966eafe0b9988351f6274a`.
+Full verification, successor manifest/audits, and preflight remain pending.
+Another live run requires fresh explicit authorization.
 
 Before the first live run:
 

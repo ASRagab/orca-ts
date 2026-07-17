@@ -74,7 +74,7 @@ GitHub CLI, Bun test.
   most 80 seconds synthesize and rank without tools, and 10 seconds validate or
   fail closed. Synthesis uses at most two fresh 40-second conversations and
   retries only the first attempt's exact timeout cancellation.
-- Scout evidence is capped at 20,000 characters and records paths, character
+- Scout evidence is capped at 10,000 characters and records paths, character
   count, SHA-256 digest, command logs, latest first-parent commit evidence,
   ranked candidate IDs, rejected attempts, and the accepted control.
 - Gather commands are exactly `git status --porcelain=v1`,
@@ -780,7 +780,7 @@ awaiting so a timeout still proves which request configuration was applied.
    stage limit by `PROFILE_SCALE[profile]`, and start the monitor.
 2. `preflight`: baseline gate, Codex/GitHub auth, HEAD equals `origin/main`.
 3. `scout`: run the exact global-constraint commands, deterministically choose
-   at most four source and four test files, render a stable 20,000-character
+   at most four source and four test files, render a stable 10,000-character
    evidence packet including the latest first-parent commit subject and paths,
    record paths/count/SHA-256/command logs, and verify the worktree did not
    change. Give only that packet to a tool-free structured
@@ -2087,6 +2087,25 @@ with 1,035. Full verification passes 466 tests with one gated skip, zero
 failures, and 1,336 assertions. A new digest, three audits, and preflight remain
 pending. The consumed live run still requires fresh explicit authorization.
 
+- [x] **Step 2ak: Record Correction 44 compact-scout evidence**
+
+Authorized run `20260717000416-46151` failed in scout before edits, push, PR,
+CI, or merge. Its first scout attempt saw 73,245 model-visible input
+characters, establishing prompt-size correlation; reasoning-effort causality
+remains unproven.
+
+Compact rendering emits one `File: <path>` header followed by numbered source
+lines, while citations remain `<path>:<line>`. Offline replay over the exact
+failed-run files rendered 9,998 characters under the 10,000-character cap and
+retained every required hotspot. The 100-second scout allocation remains 10
+seconds for gathering, at most two fresh 40-second synthesis attempts, and 10
+seconds for validation.
+
+Append-only ledger row 129 is retained; its current SHA-256 is
+`96c1c4df54aa386adef1ceea1154b4925476095249966eafe0b9988351f6274a`.
+Full verification, successor manifest/audits, and preflight remain pending.
+Another live run requires fresh explicit authorization.
+
 - [x] **Step 3: Append every terminal and final proving audit entry**
 
 Record each terminal-protocol, final pre-lock, or proving-audit gap as one
@@ -2097,7 +2116,8 @@ three Correction 29 rows, two Correction 30 rows, four Correction 31 rows,
 four Correction 32 rows, eleven Correction 33 rows, two Correction 34 rows,
 three Correction 35 rows, one Correction 36 row, one Correction 37 row, two
 Correction 38 rows, one Correction 39 row, one Correction 40 row, one
-Correction 41 row, one Correction 42 row, and two Correction 43 rows.
+Correction 41 row, one Correction 42 row, two Correction 43 rows, and one
+Correction 44 row.
 The launcher, not the workflow, will resolve every latest-open ID at the
 terminal canonical-ledger commit.
 

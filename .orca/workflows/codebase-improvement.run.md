@@ -152,11 +152,13 @@ unused positive-overlap test for each selected source that has one before
 adding extras, using deterministic maximum-coverage assignment so a shared test
 cannot starve another source. The packet exposes those assignments under
 `Reserved source-test pairs`; the pair list is mandatory and consumes the same
-20,000-character cap. Rendering retains
+10,000-character cap. Rendering emits each path once as a
+`File: <path>` section header, then numbered source lines that candidates cite
+as `<path>:<line>`. It retains
 every hotspot first, then distributes context fairly across files through
 16 lines before and after each hotspot without cutting a line. The packet
 contains at most eight tracked paths: at most four `src/**/*.ts` paths and at
-most four `tests/**/*.test.ts` paths. It is capped at 20,000 characters.
+most four `tests/**/*.test.ts` paths. It is capped at 10,000 characters.
 Files without hotspots contribute up to their first 40 lines.
 The latest-commit prefix and mandatory lines consume the cap before optional
 context. Mandatory overflow fails closed; the renderer never truncates a line
@@ -950,3 +952,22 @@ with 1,035. Full deterministic verification passes 466 tests with one gated
 skip, zero failures, and 1,336 assertions. A new digest, three audits, and
 preflight remain pending. Another live run still requires fresh explicit
 authorization.
+
+## Correction 44
+
+Authorized run `20260717000416-46151` failed in scout before edits, push, PR,
+CI, or merge. Its first scout attempt saw 73,245 model-visible input
+characters, establishing prompt-size correlation; reasoning-effort causality
+remains unproven.
+
+Compact rendering emits one `File: <path>` header followed by numbered source
+lines, while citations remain `<path>:<line>`. Offline replay over the exact
+failed-run files rendered 9,998 characters under the 10,000-character cap and
+retained every required hotspot. The 100-second scout allocation remains 10
+seconds for gathering, at most two fresh 40-second synthesis attempts, and 10
+seconds for validation.
+
+Append-only ledger row 129 is retained; its current SHA-256 is
+`96c1c4df54aa386adef1ceea1154b4925476095249966eafe0b9988351f6274a`.
+Full verification, successor manifest/audits, and preflight remain pending.
+Another live run requires fresh explicit authorization.
