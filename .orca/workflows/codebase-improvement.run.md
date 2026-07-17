@@ -971,3 +971,74 @@ Append-only ledger row 129 is retained; its current SHA-256 is
 `96c1c4df54aa386adef1ceea1154b4925476095249966eafe0b9988351f6274a`.
 Full verification, successor manifest/audits, and preflight remain pending.
 Another live run requires fresh explicit authorization.
+
+## Correction 45
+
+The frozen-byte audits found
+`audit-scout-validation-reserve-deadline`,
+`audit-candidate-citation-token-boundary`, and
+`audit-current-scout-plan-evidence-cap`. Early synthesis left validation able
+to consume the whole scout remainder, forged prefix, nested-path, and line
+suffix text satisfied rendered markers, and the current imperative Task 2
+snippet still prescribed `20_000`.
+
+Scout validation now starts one absolute 10-second validation deadline
+immediately after synthesis, bounds every tracked-path operation by its shared
+remainder, and performs a final remainder check. Candidate citations now
+require exact citation-token boundaries. The current Task 2 snippet uses the
+normative 10,000-character cap and names the validation-limit constant.
+
+Three append-only open audit rows bring the ledger to 132 rows and 132 unique
+IDs with SHA-256
+`1ebfb5e0bec4d7f3fd4db71c8550ab7193e181e52c733ae8850bbcd7a0f261f1`.
+Focused library, contract, and artifact regressions pass. Prompt-size correlation
+and the unproven reasoning-effort causality conclusion are unchanged. Full
+verification, a new manifest, three fresh audits, preflight, and any live run
+remain pending. Another live run requires fresh explicit authorization.
+
+## Correction 46
+
+The aggregate library, contract, and artifact gate exposed
+`terminal package-lock drift blocks success publication` as a behavioral RED.
+The test runs three subprocess harnesses under Bun's default 5-second timeout;
+it timed out in the aggregate gate and took 4.98 seconds isolated. Only this
+existing three-scenario artifact test now has an explicit 15-second timeout,
+matching its neighboring harness.
+
+Append-only open row `review-terminal-package-lock-harness-timeout` brings the
+ledger to 133 rows and 133 unique IDs with SHA-256
+`07da8ff81c2d550629961d9d0d5a2f9d3b7a9dfeaf8647a972b899f9fa5ef347`.
+The focused target and artifact proof pass 1/1 each, the isolated artifact
+suite passes 91/91, and the aggregate gate passes 262/262. Full verification,
+a new manifest, three
+fresh audits, preflight, and any live run remain pending. Another live run
+requires fresh explicit authorization.
+
+## Correction 47
+
+The complete four-suite gate exposed a second default-timeout failure:
+`successful terminal publication validates monitor identity and outcome`
+timed out after 5003.72 milliseconds. It expected launcher exit 74 but received
+the timeout signal status 143.
+
+A deterministic AST inventory found 31 finalizer-harness tests, 33 static calls,
+and 52 loop-expanded subprocess runs. The 24 default-timeout tests
+relied on Bun's five-second default, six already declared 15 seconds, and the
+named six-scenario mutation test declared 30 seconds. Every ordinary
+finalizer-harness test now declares a 15-second timeout; the six-scenario
+mutation test retains its 30-second timeout. An AST policy guard locks the
+31-test, 33-call, and 52-run expansion. It rejects indirect harness references
+and duplicate exception titles.
+It permits exactly one six-scenario 30-second exception.
+It rejects reduced scenario sets.
+
+Append-only open row `review-finalizer-harness-timeout-policy` preserves the
+exact 133-row prefix with SHA-256
+`07da8ff81c2d550629961d9d0d5a2f9d3b7a9dfeaf8647a972b899f9fa5ef347`
+and brings the ledger to 134 rows and 134 unique IDs with SHA-256
+`24cb771218c8ff8839397eb12e64588b649980c09928249dfc7aa3f4ae84e43f`.
+The isolated artifact suite passes 93/93 with 1,317 assertions, and the
+four-suite aggregate passes 431/431 with 3,064 assertions. Full verification
+records 466 passes, one gated skip, zero failures, and 1,336 assertions. A new
+manifest, three fresh audits, preflight, and any live run remain pending.
+Another live run requires fresh explicit authorization.
