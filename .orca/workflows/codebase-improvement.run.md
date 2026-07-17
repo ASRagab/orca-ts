@@ -1249,3 +1249,46 @@ A new manifest for the ordered 14-file set, three fresh audits, preflight, and a
 live run remain pending. No manifest generation, audit, preflight, live
 execution, push, PR, CI wait, or merge ran in Correction 52. Any live run or
 GitHub write requires fresh explicit authorization.
+
+## Correction 53
+
+Three historical-proof boundary root causes remained after Correction 52:
+
+- `audit-correction50-proof-heading-start`: The Correction 50 proof located its
+  start with plain-text `lastIndexOf`, so a plain non-heading Correction 50
+  label could satisfy the historical proof. The shared parser now requires an
+  exact supported Markdown heading before the Correction 50 row anchor.
+- `audit-correction51-heading-word-boundary`: The Correction 51 and Correction
+  52 heading matchers lacked numeric word boundaries, so Correction 510 or
+  Correction 520 could satisfy an exact historical heading. The shared matcher
+  now requires the complete requested correction number.
+- `audit-correction51-proof-section-end-boundary`: The Correction 51 proof
+  ended at reusable authorization text instead of its next correction heading,
+  so its required authorization could be borrowed from Correction 52. The
+  shared extractor now ends the section at the exact next-number heading.
+
+One shared exact Markdown heading matcher accepts `##`, `###`, and checked-list
+headings with optional bold markers and requires `\bCorrection <number>\b`. One
+shared historical extractor requires an exact current heading before its row
+anchor, an exact next-number heading after that row anchor, and
+`current < row < next`; it returns only `source.slice(current, next)`.
+Corrections 49, 50, 51, and 52 now use that extractor.
+
+The unchanged first 152 rows retain SHA-256
+`24328b018809a39e2659dcc62e94c7600d106e63cebb2d4cfc00af83ee24bdcb`.
+Three append-only open rows bring the ledger to 155 rows and 155 unique IDs with
+SHA-256
+`5e64ec63520b0f86bb53e4abe7f5f1b072543dde459c96e65b9e1e6dbef41b65`.
+
+Final measured gates: focused Correction 53 proof and mutation policy pass 2/2
+with 171 assertions. The isolated artifact suite passes 124/124 with 2,397
+assertions, and the four-suite aggregate passes 469/469 with 4,165 assertions.
+Flow typecheck and exact extracted launcher ledger validation pass. Bash syntax,
+documentation link checking for 53 files, symbol and signature checks, and
+`git diff --check` pass. Full verification records 466 passes, one gated skip,
+zero failures, and 1,336 assertions.
+
+A new manifest for the ordered 14-file set, three fresh audits, preflight, and a
+live run remain pending. No manifest generation, audit, preflight, live
+execution, push, PR, CI wait, or merge ran in Correction 53. Any live run or
+GitHub write requires fresh explicit authorization.
