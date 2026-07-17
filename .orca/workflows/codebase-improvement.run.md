@@ -1073,11 +1073,12 @@ Another live run requires fresh explicit authorization.
 ## Correction 49
 
 The Correction 48 frozen-byte audits found five remaining root-cause classes:
-`audit-finalizer-harness-scenario-binding`,
-`audit-finalizer-harness-global-loop-control`,
-`audit-finalizer-harness-option-integrity`,
-`audit-finalizer-harness-scenario-identity`, and
-`audit-finalizer-harness-callable-identity`.
+
+- `audit-finalizer-harness-scenario-binding`:
+- `audit-finalizer-harness-global-loop-control`:
+- `audit-finalizer-harness-option-integrity`:
+- `audit-finalizer-harness-scenario-identity`:
+- `audit-finalizer-harness-callable-identity`:
 
 Static loop cardinality alone did not prove which scenarios executed, which
 harness option each scenario selected, or which callable produced the result.
@@ -1292,3 +1293,51 @@ A new manifest for the ordered 14-file set, three fresh audits, preflight, and a
 live run remain pending. No manifest generation, audit, preflight, live
 execution, push, PR, CI wait, or merge ran in Correction 53. Any live run or
 GitHub write requires fresh explicit authorization.
+
+## Correction 54
+
+Nine successor-audit root causes remained after Correction 53:
+
+- `audit-runtime-filesystem-deadline-coverage`: Active filesystem operations
+  now share the exact 580-second work remainder and reject completion at or
+  after cutoff.
+- `audit-ci-poll-deadline-reserve`: Every pending CI sleep is deadline-bound
+  and preserves the 5,000 ms merge-confirmation plus 5,000 ms issue-closure
+  reserves.
+- `audit-launcher-publication-deadline-coverage`: Every canonical launcher
+  publication uses the supervised atomic rename protocol with a 1,000 ms
+  read-only recovery reserve.
+- `audit-merge-response-authoritative-confirmation`: Every exact SHA-locked
+  squash response is persisted before authoritative state confirmation,
+  including failed responses and ordered dual-cause failure.
+- `audit-correction-heading-horizontal-whitespace`: Correction headings accept
+  horizontal space or tab only; a newline after the Markdown marker is
+  rejected.
+- `audit-correction-row-anchor-exact-line`: Escaped row IDs match only exact
+  Markdown anchor lines; suffixed and prose-only IDs are rejected.
+- `audit-correction-heading-uniqueness`: Each current and supplied next-number
+  correction heading must occur exactly once.
+- `audit-correction53-section-end-boundary`: Correction 53 is bounded by the
+  exact Correction 54 heading rather than reusable authorization prose or EOF.
+- `audit-proof-semantic-execution-binding`: Exact section bytes and SHA-256
+  values bind historical wording, semantic polarity, and measured-count prose
+  without claiming that static text executed a command.
+
+The unchanged first 155 ledger rows retain SHA-256
+`5e64ec63520b0f86bb53e4abe7f5f1b072543dde459c96e65b9e1e6dbef41b65`.
+Nine append-only open rows bring the ledger to 164 rows and 164 unique IDs
+with SHA-256 `1311cdd92f9177984ccce0f74d3f8c794c13529b86837503b1597502008a723c`.
+
+Static hashes bind wording and history only. Executed focused and aggregate
+gate outputs plus a fresh preflight prove execution. Historical measured-count
+prose remains locked documentation, not evidence that those commands ran.
+
+Final measured Task 4 gate: focused proof document policy and Correction 54
+verification passes 5/5 with
+68 assertions.
+The Task 5 aggregate gate and fresh preflight remain pending and must execute;
+their later outputs, not this static section, will prove those actions.
+
+No manifest generation, audit, preflight, live execution, push, PR, CI wait,
+or merge ran in Correction 54. Any live run or GitHub write requires fresh
+explicit authorization.
