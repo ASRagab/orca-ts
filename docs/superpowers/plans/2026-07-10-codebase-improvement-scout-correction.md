@@ -1986,6 +1986,30 @@ canonical ledger worker, and preflight only after its final rename returns.
   records 466 passes, one gated skip, zero failures, and 1,336 assertions. A
   new manifest, three fresh audits, preflight, and any live run remain pending.
   Another live run requires fresh explicit authorization.
+- [x] Correction 48 unconditional-scenario checkpoint: the frozen-byte policy
+  audit found `audit-finalizer-harness-conditional-skip`. The first AST guard
+  counted six declared loop elements, but a conditional `continue` could skip
+  one at runtime while preserving 31 tests, 33 calls, 52 expanded runs, and an
+  empty issue list.
+
+  The sole 30-second exception must now use one top-level `for...of` loop whose
+  first body statement is an unconditional top-level harness call awaited into
+  one variable. Conditional, early-exit, alternate-loop, nested, and labeled
+  control flow are rejected. A mutation regression proves all six scenarios
+  must execute. The loop must enumerate the exact six unique mutation literals;
+  duplicate literals and spread elements are rejected.
+
+  Append-only open row `audit-finalizer-harness-conditional-skip` preserves the
+  exact 134-row prefix with SHA-256
+  `24cb771218c8ff8839397eb12e64588b649980c09928249dfc7aa3f4ae84e43f`
+  and brings the ledger to 135 rows and 135 unique IDs with SHA-256
+  `f42621dd2b4400f075ff182be37a6f2953ce9ef1f47fc3b4b2ed2d6167bc22d3`.
+  Focused policy and proof verification passes. The isolated artifact suite
+  passes 94/94 with 1,405 assertions, and the four-suite aggregate passes
+  432/432 with 3,152 assertions. Full verification records 466 passes, one
+  gated skip, zero failures, and 1,336 assertions. A new manifest, three fresh
+  audits, preflight, and any live run remain pending.
+  Another live run requires fresh explicit authorization.
 - [x] Historical Correction 21 gates: flow typecheck, exact launcher ledger
   validation, lint, documentation link, symbol and signature checks, shell
   syntax, diff checks, and `bun run verify`. Full verification recorded 461
