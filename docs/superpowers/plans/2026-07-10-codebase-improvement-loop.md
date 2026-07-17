@@ -2542,3 +2542,35 @@ their later outputs, not this static section, will prove those actions.
 No manifest generation, audit, preflight, live execution, push, PR, CI wait,
 or merge ran in Correction 54. Any live run or GitHub write requires fresh
 explicit authorization.
+## Correction 55
+
+One proof-evidence audit finding remained after Correction 54:
+
+- `audit-correction-heading-line-terminator-exclusion`: Both correction-heading
+  free-text fragments now exclude CR, LF, LINE SEPARATOR, and PARAGRAPH
+  SEPARATOR; a Markdown marker cannot borrow a later Correction label across
+  any ECMAScript line terminator.
+
+The unchanged first 164 ledger rows retain SHA-256
+`1311cdd92f9177984ccce0f74d3f8c794c13529b86837503b1597502008a723c`.
+One append-only open row brings the ledger to 165 rows and 165 unique IDs
+with SHA-256 `62f6ed7843676b071f88908dcd82a0b9e64613d06cc1ad44da26a86fe8d862db`.
+
+Static hashes bind wording and history only. Executed focused and aggregate
+gate outputs plus a fresh preflight prove execution. Historical measured-count
+prose remains locked documentation, not evidence that those commands ran.
+
+Final measured Task 1 gate: focused proof document policy, Correction 54, and
+Correction 55 verification passes 7/7 with 98 assertions.
+The Task 2 aggregate gate, three successor audits, and fresh preflight remain
+pending and must execute; their later outputs, not this static section, prove
+those actions.
+
+The Correction 54 successor digest
+`7f66b7c0a901ac6ca5632dc93a1f6bf8ab4aeb09d356db5641001d97ba963e6a`
+is invalidated historical evidence and cannot authorize preflight or live
+execution.
+
+No C55 successor manifest, successor audit, preflight, live backend, push, PR,
+CI wait, or merge ran in Task 1. Fresh authorization remains required for any
+live run or GitHub write.
