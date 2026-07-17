@@ -2144,6 +2144,43 @@ live run remain pending. No manifest generation, audit, preflight, live
 execution, push, PR, CI wait, or merge ran in Correction 51. Any live run or
 GitHub write requires fresh explicit authorization.
 
+- [x] Correction 52 historical-proof checkpoint:
+
+Two evidence-audit root causes remained after Correction 51:
+
+- `audit-correction49-proof-section-boundary`: The Correction 49 proof sliced
+  from its heading through end-of-file, allowing Correction 50 or later text to
+  supply a missing required historical token. The Correction 49 proof now
+  locates an exact Correction 50 Markdown heading and inspects only the bounded
+  Correction 49 section. A borrowing mutation removes `exact scenario-array
+  digests` from Correction 49 and places it in Correction 50; the policy
+  rejects it.
+- `audit-correction51-ledger-claim-semantic-binding`: The Correction 51 proof
+  required count and SHA-256 fragments rather than affirmative ledger
+  semantics. `do not retain SHA-256` and `does not bring the ledger to 150 rows
+  and 150 unique IDs` preserved those fragments while reversing the claims.
+  The Correction 51 inspector now requires the two exact normalized affirmative
+  ledger sentences, and both semantic-negation mutations are rejected.
+
+The unchanged first 150 rows retain SHA-256
+`f77b1bf5c4ec4a65b28c4d433a3a46e0bf4c43bb0ad72212f86da250af0e9872`.
+Two append-only open rows bring the ledger to 152 rows and 152 unique IDs with
+SHA-256
+`24328b018809a39e2659dcc62e94c7600d106e63cebb2d4cfc00af83ee24bdcb`.
+
+Final measured gates: focused Correction 52 proof and mutation policy pass 2/2
+with 147 assertions. The isolated artifact suite passes 123/123 with 2,235
+assertions, and the four-suite aggregate passes 468/468 with 4,003 assertions.
+Flow typecheck and exact extracted launcher ledger validation pass. Bash syntax,
+documentation link checking for 53 files, symbol and signature checks, and
+`git diff --check` pass. Full verification records 466 passes, one gated skip,
+zero failures, and 1,336 assertions.
+
+A new manifest for the ordered 14-file set, three fresh audits, preflight, and a
+live run remain pending. No manifest generation, audit, preflight, live
+execution, push, PR, CI wait, or merge ran in Correction 52. Any live run or
+GitHub write requires fresh explicit authorization.
+
 - [x] Historical Correction 21 gates: flow typecheck, exact launcher ledger
   validation, lint, documentation link, symbol and signature checks, shell
   syntax, diff checks, and `bun run verify`. Full verification recorded 461
