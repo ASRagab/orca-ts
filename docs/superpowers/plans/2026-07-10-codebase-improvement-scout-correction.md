@@ -2010,6 +2010,140 @@ canonical ledger worker, and preflight only after its final rename returns.
   gated skip, zero failures, and 1,336 assertions. A new manifest, three fresh
   audits, preflight, and any live run remain pending.
   Another live run requires fresh explicit authorization.
+- [x] Correction 49 exact-scenario checkpoint: the Correction 48 frozen-byte
+  audits found `audit-finalizer-harness-scenario-binding`,
+  `audit-finalizer-harness-global-loop-control`,
+  `audit-finalizer-harness-option-integrity`,
+  `audit-finalizer-harness-scenario-identity`, and
+  `audit-finalizer-harness-callable-identity`.
+
+  All seven harness loops require exact scenario-array digests.
+  They require exact scenario-to-option selector paths.
+  They use inline non-spread scenario literals.
+  They use const loop bindings and a first awaited harness call.
+  Remaining values are pure harness options with unique static keys.
+  Pre-loop and post-call returns, breaks, catching try blocks, conditional
+  skips, spreads, computed overrides, assignments, calls, and irrelevant
+  bindings fail closed.
+  The file retains one top-level `runFinalizerHarness`.
+  It retains one top-level `terminalMonitorFixture`.
+  Both are used only through direct calls.
+
+  The exact 135-row ledger prefix retains SHA-256
+  `f42621dd2b4400f075ff182be37a6f2953ce9ef1f47fc3b4b2ed2d6167bc22d3`.
+  Five append-only open rows bring the ledger to 140 rows and 140 unique IDs
+  with SHA-256
+  `401a417c41f1c24aaef1fdf8990ae1c049c8d7affcb822e8d552fc2372d463e3`.
+  Deterministic verification also exposed that the four-scenario terminal-stage
+  boundary test consumed 14.0-14.9 seconds under its 15-second limit. The
+  harness now tightens only its test-local `run_before_deadline` polling from
+  50ms to 10ms for `afterTerminalStage` scenarios; production launcher polling
+  and the 15-second test limit are unchanged. The focused boundary test passes
+  1/1 with 32 assertions in 11.5 seconds.
+
+  Focused policy verification passes 18/18 with 88 assertions. The isolated
+  artifact suite passes 112/112 with 1,584 assertions, and the four-suite
+  aggregate passes 450/450 with 3,331 assertions. Flow typecheck, exact ledger
+  validation, Bash syntax, documentation link, symbol, and signature checks
+  pass. Full verification records 466 passes, one gated skip, zero failures,
+  and 1,336 assertions. A new manifest, three fresh audits, preflight, and any
+  live run remain pending.
+  Another live run requires fresh explicit authorization.
+- [x] Correction 50 audit-closure checkpoint:
+
+Nine validated root causes remained after Correction 49:
+
+- `audit-finalizer-harness-callback-identity`: fragment and count checks did not
+  bind complete callbacks. The policy now requires exact normalized callback
+  source digests for all seven protected tests.
+- `audit-finalizer-harness-option-binding-purity`: an effectful pre-loop alias
+  could satisfy an otherwise passive option expression. The protected callback
+  identities now require the exact pure pre-loop option bindings.
+- `audit-matcher-proof-symbol-identity`: same-name local shadows could satisfy
+  matcher checks. The contract now resolves canonical TypeScript symbol identity
+  for the preload writer and imported matcher helper.
+- `audit-delivery-immutable-push-ref`: mutable `HEAD` and the current remote name
+  could drift. Delivery now uses one captured origin URL, an immutable
+  validated-SHA push ref, and an exact `ls-remote` branch-SHA proof before PR
+  creation.
+- `audit-merge-command-authority`: confirmation could hide a failed squash
+  response. A failed squash command now throws before confirmation can run.
+- `audit-terminal-report-binding`: a nonempty PR URL could authorize launcher
+  success. A complete terminal report binding now proves launcher, run, monitor,
+  repository, fixed head, CI, merge, timing, SLA, and usage claims before hash or
+  ledger staging.
+- `audit-work-finalization-reserve`: active work could consume the full deadline,
+  and merge subtracted the reserve twice. Runtime work now leaves one worker
+  finalization reserve, merge consumes that cutoff without another subtraction,
+  and launcher work leaves its own reserve before terminal publication.
+- `audit-timeout-usage-accounting`: non-scout timeouts discarded valid settled
+  usage. The shared wrapper records fulfilled terminal usage once and rethrows
+  the same timeout.
+- `audit-design-contract-drift`: design text omitted two control fields, allowed
+  one path, and described only one commit. It now documents the four-field
+  `selectedControl`, exactly two to three changed paths, and the full
+  parent-to-head diff.
+
+The unchanged 140-row prefix retains SHA-256
+`401a417c41f1c24aaef1fdf8990ae1c049c8d7affcb822e8d552fc2372d463e3`.
+Nine append-only open rows bring the ledger to 149 rows and 149 unique IDs with
+SHA-256
+`607bd1a3250dcf1afeb9880683179391a69cc98fda7e151c938d0b9658604338`.
+
+Final measured gates: focused docs/proof verification passes 2/2 with 150
+assertions. The isolated artifact suite passes 119/119 with 1,936 assertions,
+and the four-suite aggregate passes 464/464 with 3,700 assertions. Flow
+typecheck and exact launcher ledger validation pass. Bash syntax,
+documentation link checking for 53 files, symbol and signature checks, and
+`git diff --check` pass. Full verification records 466 passes, one gated skip,
+zero failures, and 1,336 assertions.
+
+A new manifest, three fresh audits, preflight, and a live run remain pending.
+No manifest generation, audit, preflight, live execution, push, PR, CI wait, or
+merge ran in Correction 50. Any live run or GitHub write requires fresh explicit
+authorization.
+
+- [x] Correction 51 composed-finalization checkpoint:
+
+One cross-layer root cause remained after Correction 50:
+
+- `audit-cross-layer-finalization-reserve-composition`: Task 4 review blocked
+  commit because the launcher and runtime independently claimed the same final
+  10-second interval. The launcher could terminate a worker while runtime
+  terminal evidence was still being published. The launcher now exports its
+  absolute worker cutoff through `ORCA_IMPROVEMENT_WORKER_DEADLINE_AT_MS`;
+  runtime binds that exact safe integer as `workerDeadlineAtMs` before fallible
+  setup, records it in the terminal report, stops active work 10 seconds earlier,
+  and completes finalization by the worker cutoff. Launcher terminal validation
+  requires that exact reported cutoff and rejects `finishedAtMs` after it before
+  success hashing or ledger staging.
+- For the simple profile, runtime active work ends at 580 seconds, runtime
+  finalization owns 580-590 seconds, and launcher finalization owns 590-600
+  seconds. These disjoint windows preserve the unchanged 600-second outer SLA.
+  Medium and challenging profiles retain their unchanged absolute deadlines and
+  the same two exact reserves.
+
+The unchanged first 149 rows retain SHA-256
+`607bd1a3250dcf1afeb9880683179391a69cc98fda7e151c938d0b9658604338`; the
+first 140 rows still retain SHA-256
+`401a417c41f1c24aaef1fdf8990ae1c049c8d7affcb822e8d552fc2372d463e3`.
+One append-only open row brings the ledger to 150 rows and 150 unique IDs with
+SHA-256
+`f77b1bf5c4ec4a65b28c4d433a3a46e0bf4c43bb0ad72212f86da250af0e9872`.
+
+Final measured gates: focused Correction 51 proof and mutation policy pass 2/2
+with 124 assertions. The isolated artifact suite passes 122/122 with 2,093
+assertions, and the four-suite aggregate passes 467/467 with 3,861 assertions.
+Flow typecheck and exact extracted launcher ledger validation pass. Bash syntax,
+documentation link checking for 53 files, symbol and signature checks, and
+`git diff --check` pass. Full verification records 466 passes, one gated skip,
+zero failures, and 1,336 assertions.
+
+A new manifest for the ordered 14-file set, three fresh audits, preflight, and a
+live run remain pending. No manifest generation, audit, preflight, live
+execution, push, PR, CI wait, or merge ran in Correction 51. Any live run or
+GitHub write requires fresh explicit authorization.
+
 - [x] Historical Correction 21 gates: flow typecheck, exact launcher ledger
   validation, lint, documentation link, symbol and signature checks, shell
   syntax, diff checks, and `bun run verify`. Full verification recorded 461
