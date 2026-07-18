@@ -405,16 +405,21 @@ SHA-256 values. The projection excludes `ledgerSha256`,
 separately. Under the ledger lock the launcher rejects any concurrent source
 suffix, rehashes every bound file and projection, verifies the claims and
 zero-open state, and atomically renames that canonical ledger last. That rename
-is the live commit point; `latest.json` alone is never authoritative. A signal
-before the rename exits with its signal status. The bounded command wrapper
-reaps its child, restores the caller traps, and only then returns any recorded
-`TERM`, `INT`, or `HUP` status, so the final child wait cannot overwrite that
-signal. A successful group leader is not terminal while any member of its
+is the live commit point; `latest.json` alone is never authoritative. A caught
+launcher signal is not itself proof of which side of the canonical rename
+completed. After a nonzero merge result, exactly one supervised read-only probe
+under the remaining outer deadline checks the terminal record and complete
+canonical-ledger hash. A pre-rename interruption has no matching record and
+hash, so the probe fails and the original signal status remains. A post-rename
+interruption may recover only when the probe validates the exact terminal
+record, projection and claims, and complete canonical-ledger hash. A new
+`TERM`, `INT`, or `HUP` during that probe remains nonzero and cannot authorize
+success. The bounded command wrapper reaps its child, restores the caller traps,
+and only then returns any recorded signal status, so the final child wait cannot
+overwrite it. A successful group leader is not terminal while any member of its
 process group remains. The wrapper sends `TERM`, escalates to `KILL`, waits for
 the group to disappear, and converts a would-be zero status to `125`; an
-existing nonzero status remains nonzero. An interruption after the rename is
-recoverable only through the exact
-terminal record, projection and claims, and complete canonical-ledger hash.
+existing nonzero status remains nonzero.
 
 The launcher otherwise fails evidence finalization closed. Every shutdown,
 ledger, copy, discovery, report-read, retry, clock, JSON-render, and
@@ -422,8 +427,17 @@ atomic-publish action uses the shared absolute deadline. Successful latest and
 preflight documents remain private while diagnostics print. `latest.json` gets
 an immediate positive commit decision before its rename; claimable
 `preflight.json` gets a second fresh positive decision immediately before its
-rename. In preflight mode, authority transfers only after that rename returns
-and no pending signal requires retraction. A failed second decision or rename
+rename. Cooperative canonical publishers serialize each destination with one
+exclusive `${destination_path}.publication-lock` held across the final
+destination-absence check and authoritative move; an ordinary non-participating
+`mv` is outside this protocol. Lock cleanup preserves the authoritative move
+status. TERM, INT, and HUP remove only a proven-owned marker and lock, while an
+invalid, SIGKILL-stale, or cleanup-stale lock fails closed with status `73` and
+is never reclaimed automatically. An operator may remove a stale lock only
+after proving no publisher is live. The same run must publish `latest.json`
+successfully before it may publish `preflight.json`. In preflight mode,
+authority transfers only after that rename returns and no pending signal
+requires retraction. A failed second decision or rename
 atomically moves `latest.json` back to private staging
 before rendering failure evidence. If that move fails after the deadline, a
 same-directory atomic failure tombstone replaces the success-shaped document.
@@ -1373,3 +1387,86 @@ execution.
 No C55 successor manifest, successor audit, preflight, live backend, push, PR,
 CI wait, or merge ran in Task 1. Fresh authorization remains required for any
 live run or GitHub write.
+## Correction 56
+
+Two deadline and atomic-publication audit findings remained after Correction 55:
+
+- `audit-terminal-ledger-recovery-reserve`: Terminal-ledger commit now spends
+  the existing 1,000 ms reserve on its merge and runs one read-only recovery
+  validator under the remaining outer deadline. Both signal channels gate
+  recovery before and after it; a stalled validator is terminated and cannot
+  authorize success after cutoff.
+- `audit-canonical-publication-no-clobber`: Each canonical destination now uses
+  a destination-keyed `mkdir` publication lock held through the final absence
+  check and `mv`. Existing, invalid, SIGKILL-stale, or cleanup-stale locks fail
+  closed with status 73, while cleanup preserves an already committed move
+  status.
+
+The unchanged first 165 ledger rows retain SHA-256
+`62f6ed7843676b071f88908dcd82a0b9e64613d06cc1ad44da26a86fe8d862db`.
+Two append-only open rows bring the ledger to 167 rows and 167 unique IDs
+with SHA-256 `390a6523ffc73ddb04daba2820605115059a4032dd7c78ff32687008e91662ed`.
+
+The exact Correction 55 section remains 1,530 UTF-8 bytes with SHA-256
+`186c083d3f40dd8fd3e39903e794f29ad776802591ffb7b8a690d091ec209f13`. The C55
+successor digest
+`8e90acb21113296ff9d5590465273d38cbc0b265e5b5618ffda33e8a039cd5a6`
+is invalidated historical evidence and cannot authorize preflight or live
+execution.
+
+Measured Task 1 final focused verification passed 11/11 tests with 127
+assertions; `bash -n` and `bun run typecheck` passed. Measured Task 2 final
+focused verification passed 15/15 tests with 291 assertions; `/bin/bash -n`,
+`bash -n`, `bun run typecheck`, and `git diff --check` passed. These are the
+only executed results recorded in this static section.
+
+The full deterministic aggregate gate, successor manifest and digest, three
+successor audits, fresh simple preflight, live backend run, push, ready PR, CI
+wait, and SHA-locked squash merge remain pending. No preflight, live backend,
+push, PR, CI wait, merge, or GitHub mutation ran in Correction 56 Task 3.
+Fresh authorization remains required for any live run or GitHub write.
+## Correction 57
+
+The required stock-Bash artifact gate and independent Task 1 review exposed three
+proof failures after Correction 56:
+
+- `audit-stock-bash-harness-process-identity`: Explicit macOS Bash 3.2 proof now
+  uses portable top-level self-signalling and direct-child parent-PID capture for
+  background workers. Early child exit returns structured diagnostics, and exact
+  PID, process-group, stream, and temporary-root teardown remains bounded.
+- `audit-terminal-ledger-post-commit-signal-recovery`: A caught launcher signal
+  no longer decides whether the canonical ledger rename committed. One supervised
+  exact terminal-record and full-ledger-hash probe fails before rename and retains
+  status 143, or succeeds after an authorized rename and preserves committed
+  success. Terminal-commit signals still gate and override recovery.
+- `audit-harness-pipe-eof-before-group-cleanup`: Both structured harnesses start
+  draining pipes immediately but terminate their exact owned process groups before
+  awaiting EOF. A dual inherited-pipe regression proves no fallback kill, live
+  group, or exact temporary root remains.
+
+The unchanged first 167 ledger rows retain SHA-256
+`390a6523ffc73ddb04daba2820605115059a4032dd7c78ff32687008e91662ed`.
+Three append-only open rows bring the ledger to 170 rows and 170 unique IDs with
+SHA-256 `223969995ddcfdef812fe919e3f5a706e059278cfba592e3d8eec00286aae1de`.
+
+The exact Correction 56 section remains 2,091 UTF-8 bytes with SHA-256
+`3122b34df66312a94ed78eb3631bc7e79b442d0e48bfe656f444da444b3e961e`.
+No Correction 56 successor manifest or digest was created: its required isolated
+artifact gate failed before commit, lock generation, audits, or preflight.
+Correction 56 therefore remains historical static evidence and cannot authorize
+preflight or live execution.
+
+Final measured Correction 57 Task 1 verification passed the inherited-pipe test
+1/1 with 21 assertions, atomic family 4/4 with 93 assertions, terminal family
+5/5 with 61 assertions, and contract family 2/2 with 57 assertions: 12/12 tests
+and 232 assertions total. Both Bash syntax checks, exact non-skip flow typecheck,
+whitespace checks, protected-byte checks, and residue checks passed. Independent
+re-review repeated these gates and approved Task 1 with zero findings.
+
+The full isolated artifact suite, explicit four-suite aggregate, repository
+verification, Correction 57 successor manifest and digest, three sequential
+successor audits, fresh simple preflight, live backend run, push, ready PR, CI
+wait, unchanged-head proof, and SHA-locked squash merge remain pending. No
+preflight, live backend, push, PR, CI wait, merge, or GitHub mutation ran in
+Correction 57 Task 1 or Task 2. Fresh authorization remains required for the one
+live simple proving run and every GitHub write.
