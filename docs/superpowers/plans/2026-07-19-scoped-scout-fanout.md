@@ -36,7 +36,9 @@ CLI, and the existing Orcats workflow runtime.
 - Scout is exactly 15,000 ms gathering, 120,000 ms shared model/settlement, and
   20,000 ms validation. Start at most four pair-scoped conversations. Accept
   one to three valid siblings; zero valid candidates fails active work with
-  ordered scope evidence.
+  ordered scope evidence. `settlementReserveMs` is inside the single
+  `modelStartedAtMs + 120_000` deadline; at `now === deadline`, no new run,
+  cancellation, or settlement operation may start.
 - Preserve read-only tool-free scout configuration, real behavior tests, clean
   tree checks, progress reporting, independent review, immutable test proof,
   full verification, and SHA-locked merge protections.
@@ -44,6 +46,15 @@ CLI, and the existing Orcats workflow runtime.
   is allowed while this plan is being implemented and reviewed.
 - Root lint/typecheck excludes `.orca/**`; run the dedicated flow checker and
   scoped ESLint baseline gate for changed workflow sources.
+- Before every task or review-repair commit and final freeze, run the exact
+  `verify_retained_dirty_baseline` NUL-list/content/mode comparator in
+  `2026-07-19-finalization-parent-repair.md`. It must print
+  `retained dirty baseline: OK`; it checks the captured tar copy without
+  forbidding newly created task paths.
+- Task 6 must not modify or stage the three acknowledged dirty documents:
+  `.orca/workflows/codebase-improvement.run.md`,
+  `docs/superpowers/specs/2026-07-10-codebase-improvement-loop-design.md`, and
+  `docs/superpowers/plans/2026-07-10-codebase-improvement-scout-correction.md`.
 
 ## Task 2: Scoped Result and Aggregation Contract
 
@@ -132,6 +143,7 @@ duplicates before limiting to three, and throw a typed
 bun test .orca/workflows/codebase-improvement-lib.test.ts
 /bin/bash skills/orcats-author/scripts/orca-typecheck-flow.sh \
   .orca/workflows/codebase-improvement-lib.ts
+verify_retained_dirty_baseline
 git add -- .orca/workflows/codebase-improvement-lib.ts \
   .orca/workflows/codebase-improvement-lib.test.ts
 git diff --cached --check
@@ -178,7 +190,10 @@ function runScopedScoutFanout<T>(options: {
 Use deferred promises and a controlled clock to prove all scopes start before
 any first result resolves; four scopes share one 120,000-ms allocation; settlement
 uses only remaining shared time; and a valid sibling survives invalid, timeout,
-cancel, and failure records.
+cancel, and failure records. Add boundary cases at `119_999` and exactly
+`120_000` ms: the reserve is subtracted from, never added to, the shared
+deadline, and the exact-boundary case records uncompleted scopes without calling
+`run`, `cancel`, or settlement again.
 
 - [ ] **Step 2: Run the runtime RED selection**
 
@@ -194,9 +209,12 @@ Expected: missing controller or sequential execution behavior.
 Start every eligible `run()` without serial awaits. Track records by original
 pair index. On three accepted values, request cancellation once per pending
 scope, retain synchronous throws and asynchronous cancellation rejections, and
-drain terminal settlement inside the shared allocation. Do not add a second
-deadline. Exclude cancellation-requested records from aggregation but retain
-them in scope evidence.
+drain terminal settlement inside the shared allocation. Set one
+`deadlineAtMs = modelStartedAtMs + modelAllocationMs`; make the reserve a final
+slice of that clock and, at `now >= deadlineAtMs`, record timeout/settlement
+evidence without another operation. Do not add a second deadline. Exclude
+cancellation-requested records from aggregation but retain them in scope
+evidence.
 
 - [ ] **Step 4: Add zero-valid ordering RED**
 
@@ -222,6 +240,7 @@ bunx eslint --no-ignore \
   --suppressions-location "$baseline_root/workflow-eslint-suppressions.json" \
   --pass-on-unpruned-suppressions \
   .orca/workflows/codebase-improvement-runtime.ts
+verify_retained_dirty_baseline
 git add -- .orca/workflows/codebase-improvement-runtime.ts \
   .orca/workflows/codebase-improvement-runtime.test.ts
 git diff --cached --check
@@ -258,21 +277,29 @@ interface DeliveryRecordV1 {
   readonly active: ActiveDeliveryEvidence;
   readonly delivery: DeliveryStatusEvidence;
 }
+
+function assertCandidateFitsActiveProfile(
+  candidate: ScoutCandidate,
+  profile: ComplexityProfile,
+): void;
 ```
 
 - [ ] **Step 1: Add active-contract RED tests**
 
 Assert profile candidate targets and cap values, scaled active stages, exact
 15/120/20 scout values, no sequential retry constant, and ready PR as active
-success. Use command doubles to prove active work writes a strict delivery
-record only after exact remote branch and ready PR SHA proof, and never calls
-remote checks or merge after that record is published.
+success. Add a challenging-profile RED where a candidate with estimated active
+cost `7_200_001` ms throws `CandidateRequiresSplitError`, creates no
+implementation conversation, and records the split reason; a `7_200_000`-ms
+candidate remains eligible. Use command doubles to prove active work writes a
+strict delivery record only after exact remote branch and ready PR SHA proof, and
+never calls remote checks or merge after that record is published.
 
 - [ ] **Step 2: Run active-boundary RED**
 
 ```bash
 bun test .orca/workflows/codebase-improvement-contract.test.ts \
-  --test-name-pattern "active ready PR|delivery record|profile cap|scout timing"
+  --test-name-pattern "active ready PR|delivery record|profile cap|challenging split|scout timing"
 ```
 
 Expected: old terminal merge path and old clocks violate the new assertions.
@@ -282,9 +309,12 @@ Expected: old terminal merge path and old clocks violate the new assertions.
 Replace old profile deadlines/scales and split active `ready-pr` from external
 delivery. Add strict delivery record schemas, immutable identity/evidence
 fields, a report `activeStatus` plus delivery status, and atomic record
-publication next to `report.json`. Active finalization reports passed only for
-a published ready record within its active cap. Preserve legacy validation,
-candidate manifest, clean-tree, and issue-finalization logic.
+publication next to `report.json`. Add `assertCandidateFitsActiveProfile` before
+implementation selection: an over-cap challenging candidate returns the typed
+split-required result and cannot create a backend conversation. Active
+finalization reports passed only for a published ready record within its active
+cap. Preserve legacy validation, candidate manifest, clean-tree, and
+issue-finalization logic.
 
 - [ ] **Step 4: Wire concurrent scout and active exit**
 
@@ -303,6 +333,7 @@ bun test .orca/workflows/codebase-improvement-lib.test.ts \
   .orca/workflows/codebase-improvement-artifacts.test.ts
 /bin/bash skills/orcats-author/scripts/orca-typecheck-flow.sh \
   .orca/workflows/codebase-improvement.ts
+verify_retained_dirty_baseline
 git add -- .orca/workflows/codebase-improvement-lib.ts \
   .orca/workflows/codebase-improvement-lib.test.ts \
   .orca/workflows/codebase-improvement.ts \
@@ -330,9 +361,12 @@ scope. Require `ZERO FINDINGS` before Task 5.
 
 - [ ] **Step 1: Add continuation RED tests**
 
-Create strict record fixtures and fake `gh` outputs. Prove
-`--continue-delivery=<run-id>` rejects mixed arguments, reloads the record,
-does not invoke backend selection or `llm()`, and makes fresh PR reads.
+Create strict record fixtures, fake `gh` outputs, and a TypeScript-flow spawn
+sentinel. Prove `--continue-delivery=<run-id>` rejects mixed arguments. Add
+launcher RED cases for a missing, unreadable, and malformed-JSON
+`delivery.json`: each exits with the documented usage/configuration error before
+the TypeScript-flow spawn sentinel, backend selection, or `llm()` call. Prove a
+valid record reloads and makes fresh PR reads.
 
 Test three outcomes:
 
@@ -343,6 +377,9 @@ Test three outcomes:
 3. Fresh required checks plus identical ready PR/head permit
    `gh pr merge --squash --match-head-commit <lockedHeadSha>`, followed by a
    final authoritative `MERGED` confirmation with the same identity.
+4. After initial green evidence, the command log is exactly `protection`,
+   `checks`, `pr-identity`, then `merge`; drift in any post-green reread blocks
+   before the merge command.
 
 - [ ] **Step 2: Run continuation RED selection**
 
@@ -350,7 +387,7 @@ Test three outcomes:
 bun test .orca/workflows/codebase-improvement-contract.test.ts \
   --test-name-pattern "delivery continuation|delivery pending|locked squash merge|no backend"
 bun test .orca/workflows/codebase-improvement-artifacts.test.ts \
-  --test-name-pattern "continue-delivery|active ready"
+  --test-name-pattern "continue-delivery|active ready|missing delivery record|malformed delivery record|post-green reread"
 ```
 
 Expected: the active-only launcher and merge-bound workflow fail the new cases.
@@ -358,11 +395,15 @@ Expected: the active-only launcher and merge-bound workflow fail the new cases.
 - [ ] **Step 3: Implement continuation**
 
 Add an exclusive launcher mode that validates the run ID and routes to the
-TypeScript continuation. The continuation loads the strict record, sets a new
-30-minute external deadline, reuses bounded PR/check/protection/merge helpers,
-and atomically appends an attempt to record/report evidence. It must not create
-a work candidate, call a backend, run model prompts, modify the branch, or turn
-pending into active failure.
+TypeScript continuation. Before that spawn, require a readable file and parse
+its JSON with the launcher-only bounded parser; missing, unreadable, or malformed
+JSON exits without executing the flow. The continuation loads the strict record,
+sets a new 30-minute external deadline, reuses bounded PR/check/protection/merge
+helpers, and atomically appends an attempt to record/report evidence. Once the
+initial checks are green, immediately reread protection, checks, and PR identity
+in that exact order with no write between them; merge only if all rereads retain
+the locked identity. It must not create a work candidate, call a backend, run
+model prompts, modify the branch, or turn pending into active failure.
 
 - [ ] **Step 4: Verify GREEN and commit**
 
@@ -372,6 +413,7 @@ bun test .orca/workflows/codebase-improvement-contract.test.ts \
   .orca/workflows/codebase-improvement-artifacts.test.ts
 /bin/bash skills/orcats-author/scripts/orca-typecheck-flow.sh \
   .orca/workflows/codebase-improvement.ts
+verify_retained_dirty_baseline
 git add -- .orca/workflows/codebase-improvement.ts \
   .orca/workflows/codebase-improvement.sh \
   .orca/workflows/codebase-improvement-contract.test.ts \
@@ -392,22 +434,27 @@ range review until the final line is `ZERO FINDINGS`.
 
 **Files:**
 
-- Modify only the new rebaseline design, runbook, historical design notice,
-  historical scout correction notice, `.superpowers/sdd/progress.md`, and
-  tests that mechanically bind their public wording.
+- Modify: `docs/superpowers/specs/2026-07-20-codebase-improvement-active-delivery-rebaseline.md`.
+- Modify: `.superpowers/sdd/progress.md` and only tests that mechanically bind
+  the new wording.
+- Read only: the three acknowledged dirty documents named in Global Constraints;
+  they remain byte-for-byte and mode-for-mode equal to the captured baseline.
 
 - [ ] **Step 1: Add documentation RED tests**
 
-Require the runbook and artifact contracts to name active-ready success, profile
-caps, 15/120/20 fan-out, one-to-three siblings, separate 30-minute delivery,
-pending continuation, and SHA-locked merge. Require old sequential timing and
-merge-bound success language only inside explicit historical supersession notices.
+Require the new rebaseline specification and artifact contracts to name
+active-ready success, profile caps, 15/120/20 fan-out, one-to-three siblings,
+separate 30-minute delivery, pending continuation, SHA-locked merge, the
+post-green reread order, and the NUL-list dirty-baseline gate. Also assert that
+the three acknowledged dirty documents have their captured bytes and modes.
 
 - [ ] **Step 2: Implement documentation and progress update**
 
-Update both documentation surfaces and append a Correction 64 progress entry
-that records the rebaseline, baseline commit, reviewed task ranges, and final
-evidence without rewriting any prior ledger/progress history.
+Update only the new rebaseline specification and append a Correction 64 progress
+entry that records the rebaseline, baseline commit, reviewed task ranges, and
+final evidence without rewriting prior ledger/progress history. Do not edit or
+stage the three acknowledged dirty documents; historical supersession text stays
+as captured until separately authorized.
 
 - [ ] **Step 3: Verify docs and commit**
 
@@ -415,17 +462,35 @@ evidence without rewriting any prior ledger/progress history.
 bun test .orca/workflows/codebase-improvement-artifacts.test.ts
 bun run docs:check
 bun run docs:symbols
-git add -p -- .orca/workflows/codebase-improvement.run.md \
-  docs/superpowers/specs/2026-07-10-codebase-improvement-loop-design.md \
-  docs/superpowers/plans/2026-07-10-codebase-improvement-scout-correction.md
+verify_retained_dirty_baseline
 git add -- docs/superpowers/specs/2026-07-20-codebase-improvement-active-delivery-rebaseline.md \
   .superpowers/sdd/progress.md
 git diff --cached --check
 git commit -m "docs(workflow): record active delivery contract"
 ```
 
-Accept only rebaseline hunks in the three preserved dirty documents. The known
-fifteen-path baseline must remain unchanged outside those reviewed hunks.
+Expected cached paths are only the new rebaseline specification, progress entry,
+and mechanical documentation tests. The known fifteen-path baseline remains
+unchanged; no hunk from an acknowledged dirty document is staged.
+
+## Review 6
+
+Use the literal Review-5 approved head as the fixed base and the Task-6 commit as
+the head. Review that exact range for documentation truth, the no-staged-dirty
+rule, NUL-list/content/mode evidence, all earlier audit gates, and final-check
+scope. Save the verbatim response with these first and final lines:
+
+```text
+Base: <review-5-approved-head>
+Approved-Head: <task-6-head>
+...
+ZERO FINDINGS
+```
+
+If Review 6 finds an issue, repair it with an additive commit after
+`verify_retained_dirty_baseline`, keep the same fixed Review-5 base, and repeat
+the review through the new head. Do not freeze until the final literal line is
+`ZERO FINDINGS`.
 
 ## Controller Verification and Authorization Gate
 
@@ -440,9 +505,18 @@ bun test .orca/workflows/codebase-improvement-lib.test.ts \
 /bin/bash -n .orca/workflows/codebase-improvement.sh
 /bin/bash skills/orcats-author/scripts/orca-typecheck-flow.sh \
   .orca/workflows/codebase-improvement.ts
+baseline_root=$(cat /tmp/orcats-execution-baseline.root)
+bunx eslint --no-ignore \
+  --parser-options '{"projectService":{"allowDefaultProject":[".orca/workflows/*.ts"]}}' \
+  --suppressions-location "$baseline_root/workflow-eslint-suppressions.json" \
+  --pass-on-unpruned-suppressions \
+  .orca/workflows/codebase-improvement-lib.ts \
+  .orca/workflows/codebase-improvement-runtime.ts \
+  .orca/workflows/codebase-improvement.ts
 bun run docs:check
 bun run docs:symbols
 git diff --check
+verify_retained_dirty_baseline
 bun run verify
 ```
 

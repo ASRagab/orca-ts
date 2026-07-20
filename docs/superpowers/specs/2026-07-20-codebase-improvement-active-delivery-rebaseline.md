@@ -25,8 +25,9 @@ otherwise valid evidence.
   branch and `headRefOid` equal one validated immutable SHA.
 - Active work has profile-specific targets and hard caps: simple 10-20 minutes
   within 30, medium 30-60 within 60, challenging 60-120 within 120. A
-  challenging candidate that cannot fit its cap is rejected and split before
-  implementation.
+  challenging candidate whose estimated active cost exceeds `7_200_000` ms is
+  rejected with a typed split-required result before any implementation
+  conversation or worktree mutation.
 - Simple scouting has one 155-second allocation: 15 seconds deterministic
   gathering, 120 seconds for at most four concurrent pair-scoped model runs
   including terminal settlement, and 20 seconds validation.
@@ -73,8 +74,12 @@ every deadline from the launcher-provided absolute active deadline; no stage may
 extend the active clock.
 
 Simple scout limits are exactly `15_000`, `120_000`, and `20_000` milliseconds.
-The 120-second model allocation includes cancellation and settlement. There is
-no sequential retry allocation and no per-scope independent 120-second clock.
+The 120-second model allocation includes cancellation and settlement: its one
+absolute deadline is `modelStartedAtMs + 120_000`, and any settlement reserve is
+a slice of that allocation, never a second clock. At the exact deadline, the
+controller records timed-out unsettled scopes and starts no new run, cancellation,
+or settlement operation. There is no sequential retry allocation and no
+per-scope independent 120-second clock.
 
 ## State machines
 
@@ -125,10 +130,12 @@ or modify the candidate branch.
 - Required checks failed, PR became draft, base/branch/repository changed, or
   `headRefOid` differs from `lockedHeadSha`: write `blocked`, exit nonzero, and
   never merge.
-- Required checks passed: immediately re-read merge protection, checks, and PR
-  state; require the same ready repository/PR/branch/SHA; squash merge with
-  `--match-head-commit <lockedHeadSha>`; re-read state and require `MERGED` with
-  the same repository/PR/branch/SHA; write `delivered`, exit zero.
+- Required checks passed: immediately, and with no write in between, re-read
+  merge protection, required checks, and PR identity in that order. Require the
+  same ready repository/PR/branch/SHA at each read; any mismatch blocks delivery.
+  Only then squash merge with `--match-head-commit <lockedHeadSha>`; re-read
+  state and require `MERGED` with the same repository/PR/branch/SHA; write
+  `delivered`, exit zero.
 
 `pending` is neither `delivered` nor an implementation failure. A later
 continuation repeats the authoritative reads under a new external deadline and
@@ -174,8 +181,10 @@ not replace the record. Paths in all emitted evidence stay repository-relative.
 
 - `codebase-improvement.sh --complexity=<profile>` runs active work only.
 - `codebase-improvement.sh --continue-delivery=<run-id>` runs delivery only.
-  It rejects combined complexity/preflight arguments and missing or malformed
-  records before spawning the TypeScript flow.
+  It rejects combined complexity/preflight arguments and missing, unreadable, or
+  malformed JSON records before spawning the TypeScript flow. The launcher
+  performs this bounded parse before it invokes the flow; the continuation then
+  performs the strict schema parse.
 - The continuation code parses the record from the source run directory and
   receives the same repository identity checks as active work. It has no backend
   selector or model setup path.
@@ -198,6 +207,25 @@ uncancelled, valid candidates to deterministic ranking. Ranking accepts one to
 three candidates in pair order; zero valid candidates creates typed scope
 evidence and fails active work safely.
 
+## Audit-repair gates
+
+The implementation plans bind each correction to an observable RED, GREEN, and
+commit/review gate. A command named below must fail against the retained baseline
+before its implementation and pass afterward; no task may use a claimed result
+in place of the named observation.
+
+| Audit point | RED and GREEN proof | Commit and review gate |
+| --- | --- | --- |
+| Parent hierarchy | Direct and intermediate symbolic-parent publication tests reject before any external write; missing nested parents are real `0700` directories. | Task 1 commits only after the focused publication family and baseline comparator pass; Review 1 ends `ZERO FINDINGS`. |
+| Retained dirty docs | Documentation artifact test proves new wording without changing the three acknowledged dirty files. | Task 6 stages only new documentation/progress/test paths; Review 6 verifies the fixed range. |
+| Dirty-baseline preservation | The NUL-list comparator rejects a changed byte, mode, missing path, or unexpected file type from the captured tar copy. | Run before every task or review-repair commit and final freeze. |
+| Scout settlement | A controlled clock proves settlement reserve remains inside `120_000` ms and that `now === deadline` permits no extra operation. | Task 3 focused runtime GREEN and Review 3. |
+| Challenging fit | A `7_200_001`-ms candidate yields typed split-required rejection before implementation; a fitting candidate proceeds. | Task 4 contract GREEN and Review 4. |
+| Launcher record guard | Missing, unreadable, and malformed `delivery.json` each exit before the TypeScript flow-spawn sentinel. | Task 5 launcher GREEN and Review 5. |
+| Post-green merge rereads | Ordered protection, checks, and PR-identity rereads precede merge; drift in any reread blocks it. | Task 5 continuation GREEN and Review 5. |
+| Documentation review | The Task 6 commit is reviewed from the fixed Review-5 head through its current head. | Review 6 must literally end `ZERO FINDINGS`. |
+| Final lint | Scoped ESLint covers the lib, runtime, and flow sources after Tasks 4-5. | The final deterministic freeze fails on an unsuppressed diagnostic. |
+
 ## Acceptance evidence
 
 The final deterministic freeze must prove:
@@ -213,8 +241,15 @@ The final deterministic freeze must prove:
 6. Existing parent-publication, clean-tree, progress, review, ledger, process,
    and finalization protections still pass real behavior tests and positive
    controls.
+7. Every retained dirty path still matches the captured NUL list, bytes, file
+   type, and permission mode before each task/review-repair commit and final
+   freeze; Task 6 has not staged the three acknowledged dirty documents.
+8. The launcher rejects a missing, unreadable, or malformed delivery record
+   before flow spawn, and the post-green protection/check/identity reread order
+   blocks drift before merge.
 
 The final proof additionally requires all four workflow suites, scoped flow
-typecheck and lint baseline gate, Bash syntax, documentation checks, `git diff
---check`, and one `bun run verify` on final bytes. A later live proof is a
-separate authorization-gated acceptance step.
+typecheck and scoped ESLint baseline gate for lib, runtime, and flow sources,
+Bash syntax, documentation checks, the NUL-list dirty-baseline comparator,
+`git diff --check`, and one `bun run verify` on final bytes. A later live proof
+is a separate authorization-gated acceptance step.
