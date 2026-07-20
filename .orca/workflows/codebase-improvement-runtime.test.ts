@@ -5827,6 +5827,7 @@ interface ScopedScoutTestRecord<T> {
     readonly completedAtMs: number;
   };
   readonly cancellation?: {
+    readonly requestedAtMs: number;
     readonly reason: string;
     readonly rejection?: string;
   };
@@ -6101,6 +6102,55 @@ test("scoped fanout quorum cancels each pending scope once and drains cancellati
   expect(result.records[3]?.cancellation?.rejection).toContain(
     "cancel transport failed",
   );
+});
+
+test("scoped fanout quorum does not start a cancellation that crosses the shared deadline", async () => {
+  const runtime = await scopedScoutRuntime();
+  if (runtime === undefined) return;
+  let armDeadlineRace = false;
+  let deadlineReadCount = 0;
+  let clockMs = 0;
+  const cancellations: string[] = [];
+  const cancellationStartedAtMs: number[] = [];
+  const result = await runtime.runScopedScoutFanout({
+    conversations: [
+      ...[0, 1, 2].map((scopeIndex) => ({
+        label: `accepted ${String(scopeIndex)}`,
+        async run(): Promise<string> {
+          return `accepted ${String(scopeIndex)}`;
+        },
+        cancel(): void {},
+      })),
+      {
+        label: "pending",
+        async run(): Promise<string> {
+          return await new Promise<string>(() => {});
+        },
+        cancel(): void {
+          cancellations.push("pending");
+          cancellationStartedAtMs.push(clockMs);
+        },
+      },
+    ],
+    modelAllocationMs: 120_000,
+    settlementReserveMs: 5_000,
+    quorum: 3,
+    accept: (value) => {
+      if (value === "accepted 2") armDeadlineRace = true;
+      return value.startsWith("accepted");
+    },
+    now: () => {
+      if (!armDeadlineRace) return 0;
+      deadlineReadCount += 1;
+      clockMs = deadlineReadCount <= 2 ? 119_999 : 120_000;
+      return clockMs;
+    },
+  });
+
+  expect(cancellations).toEqual(["pending"]);
+  expect(cancellationStartedAtMs).toEqual([119_999]);
+  expect(result.records[3]?.status).toBe("timed_out");
+  expect(result.records[3]?.cancellation?.requestedAtMs).toBe(119_999);
 });
 
 test("scoped fanout quorum does not start a later cancellation at the exact shared deadline", async () => {

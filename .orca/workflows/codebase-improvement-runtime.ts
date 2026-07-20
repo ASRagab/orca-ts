@@ -3405,8 +3405,10 @@ function requestScopedScoutCancellation<T>(
   deadlineAtMs: number,
   now: () => number,
 ): void {
-  if (state.cancellation !== undefined || now() >= deadlineAtMs) return;
-  state.cancellation = { requestedAtMs: now(), reason };
+  if (state.cancellation !== undefined) return;
+  const requestedAtMs = now();
+  if (requestedAtMs >= deadlineAtMs) return;
+  state.cancellation = { requestedAtMs, reason };
   try {
     const cancellation = state.conversation.cancel(reason);
     state.cancellationSettled = Promise.resolve(cancellation).then(
