@@ -182,9 +182,12 @@ not replace the record. Paths in all emitted evidence stay repository-relative.
 - `codebase-improvement.sh --complexity=<profile>` runs active work only.
 - `codebase-improvement.sh --continue-delivery=<run-id>` runs delivery only.
   It rejects combined complexity/preflight arguments and missing, unreadable, or
-  malformed JSON records before spawning the TypeScript flow. The launcher
-  performs this bounded parse before it invokes the flow; the continuation then
-  performs the strict schema parse.
+  malformed JSON records before spawning the TypeScript flow. Before that spawn,
+  the launcher must also validate syntactically valid JSON with the strict
+  `DeliveryRecordV1` schema and reject every missing, wrong-typed, invalid-literal,
+  or unknown field. `JSON.parse` alone is not a launch guard. The continuation
+  receives only the launcher-validated record and may repeat the strict parse as
+  defense in depth.
 - The continuation code parses the record from the source run directory and
   receives the same repository identity checks as active work. It has no backend
   selector or model setup path.
@@ -217,11 +220,11 @@ in place of the named observation.
 | Audit point | RED and GREEN proof | Commit and review gate |
 | --- | --- | --- |
 | Parent hierarchy | Direct and intermediate symbolic-parent publication tests reject before any external write; missing nested parents are real `0700` directories. | Task 1 commits only after the focused publication family and baseline comparator pass; Review 1 ends `ZERO FINDINGS`. |
-| Retained dirty docs | Documentation artifact test proves new wording without changing the three acknowledged dirty files. | Task 6 stages only new documentation/progress/test paths; Review 6 verifies the fixed range. |
+| Retained dirty docs | Documentation artifact test proves new wording without changing the three acknowledged dirty files. | Task 6 stages the named rebaseline spec, progress entry, and `.orca/workflows/codebase-improvement-artifacts.test.ts`; Review 6 verifies that exact range. |
 | Dirty-baseline preservation | The NUL-list comparator rejects a changed byte, mode, missing path, or unexpected file type from the captured tar copy. | Run before every task or review-repair commit and final freeze. |
 | Scout settlement | A controlled clock proves settlement reserve remains inside `120_000` ms and that `now === deadline` permits no extra operation. | Task 3 focused runtime GREEN and Review 3. |
 | Challenging fit | A `7_200_001`-ms candidate yields typed split-required rejection before implementation; a fitting candidate proceeds. | Task 4 contract GREEN and Review 4. |
-| Launcher record guard | Missing, unreadable, and malformed `delivery.json` each exit before the TypeScript flow-spawn sentinel. | Task 5 launcher GREEN and Review 5. |
+| Launcher record guard | Missing, unreadable, malformed, and syntactically valid but schema-invalid `delivery.json` each exit before the TypeScript flow-spawn sentinel. | Task 5 launcher GREEN and Review 5. |
 | Post-green merge rereads | Ordered protection, checks, and PR-identity rereads precede merge; drift in any reread blocks it. | Task 5 continuation GREEN and Review 5. |
 | Documentation review | The Task 6 commit is reviewed from the fixed Review-5 head through its current head. | Review 6 must literally end `ZERO FINDINGS`. |
 | Final lint | Scoped ESLint covers the lib, runtime, and flow sources after Tasks 4-5. | The final deterministic freeze fails on an unsuppressed diagnostic. |
@@ -244,9 +247,9 @@ The final deterministic freeze must prove:
 7. Every retained dirty path still matches the captured NUL list, bytes, file
    type, and permission mode before each task/review-repair commit and final
    freeze; Task 6 has not staged the three acknowledged dirty documents.
-8. The launcher rejects a missing, unreadable, or malformed delivery record
-   before flow spawn, and the post-green protection/check/identity reread order
-   blocks drift before merge.
+8. The launcher rejects a missing, unreadable, malformed, or strict-schema-invalid
+   delivery record before flow spawn, and the post-green protection/check/identity
+   reread order blocks drift before merge.
 
 The final proof additionally requires all four workflow suites, scoped flow
 typecheck and scoped ESLint baseline gate for lib, runtime, and flow sources,

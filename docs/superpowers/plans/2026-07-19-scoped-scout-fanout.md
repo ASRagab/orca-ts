@@ -366,7 +366,10 @@ sentinel. Prove `--continue-delivery=<run-id>` rejects mixed arguments. Add
 launcher RED cases for a missing, unreadable, and malformed-JSON
 `delivery.json`: each exits with the documented usage/configuration error before
 the TypeScript-flow spawn sentinel, backend selection, or `llm()` call. Prove a
-valid record reloads and makes fresh PR reads.
+syntactically valid but schema-invalid fixture (for example `{"version":1}`)
+also exits before that sentinel. The launcher test must prove it calls the exact
+strict `DeliveryRecordV1` schema validator rather than `JSON.parse` alone. Prove
+a valid record reloads and makes fresh PR reads.
 
 Test three outcomes:
 
@@ -387,7 +390,7 @@ Test three outcomes:
 bun test .orca/workflows/codebase-improvement-contract.test.ts \
   --test-name-pattern "delivery continuation|delivery pending|locked squash merge|no backend"
 bun test .orca/workflows/codebase-improvement-artifacts.test.ts \
-  --test-name-pattern "continue-delivery|active ready|missing delivery record|malformed delivery record|post-green reread"
+  --test-name-pattern "continue-delivery|active ready|missing delivery record|malformed delivery record|schema-invalid delivery record|post-green reread"
 ```
 
 Expected: the active-only launcher and merge-bound workflow fail the new cases.
@@ -396,14 +399,19 @@ Expected: the active-only launcher and merge-bound workflow fail the new cases.
 
 Add an exclusive launcher mode that validates the run ID and routes to the
 TypeScript continuation. Before that spawn, require a readable file and parse
-its JSON with the launcher-only bounded parser; missing, unreadable, or malformed
-JSON exits without executing the flow. The continuation loads the strict record,
-sets a new 30-minute external deadline, reuses bounded PR/check/protection/merge
-helpers, and atomically appends an attempt to record/report evidence. Once the
-initial checks are green, immediately reread protection, checks, and PR identity
-in that exact order with no write between them; merge only if all rereads retain
-the locked identity. It must not create a work candidate, call a backend, run
-model prompts, modify the branch, or turn pending into active failure.
+its JSON with the launcher-only bounded parser, then call the exact strict
+`DeliveryRecordV1` schema validator before it invokes the TypeScript flow.
+Missing, unreadable, malformed, or schema-invalid JSON (including
+syntactically-valid records with missing, wrong-typed, invalid-literal, or
+unknown fields) exits without executing the flow; `JSON.parse` alone is
+insufficient. The continuation receives the launcher-validated record, repeats
+the strict parse defensively, sets a new 30-minute external deadline, reuses
+bounded PR/check/protection/merge helpers, and atomically appends an attempt to
+record/report evidence. Once the initial checks are green, immediately reread
+protection, checks, and PR identity in that exact order with no write between
+them; merge only if all rereads retain the locked identity. It must not create a
+work candidate, call a backend, run model prompts, modify the branch, or turn
+pending into active failure.
 
 - [ ] **Step 4: Verify GREEN and commit**
 
@@ -435,8 +443,10 @@ range review until the final line is `ZERO FINDINGS`.
 **Files:**
 
 - Modify: `docs/superpowers/specs/2026-07-20-codebase-improvement-active-delivery-rebaseline.md`.
-- Modify: `.superpowers/sdd/progress.md` and only tests that mechanically bind
-  the new wording.
+- Modify: `.superpowers/sdd/progress.md`.
+- Modify: `.orca/workflows/codebase-improvement-artifacts.test.ts` for every
+  mechanical documentation assertion; no other Task 6 documentation test path
+  is permitted unless it is named here and added to both commit and Review 6.
 - Read only: the three acknowledged dirty documents named in Global Constraints;
   they remain byte-for-byte and mode-for-mode equal to the captured baseline.
 
@@ -464,21 +474,25 @@ bun run docs:check
 bun run docs:symbols
 verify_retained_dirty_baseline
 git add -- docs/superpowers/specs/2026-07-20-codebase-improvement-active-delivery-rebaseline.md \
-  .superpowers/sdd/progress.md
+  .superpowers/sdd/progress.md \
+  .orca/workflows/codebase-improvement-artifacts.test.ts
 git diff --cached --check
 git commit -m "docs(workflow): record active delivery contract"
 ```
 
-Expected cached paths are only the new rebaseline specification, progress entry,
-and mechanical documentation tests. The known fifteen-path baseline remains
-unchanged; no hunk from an acknowledged dirty document is staged.
+Expected cached paths are exactly the new rebaseline specification, the progress
+entry, and `.orca/workflows/codebase-improvement-artifacts.test.ts`. The known
+fifteen-path baseline remains unchanged; no hunk from an acknowledged dirty
+document is staged.
 
 ## Review 6
 
 Use the literal Review-5 approved head as the fixed base and the Task-6 commit as
 the head. Review that exact range for documentation truth, the no-staged-dirty
-rule, NUL-list/content/mode evidence, all earlier audit gates, and final-check
-scope. Save the verbatim response with these first and final lines:
+rule, NUL-list/content/mode evidence, all earlier audit gates, final-check scope,
+and exactly these Task 6 paths: the new rebaseline specification, progress entry,
+and `.orca/workflows/codebase-improvement-artifacts.test.ts`. Save the verbatim
+response with these first and final lines:
 
 ```text
 Base: <review-5-approved-head>
