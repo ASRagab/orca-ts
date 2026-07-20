@@ -1,0 +1,2924 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import * as ts from "typescript";
+import {
+  codex,
+  command,
+  fixLoop,
+  flow,
+  flowArgs,
+  fs,
+  llm,
+  ok,
+  resolveBaselinePolicy,
+  runBaselineGate,
+  selectBackend,
+  WorkflowMonitor,
+  z,
+  type BackendTag,
+  type CommandTool,
+  type CommandLog,
+  type FixLoopStop,
+  type Outcome,
+  type RegressedReason,
+  type Usage,
+  type VerificationCommand,
+} from "@twelvehart/orcats";
+import {
+  assertCurrentBranch,
+  assertMergedPullRequestState,
+  assertImmutableTestDiff,
+  assertRequiredMergeProtection,
+  assertReadyPullRequestHead,
+  buildPassedRemoteChecksEvidence,
+  candidateRedMarker,
+  CandidateControlSchema,
+  ComplexityProfileSchema,
+  controlTestArgs,
+  controlTestName,
+  createActiveStageBudgetTracker,
+  hydrateCandidate,
+  mergeUsage,
+  namedTestArgs,
+  normalizeFailure,
+  parseRemoteChecksCommandResult,
+  profileLimits,
+  pullRequestCreateArgs,
+  remoteCheckState,
+  renderScoutEvidence,
+  renderShellCommand,
+  requireLauncherDeliveryIdentity,
+  requireRecordedUsage,
+  runRankedCandidateFallback,
+  ScoutResultSchema,
+  selectScoutEvidence,
+  stageBudgetMs,
+  stageConfig,
+  validateCandidateEvidence,
+  validateCandidateForProfile,
+  validateChangedPaths,
+  withSelectedModel,
+  WorkflowConfigSchema,
+  type Candidate,
+  type ComplexityProfile,
+  type PassedRemoteChecksEvidence,
+  type PullRequestIdentity,
+  type RemoteCheck,
+  type ScoutEvidenceFile,
+  type ScoutResult,
+  type WorkflowConfig,
+} from "./codebase-improvement-lib.ts";
+import {
+  assertGitManifestUnchanged,
+  assertPositiveControlEvidence,
+  assertRedGateEvidence,
+  assertSemanticPositiveControl,
+  awaitBounded,
+  awaitExpectedFileChange,
+  awaitOneTimeoutRetry,
+  awaitToolFreeOutcome,
+  awaitWithinDeadline,
+  captureFileContentManifest,
+  captureGitWorktreeManifest,
+  captureExactFileSnapshot,
+  ConversationTimeoutError,
+  createWorkflowStatusWriter,
+  decodeUtf8Source,
+  finalizeWorkflowEvidence,
+  gateIssuesFromLogs,
+  hasConfirmedExpectedFileChange,
+  InvalidReproductionProofError,
+  matcherProofArgs,
+  MATCHER_PROOF_PRELOAD_SOURCE,
+  parseGitCommitManifest,
+  parseGitIndexManifest,
+  parseExactGitPathList,
+  publishFinalizationText as publishFinalizationTextSecure,
+  remainingTimeout,
+  reserveConversationTimeouts,
+  restoreExactFileSnapshot,
+  runTargetAfterPositiveControl,
+  runRequiredCommand,
+  withGitManifestGuard,
+  type BoundedConversation,
+  type ExactFileSnapshot,
+  type ExactRestorationEvidence,
+  type ExactSnapshotOperations,
+  type FinalizationCommitDecision,
+  type FinalizationContext,
+  type GateIssue,
+  type GitManifestEntry,
+  type SemanticPositiveControlEvidence,
+  type TimeoutRetryRecord,
+} from "./codebase-improvement-runtime.ts";
+
+const BASELINE_GATE = [
+  { command: "bun", args: ["test"], timeoutMs: 30_000 },
+  { command: "bun", args: ["run", "lint"], timeoutMs: 30_000 },
+] as const;
+const FULL_GATE = {
+  command: "bun",
+  args: ["run", "verify"],
+  timeoutMs: 75_000,
+} as const;
+const CONFIG_PATH = ".orca/workflows/codebase-improvement.config.json";
+const PLAN_PATH = ".orca/improvement-loop/plan.json";
+const RED_DIFF_PATH = ".orca/improvement-loop/red-test.diff";
+const MATCHER_PROOF_PRELOAD_PATH =
+  ".orca/improvement-loop/matcher-proof-preload.ts";
+const ISSUE_PATH = ".orca/improvement-loop/issues.jsonl";
+const REPORT_DIR = ".orca/improvement-loop/runs";
+const REQUIRED_CI_CHECK = "Verify";
+const REQUIRED_CI_APP_ID = 15_368;
+const SIMPLE_STAGE_LIMITS = {
+  preflight: 35_000,
+  scout: 100_000,
+  reproduce: 65_000,
+  implement: 100_000,
+  repairs: 65_000,
+  review: 65_000,
+  verify: 40_000,
+  delivery: 90_000,
+} as const;
+const SCOUT_GATHER_LIMIT_MS = 10_000;
+const SCOUT_MODEL_LIMIT_MS = 80_000;
+const SCOUT_ATTEMPT_LIMIT_MS = 40_000;
+const SCOUT_VALIDATION_LIMIT_MS = 10_000;
+const CONVERSATION_SETTLEMENT_RESERVE_MS = 5_000;
+const SCOUT_EVIDENCE_MAX_FILES = 8;
+const SCOUT_EVIDENCE_MAX_CHARS = 10_000;
+const FALLBACK_CONTROL_LIMIT_MS = 10_000;
+const CI_POLL_INTERVAL_MS = 5_000;
+const MERGE_CONFIRMATION_LIMIT_MS = 5_000;
+const ISSUE_CLOSURE_RESERVE_MS = 5_000;
+const RUNTIME_FINALIZATION_RESERVE_MS = 10_000;
+const PROFILE_SCALE = {
+  simple: 1,
+  medium: 3,
+  challenging: 4.5,
+} as const;
+const BACKEND_READINESS: Record<
+  BackendTag,
+  { readonly command: string; readonly args: readonly string[] }
+> = {
+  codex: { command: "codex", args: ["login", "status"] },
+  opencode: { command: "opencode", args: ["auth", "list"] },
+  claude: { command: "claude", args: ["--version"] },
+  pi: { command: "pi", args: ["--version"] },
+};
+const MONITOR_DIR = ".orca/monitoring";
+const IGNORED_ORCA_MANIFEST_MAX_BYTES = 16 * 1024 * 1024;
+const IGNORED_ORCA_MANIFEST_MAX_ENTRIES = 1_024;
+const IGNORED_ORCA_MANIFEST_MAX_PATH_BYTES = 256 * 1024;
+const ReviewResultSchema = z.object({
+  findings: z.array(
+    z.object({
+      severity: z.enum(["low", "medium", "high", "critical"]),
+      evidence: z.string().trim().min(1),
+      recommendation: z.string().trim().min(1),
+      fixable: z.boolean(),
+    }),
+  ),
+});
+const PullRequestHeadSchema = z.object({
+  url: z.string().url(),
+  baseRefName: z.string().min(1),
+  headRefName: z.string().min(1),
+  headRefOid: z.string().min(1),
+  isDraft: z.boolean(),
+});
+const PullRequestStateSchema = PullRequestHeadSchema.extend({
+  state: z.string(),
+});
+const PreflightAttestationSchema = z.object({
+  runId: z.string().min(1),
+  runtimeHead: z.string().min(1),
+  runtimeSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  artifactDigest: z.string().regex(/^[0-9a-f]{64}$/),
+  checkedAt: z.string().min(1),
+});
+
+type ReviewFinding = z.infer<typeof ReviewResultSchema>["findings"][number];
+type StageLimit = keyof typeof SIMPLE_STAGE_LIMITS;
+type SemanticControlEvidence = SemanticPositiveControlEvidence & {
+  readonly testAstSha256: string;
+};
+
+interface RejectedCandidateEvidence {
+  candidate: Candidate;
+  control: ScoutResult["selectedControl"];
+  reason: string;
+  redDiff: string;
+  validation: CommandLog[];
+  snapshotSha256: string;
+  rank: number;
+  artifactPath: string;
+  baselineStatus: string;
+  baselineDiff: string;
+  semanticControl?: SemanticControlEvidence;
+  restoration?: ExactRestorationEvidence;
+}
+
+type ExactTestSnapshot = ExactFileSnapshot;
+
+interface AcceptedReproduction {
+  readonly candidate: Candidate;
+  readonly control: ScoutResult["selectedControl"];
+  readonly redDiff: string;
+  readonly semanticControl: SemanticControlEvidence;
+}
+
+interface RunReport {
+  runId: string;
+  monitorRunId: string;
+  profile: ComplexityProfile;
+  startedAtMs: number;
+  workerDeadlineAtMs: number;
+  finishedAtMs?: number;
+  elapsedMs?: number;
+  backend: string;
+  stage: string;
+  baseSha: string;
+  worktree: string;
+  branch: string;
+  artifactDigest: string;
+  preflightPath: string;
+  preflightRunId: string;
+  preflightArtifactDigest: string;
+  appliedSystemPrompts: Partial<
+    Record<
+      "scout" | "reproduce" | "implement" | "repair" | "review",
+      string
+    >
+  >;
+  candidate?: Candidate;
+  scoutEvidence?: {
+    paths: string[];
+    sourceTestPairs: Array<{
+      sourcePath: string;
+      testPath: string;
+    }>;
+    charCount: number;
+    sha256: string;
+    attempts: TimeoutRetryRecord[];
+    candidates?: ScoutResult["candidates"];
+    ranking?: string[];
+    selectedControl?: ScoutResult["selectedControl"];
+    acceptedControl?: ScoutResult["selectedControl"];
+    latestCommit?: string;
+    commands: CommandLog[];
+  };
+  redDiffPath?: string;
+  rejectedCandidates: RejectedCandidateEvidence[];
+  validation: CommandLog[];
+  prUrl?: string;
+  matchedHeadSha?: string;
+  semanticControl?: SemanticControlEvidence;
+  repository: string;
+  originFetchUrl: string;
+  originPushUrl: string;
+  mergeProof?: {
+    readonly checkedAt: string;
+    readonly url: string;
+    readonly baseRefName: string;
+    readonly headRefName: string;
+    readonly headRefOid: string;
+    readonly isDraft: boolean;
+    readonly state: string;
+    readonly command: CommandLog;
+  };
+  remoteChecks?: PassedRemoteChecksEvidence<CommandLog>;
+  merged: boolean;
+  sla: "pending" | "passed" | "failed";
+  stopReason?: string;
+  initialReviewFindings?: ReviewFinding[];
+  finalReviewFindings?: ReviewFinding[];
+  finalReviewBlockerCount?: number;
+  usage?: Usage;
+}
+
+interface RunIssue {
+  id: string;
+  runId: string;
+  at: string;
+  classification:
+    | "environment"
+    | "baseline"
+    | "backend"
+    | "gate"
+    | "review"
+    | "scope"
+    | "remote-check"
+    | "merge"
+    | "sla-overrun";
+  stage: string;
+  elapsedMs: number;
+  evidence: string;
+  backend: string;
+  worktree: string;
+  branch: string;
+  monitorPath: string;
+  prUrl?: string;
+  status: "open" | "corrected" | "resolved";
+  provingRunId?: string;
+}
+
+async function awaitConversationWithinBudget<T>(
+  conversation: BoundedConversation<T>,
+  availableMs: number,
+  stage: string,
+  recordUsage: (usage: Usage | undefined) => void,
+): Promise<T> {
+  const timeouts = reserveConversationTimeouts(
+    availableMs,
+    availableMs,
+    CONVERSATION_SETTLEMENT_RESERVE_MS,
+    stage,
+  );
+  try {
+    return await awaitBounded(
+      conversation,
+      timeouts.activeTimeoutMs,
+      stage,
+      timeouts.settlementTimeoutMs,
+    );
+  } catch (error) {
+    if (
+      error instanceof ConversationTimeoutError &&
+      error.terminal?.status === "fulfilled"
+    ) {
+      const outcome = error.terminal.value;
+      if (
+        typeof outcome === "object" &&
+        outcome !== null &&
+        "type" in outcome &&
+        outcome.type === "success" &&
+        "result" in outcome &&
+        typeof outcome.result === "object" &&
+        outcome.result !== null &&
+        "usage" in outcome.result
+      ) {
+        const usage = outcome.result.usage;
+        const reasoning =
+          typeof usage === "object" &&
+          usage !== null &&
+          "reasoning" in usage
+            ? usage.reasoning
+            : undefined;
+        if (
+          typeof usage === "object" &&
+          usage !== null &&
+          "input" in usage &&
+          typeof usage.input === "number" &&
+          Number.isInteger(usage.input) &&
+          usage.input >= 0 &&
+          "output" in usage &&
+          typeof usage.output === "number" &&
+          Number.isInteger(usage.output) &&
+          usage.output >= 0 &&
+          (reasoning === undefined ||
+            (typeof reasoning === "number" &&
+              Number.isInteger(reasoning) &&
+              reasoning >= 0))
+        ) {
+          recordUsage({
+            input: usage.input,
+            output: usage.output,
+            ...(reasoning === undefined ? {} : { reasoning }),
+          });
+        }
+      }
+    }
+    throw error;
+  }
+}
+
+await flow(flowArgs())(async () => {
+  const requestedBackend = process.env.ORCA_BACKEND?.trim() || "codex";
+  if (requestedBackend !== "codex") {
+    throw new Error(
+      `proving workflow requires codex backend; received ${requestedBackend}`,
+    );
+  }
+  const activeSelected = selectBackend({ default: "codex" });
+  if (activeSelected.tag !== "codex") {
+    throw new Error(
+      `proving workflow requires codex backend; received ${activeSelected.tag}`,
+    );
+  }
+  const selected = activeSelected;
+  const baseline = resolveBaselinePolicy({ args: flowArgs() });
+  const profile = parseProfile(baseline.args);
+  const limits = profileLimits[profile];
+  const startedAtMs = parseStartedAt(
+    requiredEnvironment("ORCA_IMPROVEMENT_STARTED_AT_MS"),
+  );
+  const workerDeadlineAtMs = parseWorkerDeadlineAtMs(
+    requiredEnvironment("ORCA_IMPROVEMENT_WORKER_DEADLINE_AT_MS"),
+    startedAtMs,
+    limits.deadlineMs,
+  );
+  let runId =
+    process.env.ORCA_IMPROVEMENT_RUN_ID?.trim() ||
+    `uninitialized-${String(startedAtMs)}`;
+  const monitor = new WorkflowMonitor(requestedBackend, {
+    writeStatus: createWorkflowStatusWriter(
+      (text) => void process.stderr.write(text),
+    ),
+  });
+  const report: RunReport = {
+    runId,
+    monitorRunId: monitor.runId,
+    profile,
+    startedAtMs,
+    workerDeadlineAtMs,
+    backend: requestedBackend,
+    stage: "initialize",
+    baseSha: "",
+    worktree: process.cwd(),
+    branch: process.env.ORCA_IMPROVEMENT_BRANCH?.trim() ?? "",
+    artifactDigest: process.env.ORCA_IMPROVEMENT_ARTIFACT_DIGEST?.trim() ?? "",
+    preflightPath: process.env.ORCA_IMPROVEMENT_PREFLIGHT_PATH?.trim() ?? "",
+    preflightRunId: "",
+    preflightArtifactDigest: "",
+    repository: process.env.ORCA_IMPROVEMENT_REPOSITORY?.trim() ?? "",
+    originFetchUrl:
+      process.env.ORCA_IMPROVEMENT_ORIGIN_FETCH_URL?.trim() ?? "",
+    originPushUrl:
+      process.env.ORCA_IMPROVEMENT_ORIGIN_PUSH_URL?.trim() ?? "",
+    appliedSystemPrompts: {},
+    rejectedCandidates: [],
+    validation: [],
+    merged: false,
+    sla: "pending",
+  };
+  let candidate: Candidate | undefined;
+  let capturedTestDiff = "";
+  let reviewFindings: ReviewFinding[] = [];
+  let validatedPaths: string[] = [];
+  let verifiedContentManifest: readonly GitManifestEntry[] | undefined;
+  let bodyFailed = false;
+  let pendingIssue: RunIssue | undefined;
+  const activeStageBudgets = createActiveStageBudgetTracker<StageLimit>();
+
+  const stageLimit = (name: StageLimit): number =>
+    Math.round(SIMPLE_STAGE_LIMITS[name] * PROFILE_SCALE[profile]);
+  const runtimeDeadlineMs = (): number =>
+    workerDeadlineAtMs - startedAtMs;
+  const workDeadlineMs = (): number =>
+    runtimeDeadlineMs() - RUNTIME_FINALIZATION_RESERVE_MS;
+  const beginBudget = (name: StageLimit): void =>
+    activeStageBudgets.activate(name, Date.now());
+  const workRemaining = (): number =>
+    stageBudgetMs(
+      startedAtMs,
+      workDeadlineMs(),
+      Date.now(),
+      workDeadlineMs(),
+    );
+  const budget = (name: StageLimit): number => {
+    const now = Date.now();
+    return Math.min(
+      activeStageBudgets.remaining(name, stageLimit(name), now),
+      workRemaining(),
+    );
+  };
+  const buildRunIssue = (
+    id: string,
+    stage: string,
+    classification: RunIssue["classification"],
+    elapsedMs: number,
+    evidence: string,
+    at = new Date().toISOString(),
+  ): RunIssue => ({
+    id,
+    runId,
+    at,
+    classification,
+    stage,
+    elapsedMs,
+    evidence,
+    backend: report.backend,
+    worktree: report.worktree,
+    branch: report.branch,
+    monitorPath: `${MONITOR_DIR}/${monitor.runId}.json`,
+    ...(report.prUrl === undefined ? {} : { prUrl: report.prUrl }),
+    status: "open",
+  });
+  const enter = (name: string): void => {
+    report.stage = name;
+    if (Date.now() >= startedAtMs + workDeadlineMs()) {
+      throw new Error(`sla-overrun before ${name}`);
+    }
+  };
+  const recordUsage = (usage: Usage | undefined): void => {
+    const merged = mergeUsage(report.usage, usage);
+    if (merged !== undefined) report.usage = merged;
+  };
+
+  try {
+    runId = requiredEnvironment("ORCA_IMPROVEMENT_RUN_ID");
+    report.runId = runId;
+    const launcherIdentity = requireLauncherDeliveryIdentity(runId, {
+      branch: report.branch,
+      repository: report.repository,
+      originFetchUrl: report.originFetchUrl,
+      originPushUrl: report.originPushUrl,
+    });
+    report.branch = launcherIdentity.branch;
+    report.repository = launcherIdentity.repository;
+    report.originFetchUrl = launcherIdentity.originFetchUrl;
+    report.originPushUrl = launcherIdentity.originPushUrl;
+    report.artifactDigest = requiredEnvironment(
+      "ORCA_IMPROVEMENT_ARTIFACT_DIGEST",
+    );
+    report.preflightPath = requiredEnvironment(
+      "ORCA_IMPROVEMENT_PREFLIGHT_PATH",
+    );
+    enter("preflight");
+    beginBudget("preflight");
+    const preflightRead = await awaitWithinDeadline(
+      "preflight attestation read",
+      () => budget("preflight"),
+      async () => await fs().readText(report.preflightPath),
+    );
+    if (preflightRead.isErr()) {
+      throw new Error(
+        `${report.preflightPath} read failed: ${normalizeFailure(preflightRead.error)}`,
+      );
+    }
+    const preflight = PreflightAttestationSchema.parse(
+      parseJson(preflightRead.value, report.preflightPath),
+    );
+    report.preflightRunId = preflight.runId;
+    report.preflightArtifactDigest = preflight.artifactDigest;
+    if (preflight.artifactDigest !== report.artifactDigest) {
+      throw new Error(
+        `preflight attestation did not match live artifact digest for run ${runId}`,
+      );
+    }
+    const selectedStageBackend = codex({ ignoreUserConfig: true });
+    const selectedStageConfig = (
+      config: ReturnType<typeof stageConfig>,
+    ): ReturnType<typeof stageConfig> =>
+      withSelectedModel(config, activeSelected.model);
+    report.backend = selected.tag;
+    const config = await awaitWithinDeadline(
+      "workflow config read",
+      () => budget("preflight"),
+      async () => await readConfig(),
+    );
+    const scoutConfig = {
+      ...stageConfig("scout", config.stages.scout, true),
+      reasoningEffort: "low" as const,
+    };
+    report.appliedSystemPrompts.scout = scoutConfig.systemPrompt ?? "";
+    const repairConfig = stageConfig("repair", config.stages.repair, false);
+    report.appliedSystemPrompts.repair = repairConfig.systemPrompt ?? "";
+
+    await monitor.stage("preflight", async () => {
+      const baselineResult = await runBaselineGate({
+        policy: baseline.policy,
+        commands: BASELINE_GATE,
+        commandTool: budgetedCommandTool(() => budget("preflight")),
+        repair: async (issues) => {
+          const outcome = await withStableIgnoredOrcaGuard("baseline-repair", () => budget("preflight"), async () => {
+            const conversation = llm().autonomous(selectedStageBackend, {
+              prompt: [
+                "Repair the failing baseline without weakening any gate.",
+                ...issues.map((issue) => issue.message),
+              ].join("\n"),
+              config: selectedStageConfig(repairConfig),
+            });
+            return await awaitConversationWithinBudget(
+              conversation,
+              budget("preflight"),
+              "baseline repair",
+              recordUsage,
+            );
+          });
+          if (outcome.type !== "success") {
+            throw new Error(
+              `baseline repair failed: ${describeOutcome(outcome)}`,
+            );
+          }
+          recordUsage(outcome.result.usage);
+          return { usage: outcome.result.usage };
+        },
+      });
+      report.validation.push(...baselineResult.validation);
+
+      const readiness = BACKEND_READINESS[selected.tag];
+      report.validation.push(
+        await runRequired(
+          readiness.command,
+          readiness.args,
+          budget("preflight"),
+        ),
+      );
+      report.validation.push(
+        await runRequired("gh", ["auth", "status"], budget("preflight")),
+      );
+      const worktree = await runRequired(
+        "git",
+        ["rev-parse", "--show-toplevel"],
+        budget("preflight"),
+      );
+      const head = await runRequired(
+        "git",
+        ["rev-parse", "HEAD"],
+        budget("preflight"),
+      );
+      const originMain = await runRequired(
+        "git",
+        ["rev-parse", "origin/main"],
+        budget("preflight"),
+      );
+      report.validation.push(
+        worktree,
+        head,
+        originMain,
+      );
+      report.worktree = worktree.stdout.trim();
+      report.baseSha = originMain.stdout.trim();
+      report.validation.push(
+        ...(await assertBoundGitContext(
+          "initial",
+          report.branch,
+          report.baseSha,
+          report.originFetchUrl,
+          report.originPushUrl,
+          () => budget("preflight"),
+        )),
+      );
+      if (head.stdout.trim() !== report.baseSha) {
+        throw new Error(
+          `git rev-parse HEAD did not match origin/main (${head.stdout.trim()} != ${report.baseSha})`,
+        );
+      }
+    });
+
+    enter("scout");
+    beginBudget("scout");
+    const scoutResult = await monitor.stage("scout", async () => {
+      const gatherCommands: CommandLog[] = [];
+      report.scoutEvidence = {
+        paths: [],
+        sourceTestPairs: [],
+        charCount: 0,
+        sha256: "",
+        attempts: [],
+        commands: gatherCommands,
+      };
+      const gatherDeadlineMs = Date.now() + SCOUT_GATHER_LIMIT_MS;
+      const gatherRemaining = (): number =>
+        remainingTimeout(
+          SCOUT_GATHER_LIMIT_MS,
+          Math.min(
+            gatherDeadlineMs - Date.now(),
+            budget("scout") -
+              SCOUT_MODEL_LIMIT_MS -
+              SCOUT_VALIDATION_LIMIT_MS,
+          ),
+          "scout evidence gather",
+        );
+      const recordGather = (log: CommandLog): void => {
+        gatherCommands.push(log);
+        report.validation.push(log);
+      };
+      const gatherRequired = async (
+        commandName: string,
+        args: readonly string[],
+      ): Promise<CommandLog> => {
+        const log = await awaitWithinDeadline(
+          [commandName, ...args].join(" "),
+          gatherRemaining,
+          () => runLogged(commandName, args, gatherRemaining()),
+        );
+        recordGather(log);
+        if (log.status === "failed") {
+          throw new Error(
+            `${log.command} failed\n${log.stderr || log.stdout}`,
+          );
+        }
+        return log;
+      };
+
+      const statusBefore = await gatherRequired("git", ["status", "--porcelain=v1"]);
+      const tracked = await gatherRequired("git", ["ls-files", "src", "tests"]);
+      const recent = await gatherRequired("git", ["log", "-40", "--format=", "--name-only", "--", "src", "tests"]);
+      const latestCommit = await gatherRequired("git", [
+        "show",
+        "--format=Latest commit: %H%nSubject: %s",
+        "--name-only",
+        "--first-parent",
+        "HEAD",
+      ]);
+      const trackedPaths = nonEmptyLines(tracked.stdout);
+      const recentPaths = nonEmptyLines(recent.stdout);
+      const selection = selectScoutEvidence(
+        trackedPaths,
+        recentPaths,
+        SCOUT_EVIDENCE_MAX_FILES,
+      );
+      const selectedPaths = [...selection.paths];
+      if (selectedPaths.length === 0) {
+        throw new Error("scout evidence gather selected no tracked paths");
+      }
+      const scan = await awaitWithinDeadline(
+        "scout rg scan",
+        gatherRemaining,
+        () =>
+          runLogged(
+            "rg",
+            [
+              "-n",
+              "--no-heading",
+              "-m",
+              "8",
+              "TODO|FIXME|HACK|XXX|throw new Error|catch",
+              "--",
+              ...selectedPaths,
+            ],
+            gatherRemaining(),
+          ),
+      );
+      if (scan.status === "failed" && scan.exitCode !== 1) {
+        recordGather(scan);
+        throw new Error(
+          `${scan.command} failed\n${scan.stderr || scan.stdout}`,
+        );
+      }
+      recordGather(
+        scan.exitCode === 1 ? { ...scan, status: "passed" } : scan,
+      );
+      const matchLines = parseScoutMatchLines(
+        scan.exitCode === 1 ? "" : scan.stdout,
+        selectedPaths,
+      );
+      const evidenceFiles: ScoutEvidenceFile[] = [];
+      for (const selectedPath of selectedPaths) {
+        const read = await awaitWithinDeadline(
+          `${selectedPath} read`,
+          gatherRemaining,
+          () => fs().readText(selectedPath),
+        );
+        if (read.isErr()) {
+          throw new Error(
+            `${selectedPath} read failed: ${normalizeFailure(read.error)}`,
+          );
+        }
+        evidenceFiles.push({
+          path: selectedPath,
+          content: read.value,
+          matchLines: matchLines.get(selectedPath) ?? [],
+        });
+      }
+      const evidence = renderScoutEvidence(
+        evidenceFiles,
+        SCOUT_EVIDENCE_MAX_CHARS,
+        latestCommitEvidencePrefix(latestCommit.stdout),
+        selection.sourceTestPairs,
+      );
+      gatherRemaining();
+      const evidenceSha256 = createHash("sha256").update(evidence.text).digest("hex");
+      gatherRemaining();
+      const statusAfter = await gatherRequired("git", ["status", "--porcelain=v1"]);
+      if (statusBefore.stdout !== statusAfter.stdout) {
+        throw new Error("scout evidence gather changed worktree status");
+      }
+      report.scoutEvidence.paths = [...evidence.paths];
+      report.scoutEvidence.sourceTestPairs = evidence.sourceTestPairs.map(
+        (pair) => ({ ...pair }),
+      );
+      report.scoutEvidence.charCount = evidence.charCount;
+      report.scoutEvidence.sha256 = evidenceSha256;
+      report.scoutEvidence.latestCommit = latestCommit.stdout;
+
+      const scoutAttempt = await awaitOneTimeoutRetry(
+        async (attempt) =>
+          await monitor.stage(attempt.label, async () => {
+            const scoutConversation = llm().autonomous(selectedStageBackend, {
+              prompt: scoutPrompt(
+                profile,
+                profileLimits[profile],
+                evidence.text,
+              ),
+              schema: ScoutResultSchema,
+              config: selectedStageConfig(scoutConfig),
+            });
+            return await awaitToolFreeOutcome(
+              scoutConversation,
+              () =>
+                awaitBounded(
+                  scoutConversation,
+                  attempt.timeoutMs,
+                  attempt.label,
+                  attempt.settlementTimeoutMs,
+                ),
+            );
+          }),
+        {
+          stage: "scout",
+          totalTimeoutMs: remainingTimeout(
+            SCOUT_MODEL_LIMIT_MS,
+            budget("scout") - SCOUT_VALIDATION_LIMIT_MS,
+            "scout",
+          ),
+          attemptTimeoutMs: SCOUT_ATTEMPT_LIMIT_MS,
+          settlementTimeoutMs: CONVERSATION_SETTLEMENT_RESERVE_MS,
+        },
+      );
+      const validationDeadlineMs = Date.now() + SCOUT_VALIDATION_LIMIT_MS;
+      const validationRemaining = (): number =>
+        remainingTimeout(
+          SCOUT_VALIDATION_LIMIT_MS,
+          Math.min(
+            validationDeadlineMs - Date.now(),
+            budget("scout"),
+          ),
+          "scout validation",
+        );
+      report.scoutEvidence.attempts = [...scoutAttempt.attempts];
+      for (const attempt of scoutAttempt.attempts) {
+        if (attempt.timedOut && attempt.terminal?.status === "fulfilled") {
+          recordUsage(attempt.terminal.usage);
+        }
+      }
+      const outcome = scoutAttempt.outcome;
+      if (outcome.type !== "success") {
+        throw new Error(`scout failed: ${describeOutcome(outcome)}`);
+      }
+      recordUsage(outcome.result.usage);
+      const structured = ScoutResultSchema.safeParse(outcome.result.structured);
+      if (!structured.success) {
+        throw new Error(
+          `scout structured output invalid: ${structured.error.message}`,
+        );
+      }
+      for (const proposed of structured.data.candidates) {
+        const issues = [
+          ...validateCandidateForProfile(proposed, profile),
+          ...validateCandidateEvidence(proposed, evidence),
+        ];
+        if (issues.length > 0) {
+          throw new Error(
+            `candidate ${proposed.id} violates ${profile}: ${issues.join("; ")}`,
+          );
+        }
+        await awaitWithinDeadline(
+          `candidate ${proposed.id} tracked paths`,
+          validationRemaining,
+          () =>
+            assertTrackedPaths(
+              proposed.allowedPaths,
+              validationRemaining(),
+            ),
+        );
+      }
+      validationRemaining();
+      return structured.data;
+    });
+
+    if (report.scoutEvidence === undefined) {
+      throw new Error("scout evidence report is missing");
+    }
+    report.scoutEvidence.candidates = [...scoutResult.candidates];
+    report.scoutEvidence.ranking = [...scoutResult.rankedCandidateIds];
+    report.scoutEvidence.selectedControl = {
+      ...scoutResult.selectedControl,
+    };
+    const reproduceConfig = stageConfig(
+      "reproduce",
+      config.stages.reproduce,
+      false,
+    );
+    report.appliedSystemPrompts.reproduce =
+      reproduceConfig.systemPrompt ?? "";
+
+    enter("reproduce");
+    beginBudget("reproduce");
+    await writeMatcherProofPreload(() => budget("reproduce"));
+    const resolveFallbackControl = async (
+      candidateId: string,
+    ): Promise<ScoutResult["selectedControl"]> => {
+      const proposed = scoutResult.candidates.find(
+        (item) => item.id === candidateId,
+      );
+      if (proposed === undefined) {
+        throw new Error(`ranked candidate ${candidateId} is missing`);
+      }
+      const label = `fallback control ${candidateId}`;
+      return await monitor.stage(label, async () => {
+        const controlConversation = llm().autonomous(selectedStageBackend, {
+          prompt: fallbackControlPrompt(proposed),
+          schema: CandidateControlSchema,
+          config: selectedStageConfig(scoutConfig),
+        });
+        const outcome = await awaitToolFreeOutcome(
+          controlConversation,
+          () =>
+            awaitConversationWithinBudget(
+              controlConversation,
+              remainingTimeout(
+                FALLBACK_CONTROL_LIMIT_MS,
+                budget("reproduce"),
+                label,
+              ),
+              label,
+              recordUsage,
+            ),
+        );
+        if (outcome.type !== "success") {
+          throw new Error(`${label} failed: ${describeOutcome(outcome)}`);
+        }
+        recordUsage(outcome.result.usage);
+        const structured = CandidateControlSchema.safeParse(
+          outcome.result.structured,
+        );
+        if (!structured.success) {
+          throw new Error(
+            `${label} structured output invalid: ${structured.error.message}`,
+          );
+        }
+        if (structured.data.candidateId !== candidateId) {
+          throw new Error(
+            `${label} returned control for ${structured.data.candidateId}`,
+          );
+        }
+        return structured.data;
+      });
+    };
+    const reproduction = await monitor.stage("reproduce", async () =>
+      runRankedCandidateFallback(
+        scoutResult.rankedCandidateIds,
+        async (candidateId, rank) => {
+          report.stage = `reproduce-rank-${String(rank + 1)}`;
+          const control =
+            candidateId === scoutResult.selectedControl.candidateId
+              ? scoutResult.selectedControl
+              : await resolveFallbackControl(candidateId);
+          const attempted = hydrateCandidate(scoutResult, control);
+          const chosen = attempted;
+          const snapshot = await captureExactTestSnapshot(
+            chosen.testPath,
+            () => budget("reproduce"),
+          );
+          const snapshotSha256 = snapshot.sha256;
+          const validationStart = report.validation.length;
+          let capturedAttemptDiff = "";
+          let semanticControlEvidence: SemanticControlEvidence | undefined;
+          try {
+            const baselineTestSource = decodeUtf8Source(snapshot.bytes, chosen.testPath);
+            const baselineSemanticControl = semanticPositiveControlEvidence(
+              chosen,
+              baselineTestSource,
+            );
+            const baselineControl = await runLogged(
+              "bun",
+              matcherProofArgs(
+                controlTestArgs(chosen),
+                MATCHER_PROOF_PRELOAD_PATH,
+              ),
+              budget("reproduce"),
+            );
+            report.validation.push(baselineControl);
+            assertPositiveControlEvidence(
+              baselineControl,
+              controlTestName(chosen),
+            );
+            const guardedReproduction = await withStableIgnoredOrcaGuard("reproduce", () => budget("reproduce"), async () => {
+              const reproduceConversation = llm().autonomous(selectedStageBackend, {
+                  prompt: reproducePrompt(chosen),
+                  config: selectedStageConfig(reproduceConfig),
+              });
+              const reproduceResult = await awaitExpectedFileChange(
+                reproduceConversation,
+                chosen.testPath,
+                () =>
+                  awaitConversationWithinBudget(
+                    reproduceConversation,
+                    budget("reproduce"),
+                    "reproduce",
+                    recordUsage,
+                  ),
+              );
+              const outcome = reproduceResult.outcome;
+              if (outcome.type !== "success") {
+                throw new Error(`reproduce failed: ${describeOutcome(outcome)}`);
+              }
+              recordUsage(outcome.result.usage);
+              return reproduceResult;
+            });
+            const reproduceResult = guardedReproduction;
+            const paths = await changedPaths(() => budget("reproduce"));
+            if (
+              paths.length > 1 ||
+              (paths.length === 1 && paths[0] !== chosen.testPath)
+            ) {
+              throw new Error(
+                `reproduce may change only ${chosen.testPath}; changed: ${paths.join(", ")}`,
+              );
+            }
+            if (
+              !hasConfirmedExpectedFileChange(
+                reproduceResult.expectedFileChangeState,
+                paths,
+                chosen.testPath,
+              )
+            ) {
+              throw new InvalidReproductionProofError(
+                "no-change",
+                `reproduce did not provide confirmed change evidence for ${chosen.testPath}`,
+              );
+            }
+            capturedAttemptDiff = await pathDiff(
+              chosen.testPath,
+              () => budget("reproduce"),
+            );
+            if (capturedAttemptDiff.trim() === "") {
+              throw new InvalidReproductionProofError(
+                "empty-diff",
+                `${chosen.testPath} has no regression-test diff`,
+              );
+            }
+            const capturedTestDiff = capturedAttemptDiff;
+            const controlSource = decodeUtf8Source(
+              await awaitWithinDeadline(
+                "reproduced test read",
+                () => budget("reproduce"),
+                async () => await readFile(chosen.testPath),
+              ),
+              chosen.testPath,
+            );
+            semanticControlEvidence = semanticPositiveControlEvidence(
+              chosen,
+              controlSource,
+              baselineTestSource,
+            );
+            const candidateRedTestName =
+              semanticControlEvidence.candidateRedTestName;
+            if (candidateRedTestName === undefined) {
+              throw new InvalidReproductionProofError(
+                "target-wrong-pattern",
+                `semantic reproduction proof did not identify the added RED test for ${chosen.id}`,
+              );
+            }
+            if (
+              semanticControlEvidence.testAstSha256 !==
+              baselineSemanticControl.testAstSha256
+            ) {
+              throw new InvalidReproductionProofError(
+                "control-failed",
+                `reproduce changed pre-existing control ${controlTestName(chosen)}`,
+              );
+            }
+            report.stage = "red-gate";
+            await monitor.stage("red-gate", async () => {
+              const control = await runLogged(
+                "bun",
+                matcherProofArgs(
+                  controlTestArgs(chosen),
+                  MATCHER_PROOF_PRELOAD_PATH,
+                ),
+                budget("reproduce"),
+              );
+              report.validation.push(control);
+              const red = await runTargetAfterPositiveControl(
+                control,
+                controlTestName(chosen),
+                () =>
+                  runLogged(
+                    "bun",
+                    matcherProofArgs(
+                      namedTestArgs(chosen.testPath, candidateRedTestName),
+                      MATCHER_PROOF_PRELOAD_PATH,
+                    ),
+                    budget("reproduce"),
+                  ),
+              );
+              report.validation.push(red);
+              assertRedGateEvidence(
+                control,
+                controlTestName(chosen),
+                red,
+                candidateRedTestName,
+                candidateRedMarker(chosen.id),
+              );
+              await awaitWithinDeadline(
+                "RED diff write",
+                () => budget("reproduce"),
+                async () => await writeText(RED_DIFF_PATH, capturedTestDiff),
+              );
+            });
+            return {
+              status: "accepted",
+              value: {
+                candidate: attempted,
+                control: control,
+                redDiff: capturedAttemptDiff,
+                semanticControl: semanticControlEvidence,
+              } satisfies AcceptedReproduction,
+            } as const;
+          } catch (error) {
+            if (!isInvalidReproductionProof(error)) throw error;
+            report.stage = `reproduce-rank-${String(rank + 1)}-rejected`;
+            const reason = normalizeFailure(error);
+            const artifactPath = `${REPORT_DIR}/${runId}/rejected/${String(rank + 1)}-${attempted.id}.json`;
+            report.rejectedCandidates.push({
+              candidate: attempted,
+              control: control,
+              reason: reason,
+              redDiff: capturedAttemptDiff,
+              validation: [...report.validation.slice(validationStart)],
+              snapshotSha256: snapshotSha256,
+              rank: rank + 1,
+              artifactPath,
+              baselineStatus: snapshot.baselineStatus,
+              baselineDiff: snapshot.baselineDiff,
+              ...(semanticControlEvidence === undefined
+                ? {}
+                : { semanticControl: semanticControlEvidence }),
+            });
+            const rejected = report.rejectedCandidates.at(-1)!;
+            await awaitWithinDeadline(
+              "rejected candidate artifact write",
+              () => budget("reproduce"),
+              async () => await writeJson(artifactPath, rejected),
+            );
+            return {
+              status: "rejected",
+              reason,
+              restore: async () => {
+                const restoration = await restoreExactTestSnapshot(
+                  attempted.testPath,
+                  snapshot,
+                  () => budget("reproduce"),
+                );
+                rejected.restoration = restoration;
+                await awaitWithinDeadline(
+                  "rejected restoration artifact write",
+                  () => budget("reproduce"),
+                  async () => await writeJson(artifactPath, rejected),
+                );
+              },
+            } as const;
+          }
+        },
+      ),
+    );
+
+    candidate = reproduction.value.candidate;
+    capturedTestDiff = reproduction.value.redDiff;
+    report.candidate = candidate;
+    report.scoutEvidence.acceptedControl = {
+      ...reproduction.value.control,
+    };
+    report.redDiffPath = RED_DIFF_PATH;
+    report.semanticControl = reproduction.value.semanticControl;
+
+    enter("select-plan");
+    await monitor.stage("select-plan", async () => {
+      const chosen = requireCandidate(candidate);
+      await awaitWithinDeadline(
+        "accepted plan write",
+        workRemaining,
+        async () =>
+          await writeJson(PLAN_PATH, {
+            runId,
+            profile,
+            baseSha: report.baseSha,
+            candidates: scoutResult.candidates,
+            rankedCandidateIds: scoutResult.rankedCandidateIds,
+            selectedControl: scoutResult.selectedControl,
+            acceptedControl: reproduction.value.control,
+            rejectedCandidates: report.rejectedCandidates,
+            candidate: chosen,
+          }),
+      );
+    });
+
+    const chosen = requireCandidate(candidate);
+
+    const implementConfig = stageConfig(
+      "implement",
+      config.stages.implement,
+      false,
+    );
+    report.appliedSystemPrompts.implement =
+      implementConfig.systemPrompt ?? "";
+
+    enter("implement");
+    beginBudget("implement");
+    await monitor.stage("implement", async () => {
+      const outcome = await withStableIgnoredOrcaGuard("implement", () => budget("implement"), async () => {
+        const implementConversation = llm().autonomous(selectedStageBackend, {
+          prompt: implementPrompt(chosen, capturedTestDiff),
+          config: selectedStageConfig(implementConfig),
+        });
+        return await awaitConversationWithinBudget(
+          implementConversation,
+          budget("implement"),
+          "implement",
+          recordUsage,
+        );
+      });
+      if (outcome.type !== "success") {
+        throw new Error(`implement failed: ${describeOutcome(outcome)}`);
+      }
+      recordUsage(outcome.result.usage);
+      assertImmutableTestDiff(
+        capturedTestDiff,
+        await pathDiff(chosen.testPath, () => budget("implement")),
+      );
+      assertCandidateScope(
+        chosen,
+        await changedPaths(() => budget("implement")),
+      );
+    });
+
+    enter("targeted-repair");
+    beginBudget("repairs");
+    await monitor.stage("targeted-repair", async () => {
+      const seenGateIssues = new Set<string>();
+      const loop = await fixLoop<GateIssue>(
+        async () => {
+          const logs = await runTargetedGate(chosen, budget("repairs"));
+          report.validation.push(...logs);
+          return ok(gateIssuesFromLogs(logs));
+        },
+        async (issues) => {
+          const outcome = await withStableIgnoredOrcaGuard("targeted-repair", () => budget("repairs"), async () => {
+            const repairConversation = llm().autonomous(selectedStageBackend, {
+                prompt: repairPrompt(
+                  chosen,
+                  issues.map((issue) => issue.message),
+                ),
+                config: selectedStageConfig(repairConfig),
+            });
+            return await awaitConversationWithinBudget(
+              repairConversation,
+              budget("repairs"),
+              "targeted repair",
+              recordUsage,
+            );
+          });
+          if (outcome.type !== "success") {
+            throw new Error(
+              `targeted repair failed: ${describeOutcome(outcome)}`,
+            );
+          }
+          recordUsage(outcome.result.usage);
+          assertImmutableTestDiff(
+            capturedTestDiff,
+            await pathDiff(chosen.testPath, () => budget("repairs")),
+          );
+          assertCandidateScope(
+            chosen,
+            await changedPaths(() => budget("repairs")),
+          );
+          return ok({ usage: outcome.result.usage });
+        },
+        {
+          maxIterations: 1,
+          wallClockMs: budget("repairs"),
+          stalled: (issues) => {
+            const signature = issues
+              .map((issue) => issue.message.replace(/\d+/g, "#"))
+              .sort()
+              .join("\n");
+            if (seenGateIssues.has(signature)) return true;
+            seenGateIssues.add(signature);
+            return false;
+          },
+        },
+      );
+      if (loop.isErr()) {
+        throw new Error(`targeted repair loop failed: ${normalizeFailure(loop.error)}`);
+      }
+      if (!loop.value.converged) {
+        const reason = regressedReason(loop.value.stop);
+        throw new Error(
+          `targeted repair did not converge: ${loop.value.stop} (${reason})`,
+        );
+      }
+    });
+
+    const reviewConfig = stageConfig("review", config.stages.review, true);
+    report.appliedSystemPrompts.review = reviewConfig.systemPrompt ?? "";
+    const performReview = async (label: string): Promise<ReviewFinding[]> => {
+      const reviewConversation = llm().autonomous(selectedStageBackend, {
+        prompt: reviewPrompt(chosen),
+        schema: ReviewResultSchema,
+        config: selectedStageConfig(reviewConfig),
+      });
+      const outcome = await awaitConversationWithinBudget(
+        reviewConversation,
+        budget("review"),
+        label,
+        recordUsage,
+      );
+      if (outcome.type !== "success") {
+        throw new Error(`${label} failed: ${describeOutcome(outcome)}`);
+      }
+      recordUsage(outcome.result.usage);
+      const structured = ReviewResultSchema.safeParse(
+        outcome.result.structured,
+      );
+      if (!structured.success) {
+        throw new Error(
+          `review structured output invalid: ${structured.error.message}`,
+        );
+      }
+      return structured.data.findings;
+    };
+
+    enter("review");
+    beginBudget("review");
+    await monitor.stage("review", async () => {
+      reviewFindings = await performReview("review");
+      report.initialReviewFindings = [...reviewFindings];
+    });
+
+    enter("review-repair");
+    await monitor.stage("review-repair", async () => {
+      const blockers = blockingFindings(reviewFindings);
+      if (blockers.length === 0) {
+        report.finalReviewFindings = [...reviewFindings];
+        report.finalReviewBlockerCount = 0;
+        return;
+      }
+      if (blockers.some((finding) => !finding.fixable)) {
+        throw new Error(
+          `review returned unfixable blockers: ${JSON.stringify(blockers)}`,
+        );
+      }
+      beginBudget("repairs");
+      const outcome = await withStableIgnoredOrcaGuard("review-repair", () => budget("repairs"), async () => {
+        const repairConversation = llm().autonomous(selectedStageBackend, {
+          prompt: repairPrompt(
+            chosen,
+            blockers.map(
+              (finding) =>
+                `${finding.severity}: ${finding.evidence}\n${finding.recommendation}`,
+            ),
+          ),
+          config: selectedStageConfig(repairConfig),
+        });
+        return await awaitConversationWithinBudget(
+          repairConversation,
+          budget("repairs"),
+          "review repair",
+          recordUsage,
+        );
+      });
+      if (outcome.type !== "success") {
+        throw new Error(`review repair failed: ${describeOutcome(outcome)}`);
+      }
+      recordUsage(outcome.result.usage);
+      assertImmutableTestDiff(
+        capturedTestDiff,
+        await pathDiff(chosen.testPath, () => budget("repairs")),
+      );
+      assertCandidateScope(
+        chosen,
+        await changedPaths(() => budget("repairs")),
+      );
+      const logs = await runTargetedGate(chosen, budget("repairs"));
+      report.validation.push(...logs);
+      const failed = logs.find((log) => log.status === "failed");
+      if (failed !== undefined) {
+        throw new Error(
+          `${failed.command} failed after review repair\n${failed.stderr || failed.stdout}`,
+        );
+      }
+      beginBudget("review");
+      reviewFindings = await performReview("repeated review");
+      const remaining = blockingFindings(reviewFindings);
+      report.finalReviewFindings = [...reviewFindings];
+      report.finalReviewBlockerCount = remaining.length;
+      if (remaining.length > 0) {
+        throw new Error(
+          `review blockers remain after one repair: ${JSON.stringify(remaining)}`,
+        );
+      }
+    });
+    if (report.finalReviewBlockerCount !== 0) {
+      throw new Error("review completion did not record zero blockers");
+    }
+
+    enter("verify");
+    beginBudget("verify");
+    await monitor.stage("verify", async () => {
+      report.validation.push(
+        ...(await assertBoundGitContext(
+          "post-agent",
+          report.branch,
+          report.baseSha,
+          report.originFetchUrl,
+          report.originPushUrl,
+          () => budget("verify"),
+        )),
+      );
+      const full = await runRequired(
+        FULL_GATE.command,
+        FULL_GATE.args,
+        Math.min(
+          FULL_GATE.timeoutMs * PROFILE_SCALE[profile],
+          budget("verify"),
+        ),
+      );
+      report.validation.push(full);
+      assertImmutableTestDiff(
+        capturedTestDiff,
+        await pathDiff(chosen.testPath, () => budget("verify")),
+      );
+      const paths = await changedPaths(() => budget("verify"));
+      assertCandidateScope(chosen, paths);
+      validatedPaths = paths;
+      const profileIssues = validateCandidateForProfile(chosen, profile);
+      if (profileIssues.length > 0 || paths.length > limits.maxPaths) {
+        throw new Error(
+          `verify scope violates ${profile}: ${[
+            ...profileIssues,
+            ...(paths.length > limits.maxPaths
+              ? [`changed path count exceeds ${String(limits.maxPaths)}`]
+              : []),
+          ].join("; ")}`,
+        );
+      }
+      verifiedContentManifest = await captureCandidateWorktreeManifest(
+        paths,
+        () => budget("verify"),
+      );
+    });
+    report.usage = requireRecordedUsage(report.usage);
+
+    enter("commit-push");
+    beginBudget("delivery");
+    const capturedOriginPushUrl = report.originPushUrl;
+    const pushedHeadSha = await monitor.stage("commit-push", async () => {
+      if (verifiedContentManifest === undefined) {
+        throw new Error("verified candidate content manifest is missing");
+      }
+      assertImmutableTestDiff(
+        capturedTestDiff,
+        await pathDiff(chosen.testPath, () => budget("delivery")),
+      );
+      const paths = await changedPaths(() => budget("delivery"));
+      assertCandidateScope(chosen, paths);
+      validatedPaths = paths;
+      const preStageManifest = await captureCandidateWorktreeManifest(
+        paths,
+        () => budget("delivery"),
+      );
+      assertGitManifestUnchanged(verifiedContentManifest, preStageManifest, "pre-stage candidate content");
+      report.validation.push(
+        await runRequired(
+          "git",
+          ["add", "--", ...paths],
+          budget("delivery"),
+        ),
+      );
+      const staged = await runRequired(
+        "git",
+        ["diff", "--cached", "--name-only", "-z"],
+        budget("delivery"),
+      );
+      report.validation.push(staged);
+      parseExactGitPathList(staged.stdout, paths, "staged candidate");
+      const stagedManifest = await captureCandidateIndexManifest(
+        paths,
+        () => budget("delivery"),
+      );
+      assertGitManifestUnchanged(verifiedContentManifest, stagedManifest, "staged candidate content");
+      const preCommitHead = await runRequired(
+        "git",
+        ["rev-parse", "HEAD"],
+        budget("delivery"),
+      );
+      report.validation.push(preCommitHead);
+      const preCommitHeadSha = preCommitHead.stdout.trim();
+      if (
+        !/^[0-9a-f]{40}$/.test(preCommitHeadSha) ||
+        preCommitHeadSha !== report.baseSha
+      ) {
+        throw new Error(
+          `pre-commit HEAD ${preCommitHeadSha} did not match base ${report.baseSha}`,
+        );
+      }
+      report.validation.push(
+        await runRequired(
+          "git",
+          ["commit", "-m", chosen.title],
+          budget("delivery"),
+        ),
+      );
+      const validatedHead = await runRequired(
+        "git",
+        ["rev-parse", "HEAD"],
+        budget("delivery"),
+      );
+      report.validation.push(validatedHead);
+      const validatedHeadSha = validatedHead.stdout.trim();
+      if (!/^[0-9a-f]{40}$/.test(validatedHeadSha)) {
+        throw new Error(
+          `git rev-parse HEAD returned invalid commit SHA: ${JSON.stringify(validatedHeadSha)}`,
+        );
+      }
+      const committedAncestry = await runRequired(
+        "git",
+        ["rev-list", "--parents", "-n", "1", validatedHeadSha],
+        budget("delivery"),
+      );
+      report.validation.push(committedAncestry);
+      const ancestryParts = committedAncestry.stdout.trim().split(/\s+/);
+      if (
+        ancestryParts.length !== 2 ||
+        ancestryParts[0] !== validatedHeadSha ||
+        ancestryParts[1] !== preCommitHeadSha
+      ) {
+        throw new Error(
+          `committed candidate must be exactly one child of ${preCommitHeadSha}`,
+        );
+      }
+      const committedPaths = await runRequired(
+        "git",
+        [
+          "diff",
+          "--name-only",
+          "-z",
+          preCommitHeadSha,
+          validatedHeadSha,
+          "--",
+        ],
+        budget("delivery"),
+      );
+      report.validation.push(committedPaths);
+      parseExactGitPathList(
+        committedPaths.stdout,
+        paths,
+        "committed candidate range",
+      );
+      const committedManifest = await captureCandidateCommitManifest(
+        paths,
+        () => budget("delivery"),
+      );
+      assertGitManifestUnchanged(verifiedContentManifest, committedManifest, "committed candidate content");
+      const prePushWorktreeManifest = await captureCandidateWorktreeManifest(
+        paths,
+        () => budget("delivery"),
+      );
+      assertGitManifestUnchanged(
+        verifiedContentManifest,
+        prePushWorktreeManifest,
+        "pre-push candidate worktree content",
+      );
+      report.validation.push(
+        ...(await assertBoundGitContext(
+          "pre-push",
+          report.branch,
+          report.baseSha,
+          report.originFetchUrl,
+          report.originPushUrl,
+          () => budget("delivery"),
+        )),
+      );
+      report.validation.push(
+        await runRequired(
+          "git",
+          [
+            "push",
+            capturedOriginPushUrl,
+            `${validatedHeadSha}:refs/heads/${report.branch}`,
+          ],
+          budget("delivery"),
+        ),
+      );
+      report.validation.push(
+        ...(await assertBoundGitContext(
+          "post-push",
+          report.branch,
+          report.baseSha,
+          report.originFetchUrl,
+          report.originPushUrl,
+          () => budget("delivery"),
+        )),
+      );
+      const remoteBranch = await runRequired(
+        "git",
+        [
+          "ls-remote",
+          "--refs",
+          capturedOriginPushUrl,
+          `refs/heads/${report.branch}`,
+        ],
+        budget("delivery"),
+      );
+      report.validation.push(remoteBranch);
+      if (
+        remoteBranch.stdout.trim() !==
+        `${validatedHeadSha}\trefs/heads/${report.branch}`
+      ) {
+        throw new Error(
+          `remote branch ${report.branch} did not resolve to ${validatedHeadSha}`,
+        );
+      }
+      return validatedHeadSha;
+    });
+
+    const pullRequestIdentity: PullRequestIdentity = {
+      repository: report.repository,
+      branch: report.branch,
+      headSha: pushedHeadSha,
+    };
+
+    enter("pull-request");
+    await monitor.stage("pull-request", async () => {
+      const bodyPath = `${REPORT_DIR}/${runId}/pr-body.md`;
+      await awaitWithinDeadline(
+        "PR body write",
+        () => budget("delivery"),
+        async () => await writeText(bodyPath, pullRequestBody(chosen, report)),
+      );
+      const created = await createPullRequestBounded(
+        chosen.title,
+        bodyPath,
+        pullRequestIdentity,
+        budget("delivery"),
+      );
+      report.validation.push(created.log);
+      report.prUrl = created.url;
+    });
+
+    const prUrl = requirePullRequestUrl(report.prUrl);
+    const deliveryTerminalReserve =
+      MERGE_CONFIRMATION_LIMIT_MS + ISSUE_CLOSURE_RESERVE_MS;
+    const ciPollRemaining = (): number =>
+      budget("delivery") - deliveryTerminalReserve;
+    const assertPullRequestHead = (
+      url: string,
+      identity: PullRequestIdentity,
+    ): Promise<void> =>
+      assertPullRequestHeadBounded(
+        url,
+        identity,
+        remainingTimeout(
+          CI_POLL_INTERVAL_MS,
+          ciPollRemaining(),
+          `pull request head for ${url}`,
+        ),
+      );
+    await assertPullRequestHead(prUrl, pullRequestIdentity);
+    report.matchedHeadSha = pullRequestIdentity.headSha;
+
+    enter("remote-checks");
+    const passedRemoteChecks = await monitor.stage(
+      "remote-checks",
+      async (): Promise<PassedRemoteChecksEvidence<CommandLog>> => {
+        while (true) {
+          const beforePoll = budget("delivery");
+          if (beforePoll <= CI_POLL_INTERVAL_MS) {
+            throw new Error(`sla-overrun waiting for CI / Verify on ${prUrl}`);
+          }
+          await assertPullRequestHead(prUrl, pullRequestIdentity);
+          if (budget("delivery") <= CI_POLL_INTERVAL_MS) {
+            throw new Error(`sla-overrun waiting for CI / Verify on ${prUrl}`);
+          }
+          const remote = await readRemoteChecks(
+            prUrl,
+            remainingTimeout(
+              CI_POLL_INTERVAL_MS,
+              ciPollRemaining(),
+              `CI / Verify on ${prUrl}`,
+            ),
+          );
+          const state = remoteCheckState(remote.checks);
+          if (state === "passed") {
+            await assertPullRequestHead(prUrl, pullRequestIdentity);
+            const evidence = buildPassedRemoteChecksEvidence(
+              remote.checks,
+              remote.log,
+              pullRequestIdentity.headSha,
+              new Date().toISOString(),
+            );
+            report.validation.push(remote.log);
+            return evidence;
+          }
+          if (state === "failed") {
+            throw new Error(
+              `gh pr checks ${prUrl} reported failure: ${JSON.stringify(remote.checks)}`,
+            );
+          }
+          if (!(ciPollRemaining() > CI_POLL_INTERVAL_MS)) {
+            throw new Error(`sla-overrun waiting for CI / Verify on ${prUrl}`);
+          }
+          await awaitWithinDeadline(
+            "CI poll interval",
+            ciPollRemaining,
+            async () => {
+              await Bun.sleep(
+                Math.min(CI_POLL_INTERVAL_MS, ciPollRemaining()),
+              );
+            },
+          );
+        }
+      },
+    );
+    report.remoteChecks = passedRemoteChecks;
+
+    enter("merge");
+    await monitor.stage("merge", async () => {
+      const mergeReserve =
+        MERGE_CONFIRMATION_LIMIT_MS +
+        ISSUE_CLOSURE_RESERVE_MS;
+      const preMergeChecksRemainder = budget("delivery");
+      if (preMergeChecksRemainder <= mergeReserve + 5_000) {
+        throw new Error(`sla-overrun before refreshing CI for ${prUrl}`);
+      }
+      const mergeProtection = await assertMergeProtectionBounded(
+        report.repository,
+        remainingTimeout(
+          5_000,
+          preMergeChecksRemainder - mergeReserve,
+          `merge protection for ${report.repository}`,
+        ),
+      );
+      report.validation.push(mergeProtection);
+      const freshRemote = await readRemoteChecks(
+        prUrl,
+        remainingTimeout(
+          CI_POLL_INTERVAL_MS,
+          ciPollRemaining(),
+          `fresh CI / Verify on ${prUrl}`,
+        ),
+      );
+      const freshState = remoteCheckState(freshRemote.checks);
+      if (freshState !== "passed") {
+        throw new Error(
+          `gh pr checks ${prUrl} changed to ${freshState} before merge: ${JSON.stringify(freshRemote.checks)}`,
+        );
+      }
+      const freshRemoteChecks = buildPassedRemoteChecksEvidence(
+        freshRemote.checks,
+        freshRemote.log,
+        pullRequestIdentity.headSha,
+        new Date().toISOString(),
+      );
+      report.validation.push(freshRemote.log);
+      report.remoteChecks = freshRemoteChecks;
+      assertPassedRemoteChecksForHead(
+        report.remoteChecks,
+        pullRequestIdentity.headSha,
+      );
+      await assertPullRequestHead(prUrl, pullRequestIdentity);
+      const mergeRemainder = budget("delivery");
+      if (mergeRemainder <= mergeReserve) {
+        throw new Error(`sla-overrun before merging ${prUrl}`);
+      }
+      report.mergeProof = await mergePullRequestBounded(
+        prUrl,
+        pullRequestIdentity,
+        mergeRemainder - mergeReserve,
+        () =>
+          budget("delivery") -
+          ISSUE_CLOSURE_RESERVE_MS,
+        report.validation,
+      );
+      report.validation.push(report.mergeProof.command);
+      report.merged = true;
+    });
+
+    report.stopReason = "completed";
+    monitor.recordOutcome({
+      reason: "completed",
+      file: chosen.title,
+      verdict: "clean",
+      durationMs: Date.now() - startedAtMs,
+      smellsRemoved: [chosen.problem],
+      changedPaths: validatedPaths,
+      validation: report.validation,
+      usage: requireRecordedUsage(report.usage),
+    });
+  } catch (error) {
+    bodyFailed = true;
+    report.stopReason = normalizeFailure(error);
+    report.sla = "failed";
+    monitor.recordFailure({
+      file: candidate?.title ?? "codebase-improvement",
+      error,
+      durationMs: Date.now() - startedAtMs,
+      category: classifyIssue(report.stage, error),
+    });
+    pendingIssue = buildRunIssue(
+      `${runId}-${report.stage}-${String(Date.now())}`,
+      report.stage,
+      classifyIssue(report.stage, error),
+      Date.now() - startedAtMs,
+      normalizeFailure(error),
+    );
+    throw error;
+  } finally {
+    let persistedIssue: RunIssue | undefined;
+    const finalizerErrors = await finalizeWorkflowEvidence({
+      bodyFailed,
+      remainingMs: () =>
+        stageBudgetMs(
+          startedAtMs,
+          runtimeDeadlineMs(),
+          Date.now(),
+          runtimeDeadlineMs(),
+        ),
+      shutdown: {
+        label: "shutdown",
+        run: async () => {
+          await selected.shutdown?.();
+        },
+      },
+      artifacts: [
+        {
+          label: "issue ledger",
+          run: async (context) => {
+            if (
+              pendingIssue !== undefined &&
+              pendingIssue !== persistedIssue
+            ) {
+              const issue = pendingIssue;
+              const commit = await appendIssue(issue, runId, context);
+              persistedIssue = issue;
+              return commit;
+            }
+          },
+        },
+        {
+          label: "monitor",
+          run: async (context) => {
+            return await publishFinalizationText(
+              `${MONITOR_DIR}/${monitor.runId}.json`,
+              `${JSON.stringify(monitor.toJson(), null, 2)}\n`,
+              runId,
+              context,
+            );
+          },
+        },
+      ],
+      failureArtifactReserveMs: 2_000,
+      report: {
+        label: "report",
+        run: async (context) => {
+          const finishedAtMs = Date.now();
+          const remainingAtReport = context.remainingMs();
+          report.finishedAtMs = finishedAtMs;
+          report.elapsedMs = finishedAtMs - startedAtMs;
+          report.sla =
+            !bodyFailed &&
+            report.stage !== "finalize" &&
+            report.elapsedMs <= runtimeDeadlineMs() &&
+            remainingAtReport > 0
+              ? "passed"
+              : "failed";
+          return await publishFinalizationText(
+            `${REPORT_DIR}/${runId}/report.json`,
+            `${JSON.stringify(report, null, 2)}\n`,
+            runId,
+            context,
+          );
+        },
+      },
+      enterFailureState: (errors) => {
+        const finishedAtMs = Date.now();
+        const stopReason = `workflow finalization failed: ${errors
+          .map((error) => error.message)
+          .join("; ")}`;
+        const finalizationError = new AggregateError(errors, stopReason);
+        report.finishedAtMs = finishedAtMs;
+        report.elapsedMs = finishedAtMs - startedAtMs;
+        report.stage = "finalize";
+        report.sla = "failed";
+        report.stopReason = stopReason;
+        pendingIssue = buildRunIssue(
+          `${runId}-finalize`,
+          "finalize",
+          "environment",
+          report.elapsedMs,
+          stopReason,
+          new Date(finishedAtMs).toISOString(),
+        );
+        monitor.recordFailure({
+          file: candidate?.title ?? "codebase-improvement",
+          error: finalizationError,
+          durationMs: report.elapsedMs,
+          category: "environment",
+        });
+      },
+    });
+    console.log(`monitor=${MONITOR_DIR}/${monitor.runId}.json`);
+    console.log(`report=${REPORT_DIR}/${runId}/report.json`);
+    console.log(`ledger=${ISSUE_PATH}`);
+    if (report.prUrl !== undefined) console.log(`pr_url=${report.prUrl}`);
+    if (!bodyFailed && finalizerErrors.length > 0) {
+      throw new AggregateError(finalizerErrors, "workflow finalization failed");
+    }
+    for (const error of finalizerErrors) {
+      console.error(error.message);
+    }
+  }
+});
+
+async function runRequired(
+  commandName: string,
+  args: readonly string[],
+  timeoutMs: number,
+): Promise<CommandLog> {
+  return await runRequiredCommand(command(), commandName, args, timeoutMs);
+}
+
+async function assertBoundGitContext(
+  label: string,
+  expectedBranch: string,
+  expectedBaseSha: string,
+  expectedFetchUrl: string,
+  expectedPushUrl: string,
+  remaining: () => number,
+): Promise<CommandLog[]> {
+  const branch = await runRequired(
+    "git",
+    ["rev-parse", "--abbrev-ref", "HEAD"],
+    remainingTimeout(5_000, remaining(), `${label} branch`),
+  );
+  const originMain = await runRequired(
+    "git",
+    ["rev-parse", "origin/main"],
+    remainingTimeout(5_000, remaining(), `${label} origin/main`),
+  );
+  const originFetchUrl = await runRequired(
+    "git",
+    ["remote", "get-url", "origin"],
+    remainingTimeout(5_000, remaining(), `${label} origin fetch URL`),
+  );
+  const originPushUrl = await runRequired(
+    "git",
+    ["remote", "get-url", "--push", "origin"],
+    remainingTimeout(5_000, remaining(), `${label} origin push URL`),
+  );
+  assertCurrentBranch(branch.stdout, expectedBranch);
+  if (originMain.stdout.trim() !== expectedBaseSha) {
+    throw new Error(
+      `${label} origin/main ${originMain.stdout.trim()} did not match ${expectedBaseSha}`,
+    );
+  }
+  if (originFetchUrl.stdout.trim() !== expectedFetchUrl) {
+    throw new Error(`${label} origin fetch URL changed`);
+  }
+  if (originPushUrl.stdout.trim() !== expectedPushUrl) {
+    throw new Error(`${label} origin push URL changed`);
+  }
+  return [branch, originMain, originFetchUrl, originPushUrl];
+}
+
+function budgetedCommandTool(remaining: () => number): CommandTool {
+  return {
+    async run(spec: VerificationCommand) {
+      const remainingMs = remaining();
+      const rendered = [spec.command, ...(spec.args ?? [])].join(" ");
+      const timeoutMs = remainingTimeout(
+        spec.timeoutMs ?? remainingMs,
+        remainingMs,
+        rendered,
+      );
+      return await command().run({ ...spec, timeoutMs });
+    },
+  };
+}
+
+async function readConfig(): Promise<WorkflowConfig> {
+  const result = await fs().readText(CONFIG_PATH);
+  if (result.isErr()) {
+    throw new Error(`${CONFIG_PATH} read failed: ${normalizeFailure(result.error)}`);
+  }
+  return WorkflowConfigSchema.parse(parseJson(result.value, CONFIG_PATH));
+}
+
+async function writeJson(path: string, value: unknown): Promise<void> {
+  await writeText(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function publishFinalizationText(
+  path: string,
+  value: string,
+  _runId: string,
+  context: FinalizationContext,
+): Promise<FinalizationCommitDecision> {
+  return await publishFinalizationTextSecure(path, value, context);
+}
+
+async function appendIssue(
+  issue: RunIssue,
+  runId: string,
+  context: FinalizationContext,
+): Promise<FinalizationCommitDecision> {
+  let existing = "";
+  if (await fs().exists(ISSUE_PATH)) {
+    const read = await fs().readText(ISSUE_PATH);
+    if (read.isErr()) {
+      throw new Error(
+        `${ISSUE_PATH} read failed: ${normalizeFailure(read.error)}`,
+      );
+    }
+    existing = read.value;
+  }
+  const prefix = existing === "" || existing.endsWith("\n") ? existing : `${existing}\n`;
+  return await publishFinalizationText(
+    ISSUE_PATH,
+    `${prefix}${JSON.stringify(issue)}\n`,
+    runId,
+    context,
+  );
+}
+
+function latestCommitEvidencePrefix(
+  latestCommit: string,
+): string {
+  return [
+    "Latest commit subject and changed paths:",
+    latestCommit.trim(),
+    "Current source and test evidence:",
+  ].join("\n");
+}
+
+async function captureExactTestSnapshot(
+  path: string,
+  remaining: () => number,
+): Promise<ExactTestSnapshot> {
+  return await captureExactFileSnapshot(
+    path,
+    exactSnapshotOperations(remaining),
+  );
+}
+
+async function restoreExactTestSnapshot(
+  path: string,
+  snapshot: ExactTestSnapshot,
+  remaining: () => number,
+): Promise<ExactRestorationEvidence> {
+  return await restoreExactFileSnapshot(
+    path,
+    snapshot,
+    exactSnapshotOperations(remaining),
+  );
+}
+
+function exactSnapshotOperations(
+  remaining: () => number,
+): ExactSnapshotOperations {
+  return {
+    readBytes: async (path) => {
+      const file = Bun.file(path);
+      const exists = await awaitWithinDeadline(
+        "test snapshot existence check",
+        remaining,
+        async () => await file.exists(),
+      );
+      if (!exists) {
+        throw new Error(`test snapshot path does not exist: ${path}`);
+      }
+      return new Uint8Array(
+        await awaitWithinDeadline(
+          "test snapshot read",
+          remaining,
+          async () => await file.arrayBuffer(),
+        ),
+      );
+    },
+    writeBytes: async (path, bytes) => {
+      await awaitWithinDeadline(
+        "test snapshot write",
+        remaining,
+        async () => await Bun.write(path, bytes),
+      );
+    },
+    readStatus: async () =>
+      (
+        await runRequired(
+          "git",
+          ["status", "--porcelain=v1", "--untracked-files=all"],
+          remainingTimeout(5_000, remaining(), "snapshot git status"),
+        )
+      ).stdout,
+    readDiff: async () =>
+      (
+        await runRequired(
+          "git",
+          ["diff", "--no-ext-diff", "--binary", "HEAD", "--"],
+          remainingTimeout(5_000, remaining(), "snapshot git diff"),
+        )
+      ).stdout,
+  };
+}
+
+async function captureIgnoredOrcaContentManifest(
+  remaining: () => number,
+): Promise<GitManifestEntry[]> {
+  const ignored = await runRequired(
+    "git",
+    [
+      "ls-files",
+      "--others",
+      "--ignored",
+      "--exclude-standard",
+      "-z",
+      "--",
+      ".orca",
+    ],
+    remainingTimeout(10_000, remaining(), "ignored .orca manifest paths"),
+  );
+  if (
+    Buffer.byteLength(ignored.stdout) >
+    IGNORED_ORCA_MANIFEST_MAX_PATH_BYTES
+  ) {
+    throw new Error("ignored .orca manifest exceeds path byte limit");
+  }
+  const paths = ignored.stdout
+    .split("\0")
+    .filter((path) => path !== "");
+  return await captureFileContentManifest(paths, {
+    maxTotalBytes: IGNORED_ORCA_MANIFEST_MAX_BYTES,
+    maxEntries: IGNORED_ORCA_MANIFEST_MAX_ENTRIES,
+    maxTotalPathBytes: IGNORED_ORCA_MANIFEST_MAX_PATH_BYTES,
+    remainingMs: remaining,
+  });
+}
+
+function assertIgnoredOrcaContentManifest(
+  expected: readonly GitManifestEntry[],
+  actual: readonly GitManifestEntry[],
+  label: string,
+): void {
+  assertGitManifestUnchanged(
+    expected,
+    actual,
+    `${label} ignored .orca content`,
+  );
+}
+
+async function withStableIgnoredOrcaGuard<T>(
+  label: string,
+  remaining: () => number,
+  operation: () => Promise<T>,
+): Promise<T> {
+  let expected: readonly GitManifestEntry[] | undefined;
+  return await withGitManifestGuard(
+    async () => {
+      const actual = await captureIgnoredOrcaContentManifest(remaining);
+      if (expected === undefined) {
+        expected = actual;
+      } else {
+        assertIgnoredOrcaContentManifest(expected, actual, label);
+      }
+      return actual;
+    },
+    operation,
+  );
+}
+
+async function captureCandidateWorktreeManifest(
+  paths: readonly string[],
+  remaining: () => number,
+): Promise<GitManifestEntry[]> {
+  const format = await runRequired(
+    "git",
+    ["rev-parse", "--show-object-format"],
+    remainingTimeout(5_000, remaining(), "read Git object format"),
+  );
+  const objectFormat = format.stdout.trim();
+  if (objectFormat !== "sha1" && objectFormat !== "sha256") {
+    throw new Error(
+      `git rev-parse returned unsupported object format: ${JSON.stringify(objectFormat)}`,
+    );
+  }
+  return await captureGitWorktreeManifest(paths, {
+    root: process.cwd(),
+    objectFormat,
+    remainingMs: remaining,
+    hashFile: async (path) => {
+      const hashed = await runRequired(
+        "git",
+        ["hash-object", `--path=${path}`, "--", path],
+        remainingTimeout(5_000, remaining(), `hash candidate path ${path}`),
+      );
+      return hashed.stdout.trim();
+    },
+  });
+}
+
+async function captureCandidateIndexManifest(
+  paths: readonly string[],
+  remaining: () => number,
+): Promise<GitManifestEntry[]> {
+  const staged = await runRequired(
+    "git",
+    ["ls-files", "--stage", "-z", "--", ...paths],
+    remainingTimeout(10_000, remaining(), "staged candidate manifest"),
+  );
+  return parseGitIndexManifest(staged.stdout, paths);
+}
+
+async function captureCandidateCommitManifest(
+  paths: readonly string[],
+  remaining: () => number,
+): Promise<GitManifestEntry[]> {
+  const committed = await runRequired(
+    "git",
+    ["ls-tree", "-rz", "--full-tree", "HEAD", "--", ...paths],
+    remainingTimeout(10_000, remaining(), "committed candidate manifest"),
+  );
+  return parseGitCommitManifest(committed.stdout, paths);
+}
+
+async function changedPaths(
+  remaining: () => number,
+): Promise<string[]> {
+  const tracked = await runRequired(
+    "git",
+    ["diff", "--name-only", "-z", "HEAD"],
+    remainingTimeout(30_000, remaining(), "git diff changed paths"),
+  );
+  const untracked = await runRequired(
+    "git",
+    ["ls-files", "--others", "--exclude-standard", "-z"],
+    remainingTimeout(30_000, remaining(), "git untracked paths"),
+  );
+  return [
+    ...new Set(
+      `${tracked.stdout}${untracked.stdout}`
+        .split("\0")
+        .map((path) => path.trim())
+        .filter((path) => path !== ""),
+    ),
+  ].sort();
+}
+
+function nonEmptyLines(value: string): string[] {
+  return value.split("\n").filter((line) => line !== "");
+}
+
+function parseScoutMatchLines(
+  value: string,
+  selectedPaths: readonly string[],
+): Map<string, number[]> {
+  const matchLines = new Map<string, number[]>();
+  const paths = [...selectedPaths].sort(
+    (left, right) => right.length - left.length || left.localeCompare(right),
+  );
+  for (const record of nonEmptyLines(value)) {
+    const path = paths.find((item) => record.startsWith(`${item}:`));
+    if (path === undefined) {
+      throw new Error(`rg returned match outside selected paths: ${record}`);
+    }
+    const match = /^([1-9]\d*):/.exec(record.slice(path.length + 1));
+    if (match === null) {
+      throw new Error(`rg returned invalid match record: ${record}`);
+    }
+    const lines = matchLines.get(path) ?? [];
+    lines.push(Number(match[1]));
+    matchLines.set(path, lines);
+  }
+  for (const [path, lines] of matchLines) {
+    matchLines.set(path, [...new Set(lines)].sort((left, right) => left - right));
+  }
+  return matchLines;
+}
+
+async function pathDiff(
+  path: string,
+  remaining: () => number,
+): Promise<string> {
+  const result = await runRequired(
+    "git",
+    ["diff", "--no-ext-diff", "--binary", "HEAD", "--", path],
+    remainingTimeout(30_000, remaining(), `git diff ${path}`),
+  );
+  return result.stdout;
+}
+
+async function assertTrackedPaths(
+  paths: readonly string[],
+  timeoutMs: number,
+): Promise<void> {
+  if (paths.length === 0) throw new Error("git ls-files requires paths");
+  await runRequired(
+    "git",
+    ["ls-files", "--error-unmatch", "--", ...paths],
+    timeoutMs,
+  );
+}
+
+function describeOutcome(outcome: Outcome): string {
+  if (outcome.type === "failed") {
+    return `backend error: ${normalizeFailure(outcome.error)}`;
+  }
+  if (outcome.type === "cancelled") {
+    return `cancelled: ${outcome.reason ?? "no reason"}`;
+  }
+  return `success: ${outcome.result.output}`;
+}
+
+async function createPullRequestBounded(
+  title: string,
+  bodyFile: string,
+  identity: PullRequestIdentity,
+  timeoutMs: number,
+): Promise<{ readonly url: string; readonly log: CommandLog }> {
+  const log = await runRequired(
+    "gh",
+    pullRequestCreateArgs(title, bodyFile, identity),
+    timeoutMs,
+  );
+  const url = log.stdout.match(
+    /https:\/\/github\.com\/[^\s]+\/pull\/\d+/,
+  )?.[0];
+  if (url === undefined) {
+    throw new Error(`gh pr create --body-file ${bodyFile} returned no PR URL`);
+  }
+  return { url, log };
+}
+
+async function readPullRequestHeadBounded(
+  prUrl: string,
+  timeoutMs: number,
+): Promise<z.infer<typeof PullRequestHeadSchema>> {
+  const result = await runRequired(
+    "gh",
+    [
+      "pr",
+      "view",
+      prUrl,
+      "--json",
+      "url,baseRefName,headRefName,headRefOid,isDraft",
+    ],
+    timeoutMs,
+  );
+  return PullRequestHeadSchema.parse(
+    parseJson(
+      result.stdout,
+      `gh pr view ${prUrl} --json url,baseRefName,headRefName,headRefOid,isDraft`,
+    ),
+  );
+}
+
+async function assertPullRequestHeadBounded(
+  prUrl: string,
+  identity: PullRequestIdentity,
+  timeoutMs: number,
+): Promise<void> {
+  const actual = await readPullRequestHeadBounded(prUrl, timeoutMs);
+  assertReadyPullRequestHead(actual, identity);
+}
+
+async function readRemoteChecks(
+  prUrl: string,
+  timeoutMs: number,
+): Promise<{ readonly checks: RemoteCheck[]; readonly log: CommandLog }> {
+  const rendered = `gh pr checks ${prUrl} --json name,workflow,bucket`;
+  const result = await command().run({
+    command: "gh",
+    args: [
+      "pr",
+      "checks",
+      prUrl,
+      "--json",
+      "name,workflow,bucket",
+    ],
+    timeoutMs,
+  });
+  const log: CommandLog = {
+    command: rendered,
+    status: result.type === "success" ? "passed" : "failed",
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.exitCode,
+    durationMs: result.durationMs,
+  };
+  return { checks: parseRemoteChecksCommandResult(result, rendered), log };
+}
+
+async function assertMergeProtectionBounded(
+  repository: string,
+  timeoutMs: number,
+): Promise<CommandLog> {
+  const endpoint = `repos/${repository}/branches/main/protection`;
+  const log = await runRequired("gh", ["api", endpoint], timeoutMs);
+  assertRequiredMergeProtection(
+    parseJson(log.stdout, `gh api ${endpoint}`),
+    REQUIRED_CI_CHECK,
+    REQUIRED_CI_APP_ID,
+  );
+  return log;
+}
+
+function assertPassedRemoteChecksForHead(
+  evidence: PassedRemoteChecksEvidence<CommandLog> | undefined,
+  expectedHeadSha: string,
+): asserts evidence is PassedRemoteChecksEvidence<CommandLog> {
+  if (
+    evidence === undefined ||
+    evidence.headSha !== expectedHeadSha ||
+    evidence.state !== "passed" ||
+    evidence.command.status !== "passed" ||
+    remoteCheckState(evidence.checks) !== "passed"
+  ) {
+    throw new Error(`remote checks are not passed for ${expectedHeadSha}`);
+  }
+}
+
+async function confirmMerged(
+  prUrl: string,
+  identity: PullRequestIdentity,
+  remaining: () => number,
+): Promise<NonNullable<RunReport["mergeProof"]>> {
+  const command = await runRequired(
+    "gh",
+    [
+      "pr",
+      "view",
+      prUrl,
+      "--json",
+      "url,baseRefName,headRefName,headRefOid,isDraft,state",
+    ],
+    remainingTimeout(5_000, remaining(), "merge confirmation"),
+  );
+  const state = PullRequestStateSchema.parse(
+    parseJson(
+      command.stdout,
+      `gh pr view ${prUrl} --json url,baseRefName,headRefName,headRefOid,isDraft,state`,
+    ),
+  );
+  if (state.url !== prUrl) {
+    throw new Error(
+      `merge confirmation URL ${state.url} did not match requested pull request ${prUrl}`,
+    );
+  }
+  assertMergedPullRequestState(state, identity);
+  return {
+    ...state,
+    checkedAt: new Date().toISOString(),
+    command,
+  };
+}
+
+async function runLogged(
+  commandName: string,
+  args: readonly string[],
+  timeoutMs: number,
+): Promise<CommandLog> {
+  if (timeoutMs <= 0) {
+    throw new Error(
+      `sla-overrun before ${[commandName, ...args].join(" ")}`,
+    );
+  }
+  const result = await command().run({
+    command: commandName,
+    args,
+    timeoutMs,
+  });
+  return {
+    command: [commandName, ...args].join(" "),
+    status: result.type === "success" ? "passed" : "failed",
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.exitCode,
+    durationMs: result.durationMs,
+  };
+}
+
+async function mergePullRequestBounded(
+  prUrl: string,
+  identity: PullRequestIdentity,
+  timeoutMs: number,
+  remaining: () => number,
+  validation: CommandLog[],
+): Promise<NonNullable<RunReport["mergeProof"]>> {
+  const mergeCommand = await runLogged(
+    "gh",
+    [
+      "pr",
+      "merge",
+      prUrl,
+      "--squash",
+      "--match-head-commit",
+      identity.headSha,
+    ],
+    timeoutMs,
+  );
+  validation.push(mergeCommand);
+  const mergeFailure =
+    mergeCommand.status === "failed"
+      ? new Error(
+          `${mergeCommand.command} failed\n${mergeCommand.stderr || mergeCommand.stdout}`,
+        )
+      : undefined;
+  try {
+    return await confirmMerged(prUrl, identity, remaining);
+  } catch (confirmationFailure) {
+    if (mergeFailure === undefined) throw confirmationFailure;
+    throw new AggregateError(
+      [mergeFailure, confirmationFailure],
+      `merge attempt and authoritative confirmation failed for ${prUrl}`,
+    );
+  }
+}
+
+async function runTargetedGate(
+  candidate: Candidate,
+  timeoutMs: number,
+): Promise<CommandLog[]> {
+  return await Promise.all([
+    runLogged(
+      "bun",
+      matcherProofArgs(
+        candidate.targetedTestArgs,
+        MATCHER_PROOF_PRELOAD_PATH,
+      ),
+      timeoutMs,
+    ),
+    runLogged("bun", ["run", "lint"], timeoutMs),
+  ]);
+}
+
+async function writeText(path: string, value: string): Promise<void> {
+  const result = await fs().writeText(path, value);
+  if (result.isErr()) {
+    throw new Error(`${path} write failed: ${normalizeFailure(result.error)}`);
+  }
+}
+
+async function writeMatcherProofPreload(
+  remainingMs: () => number,
+): Promise<void> {
+  await awaitWithinDeadline(
+    "matcher proof preload write",
+    remainingMs,
+    async () => {
+      await writeText(MATCHER_PROOF_PRELOAD_PATH, MATCHER_PROOF_PRELOAD_SOURCE);
+    },
+  );
+  const written = await awaitWithinDeadline(
+    "matcher proof preload verification",
+    remainingMs,
+    async () => await readFile(MATCHER_PROOF_PRELOAD_PATH),
+  );
+  if (!written.equals(Buffer.from(MATCHER_PROOF_PRELOAD_SOURCE, "utf8"))) {
+    throw new Error(`${MATCHER_PROOF_PRELOAD_PATH} byte verification failed`);
+  }
+}
+
+function parseJson(value: string, source: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch (error) {
+    throw new Error(`${source} returned invalid JSON: ${normalizeFailure(error)}`);
+  }
+}
+
+function parseProfile(args: readonly string[]): ComplexityProfile {
+  const values = args
+    .filter((arg) => arg.startsWith("--complexity="))
+    .map((arg) => arg.slice("--complexity=".length));
+  const unsupported = args.filter((arg) => !arg.startsWith("--complexity="));
+  if (values.length === 0 && unsupported.length === 0) return "simple";
+  if (values.length !== 1 || unsupported.length > 0) {
+    throw new Error(
+      `expected exactly one --complexity=simple|medium|challenging argument; received ${args.join(" ")}`,
+    );
+  }
+  return ComplexityProfileSchema.parse(values[0]);
+}
+
+function parseStartedAt(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(
+      `ORCA_IMPROVEMENT_STARTED_AT_MS must be a positive integer, got ${value}`,
+    );
+  }
+  return parsed;
+}
+
+function parseWorkerDeadlineAtMs(
+  value: string,
+  startedAtMs: number,
+  deadlineMs: number,
+): number {
+  const parsed = Number(value);
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed <= startedAtMs ||
+    parsed > startedAtMs + deadlineMs
+  ) {
+    throw new Error(
+      `ORCA_IMPROVEMENT_WORKER_DEADLINE_AT_MS must be a safe integer greater than ${String(startedAtMs)} and no later than ${String(startedAtMs + deadlineMs)}, got ${value}`,
+    );
+  }
+  return parsed;
+}
+
+function requiredEnvironment(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value.trim() === "") {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+}
+
+function requireCandidate(candidate: Candidate | undefined): Candidate {
+  if (candidate === undefined) throw new Error(`${PLAN_PATH} has no candidate`);
+  return candidate;
+}
+
+function requirePullRequestUrl(value: string | undefined): string {
+  if (value === undefined) throw new Error("pull request URL is missing");
+  return value;
+}
+
+function assertCandidateScope(
+  candidate: Candidate,
+  paths: readonly string[],
+): void {
+  const issues = validateChangedPaths(candidate, paths);
+  if (issues.length > 0) {
+    throw new Error(`candidate scope failed: ${issues.join("; ")}`);
+  }
+}
+
+function semanticPositiveControlEvidence(
+  candidate: Candidate,
+  source: string,
+  baselineSource?: string,
+): SemanticControlEvidence {
+  try {
+    const semantic = assertSemanticPositiveControl(source, {
+      expectedTestName: controlTestName(candidate),
+      testPath: candidate.testPath,
+      allowedProductionPaths: [candidate.controlProductionPath],
+      candidateRedMarker: candidateRedMarker(candidate.id),
+      baselineSource,
+    });
+    if (semantic.productionPath !== candidate.controlProductionPath) {
+      throw new Error(
+        `positive control observed ${semantic.productionPath}, expected ${candidate.controlProductionPath}`,
+      );
+    }
+    const sourceFile = ts.createSourceFile(
+      candidate.testPath,
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    const namedTests = sourceFile.statements.flatMap((statement) => {
+      if (!ts.isExpressionStatement(statement)) return [];
+      const expression = statement.expression;
+      if (
+        !ts.isCallExpression(expression) ||
+        !ts.isIdentifier(expression.expression) ||
+        expression.expression.text !== "test" ||
+        expression.arguments[0] === undefined ||
+        !ts.isStringLiteralLike(expression.arguments[0]) ||
+        expression.arguments[0].text !== controlTestName(candidate)
+      ) {
+        return [];
+      }
+      return [expression];
+    });
+    if (namedTests.length !== 1) {
+      throw new Error(
+        `positive control ${controlTestName(candidate)} must have one top-level AST`,
+      );
+    }
+    return {
+      ...semantic,
+      testAstSha256: createHash("sha256")
+        .update(namedTests[0]!.getText(sourceFile))
+        .digest("hex"),
+    };
+  } catch (error) {
+    throw new InvalidReproductionProofError(
+      "control-failed",
+      `semantic positive control failed: ${normalizeFailure(error)}`,
+    );
+  }
+}
+
+function regressedReason(stop: FixLoopStop): RegressedReason {
+  if (stop === "timeout") return "timeout";
+  if (stop === "ceiling" || stop === "budget-exhausted") return "ceiling";
+  return "stuck";
+}
+
+function blockingFindings(
+  findings: readonly ReviewFinding[],
+): ReviewFinding[] {
+  return findings.filter(
+    (finding) =>
+      finding.severity === "high" || finding.severity === "critical",
+  );
+}
+
+function isInvalidReproductionProof(
+  error: unknown,
+): error is InvalidReproductionProofError {
+  return error instanceof InvalidReproductionProofError;
+}
+
+function scoutPrompt(
+  profile: ComplexityProfile,
+  limits: (typeof profileLimits)[ComplexityProfile],
+  evidence: string,
+): string {
+  return [
+    "Use only the evidence packet below.",
+    "Do not inspect the repository or call tools.",
+    "Each File: <path> section contains numbered source lines; cite them as <path>:<line>.",
+    "Return exactly three supported candidates.",
+    "Return candidates with three unique testPath values; do not return variants of one premise.",
+    "Each candidate must have at least one production allowed path that neither other candidate uses; shared support paths are allowed.",
+    "Allow no tests/** path except that candidate's testPath.",
+    "Return rankedCandidateIds as a best-first permutation of candidate IDs.",
+    'Set targetedTestArgs exactly to ["test", testPath]; the parent prepends bun.',
+    "Return exactly one selectedControl whose candidateId equals rankedCandidateIds[0].",
+    "Set every candidate expectedFailurePattern exactly to ORCA_RED:<candidate-id>.",
+    "Select one pre-existing top-level passing test from the packet for selectedControl.testName; never invent a new control name.",
+    "Set selectedControl.productionPath to the allowed production path directly imported and observed by that exact test.",
+    "Set selectedControl.brief to that packet-grounded known-good case using the same production entrypoint, setup, and observation path as rank one, differing only in the defect input.",
+    "Treat current implementation and existing tests as stronger evidence than speculative defect claims.",
+    "Use latest-commit evidence to avoid re-proposing behavior that was just completed unless the packet proves a distinct present defect.",
+    "For every candidate, cite at least one rendered line from testPath and from every allowed production path, then explain the causal path between them.",
+    "Choose each testPath only from a reserved source-test pair whose source is one of that candidate's allowed production paths.",
+    `Each candidate must be a low-risk ${profile} change requiring ${String(limits.minMinutes)}-${String(limits.maxMinutes)} minutes and at most ${String(limits.maxPaths)} tracked paths.`,
+    "Each candidate must identify one packet test path, at least one packet production path, direct path:line evidence, a bun test command, and an expected failing-output pattern.",
+    "Exclude dependency, release, publish, security, secret, public-API entrypoint, generated, and .orca paths.",
+    "Evidence packet:",
+    evidence,
+  ].join("\n");
+}
+
+function reproducePrompt(candidate: Candidate): string {
+  return [
+    `Create the failing regression test for ${candidate.title}.`,
+    candidate.problem,
+    ...candidate.evidence.map((evidence) => `Evidence: ${evidence}`),
+    `Allowed repository paths: ${candidate.allowedPaths.join(", ")}.`,
+    `Edit only ${candidate.testPath}.`,
+    `The targeted command is ${renderShellCommand("bun", candidate.targetedTestArgs)}.`,
+    `The failure must include this exact marker: ${candidateRedMarker(candidate.id)}.`,
+    `Name the new regression test with ${candidateRedMarker(candidate.id)} as an exact standalone token.`,
+    `Preserve the pre-existing top-level passing control test named exactly "${controlTestName(candidate)}" byte-for-byte in AST.`,
+    `That control must continue to prove ${candidate.controlBrief} by importing and observing ${candidate.controlProductionPath}. Do not add, rewrite, rename, repurpose, delete, weaken, skip, or mock the control.`,
+    "Make the new RED assertion observe the same exported production entrypoint as the control; only the defect input may differ.",
+    `Before stopping, run ${renderShellCommand("bun", controlTestArgs(candidate))} and require exactly one passing control.`,
+    `Then run only the new regression test with --test-name-pattern anchored to its escaped exact static name and require it to fail with ${candidateRedMarker(candidate.id)}. Do not run the whole test file as RED proof. If it passes, strengthen only the target assertion; incidental runner, stack, or source text must not satisfy it. Rerun the control and exact-name RED commands.`,
+    "The parent independently repeats both gates and saves the test diff only after they pass.",
+    "Never rename, repurpose, delete, or weaken an existing test; add only the new regression case.",
+    "For this reproduction, treat current implementation and existing tests as stronger evidence than speculative defect claims.",
+    "If no legitimate RED exists, leave the baseline unchanged and report the candidate non-reproducible; never manufacture a failure.",
+    "After required skill and context setup, inspect only the candidate allowed repository paths before editing. If they disprove the causal claim, stop immediately, leave the baseline unchanged, and report the candidate non-reproducible; do not search for a replacement.",
+    "Do not edit production code, weaken existing assertions, or perform git operations.",
+  ].join("\n");
+}
+
+function fallbackControlPrompt(
+  candidate: ScoutResult["candidates"][number],
+): string {
+  return [
+    "Use only the packet-grounded candidate below.",
+    "Do not inspect the repository or call tools.",
+    `Return candidateId exactly as ${candidate.id}.`,
+    "Return one pre-existing top-level testName from the packet and its directly imported allowed productionPath.",
+    "Return a known-good control brief describing how that exact test uses the same production entrypoint, setup, and observation path as the target, differing only in defect input.",
+    "Treat current implementation and existing tests as stronger evidence than speculative defect claims.",
+    JSON.stringify(candidate),
+  ].join("\n");
+}
+
+function implementPrompt(candidate: Candidate, redDiff: string): string {
+  const productionPaths = candidate.allowedPaths.filter(
+    (path) => path !== candidate.testPath,
+  );
+  return [
+    `Implement ${candidate.title}.`,
+    candidate.implementationBrief,
+    ...candidate.evidence.map((evidence) => `Evidence: ${evidence}`),
+    `Edit only these production paths: ${productionPaths.join(", ")}.`,
+    `Do not change ${candidate.testPath}; its captured diff is immutable.`,
+    "Captured failing regression-test diff:",
+    redDiff,
+    gateVerificationDirective(candidate),
+    "Fix the root cause and do not perform git operations.",
+  ].join("\n");
+}
+
+function repairPrompt(
+  candidate: Candidate,
+  failures: readonly string[],
+): string {
+  return [
+    `Repair ${candidate.title} within these paths: ${candidate.allowedPaths.join(", ")}.`,
+    `Do not change ${candidate.testPath}; its captured diff is immutable.`,
+    "Diagnose the observed evidence before editing:",
+    ...failures,
+    "The parent already ran these gates; do not rerun them before editing.",
+    gateVerificationDirective(candidate),
+    "Do not weaken tests or gates and do not perform git operations.",
+  ].join("\n");
+}
+
+function gateVerificationDirective(candidate: Candidate): string {
+  const targetedCommand = ["bun", ...candidate.targetedTestArgs].join(" ");
+  return `Before stopping, run ${targetedCommand} and bun run lint; fix in-scope failures until both pass.`;
+}
+
+function reviewPrompt(candidate: Candidate): string {
+  return [
+    `Review the current diff for ${candidate.title}.`,
+    "Report only concrete correctness, regression, safety, or test-quality blockers with direct diff evidence.",
+    "Use high or critical severity only for delivery-blocking findings.",
+    "Do not edit files or perform git operations.",
+  ].join("\n");
+}
+
+function pullRequestBody(candidate: Candidate, report: RunReport): string {
+  return [
+    "## Summary",
+    "",
+    candidate.problem,
+    "",
+    "## Evidence",
+    "",
+    ...candidate.evidence.map((evidence) => `- ${evidence}`),
+    "",
+    "## Verification",
+    "",
+    ...report.validation
+      .filter((log) => log.status === "passed")
+      .map((log) => `- \`${log.command}\``),
+    "",
+    `Regression test diff: \`${RED_DIFF_PATH}\``,
+    "",
+  ].join("\n");
+}
+
+function classifyIssue(
+  stage: string,
+  error: unknown,
+): RunIssue["classification"] {
+  const evidence = normalizeFailure(error).toLowerCase();
+  if (evidence.includes("sla-overrun") || evidence.includes("exceeded")) {
+    return "sla-overrun";
+  }
+  if (stage === "preflight") {
+    return evidence.includes("baseline") ? "baseline" : "environment";
+  }
+  if (stage === "remote-checks") return "remote-check";
+  if (stage === "merge") return "merge";
+  if (
+    evidence.includes("scope") ||
+    evidence.includes("off-target") ||
+    evidence.includes("forbidden path") ||
+    evidence.includes("immutable") ||
+    evidence.includes("only ") ||
+    evidence.includes("tracked path") ||
+    evidence.includes("test diff")
+  ) {
+    return "scope";
+  }
+  if (
+    evidence.includes("backend error") ||
+    evidence.includes("structured output")
+  ) {
+    return "backend";
+  }
+  if (
+    stage === "review" ||
+    stage === "review-repair" ||
+    evidence.includes("review blocker")
+  ) {
+    return "review";
+  }
+  if (
+    stage === "scout" ||
+    stage === "reproduce" ||
+    stage === "implement"
+  ) {
+    return "backend";
+  }
+  if (
+    stage === "initialize" ||
+    stage === "commit-push" ||
+    stage === "pull-request" ||
+    stage === "resolve-open-issues"
+  ) {
+    return "environment";
+  }
+  if (stage === "select-plan") return "scope";
+  return "gate";
+}
