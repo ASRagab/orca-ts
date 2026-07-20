@@ -1,6 +1,9 @@
 import { runInNewContext } from "node:vm";
 import { renameSync, rmSync } from "node:fs";
 import {
+  access,
+  chmod,
+  mkdir,
   lstat,
   mkdtemp,
   readFile,
@@ -132,6 +135,30 @@ interface PublicationContextProbe {
   readonly remainingMs: () => number;
   readonly isCurrent: () => boolean;
   readonly commitPublication: () => { readonly remainingMs: number };
+}
+
+function finalizationContext(
+  commitPublication: () => { readonly remainingMs: number },
+): PublicationContextProbe {
+  return {
+    signal: new AbortController().signal,
+    attempt: 1,
+    remainingMs: () => 1_000,
+    isCurrent: () => true,
+    commitPublication,
+  };
+}
+
+async function expectRealOwnerOnlyDirectory(path: string): Promise<void> {
+  const status = await lstat(path);
+  expect(status.isDirectory()).toBe(true);
+  expect(status.isSymbolicLink()).toBe(false);
+  expect(status.mode & 0o777).toBe(0o700);
+}
+
+async function createOwnerOnlyDirectory(path: string): Promise<void> {
+  await mkdir(path, { mode: 0o700 });
+  await chmod(path, 0o700);
 }
 
 type FinalizationTextPublisher = (
@@ -5854,6 +5881,69 @@ function secureFinalizationPublicationContractIssues(source: string): string[] {
 
   const tryStatement = publisher?.body?.statements.find(ts.isTryStatement);
   const tryStatements = tryStatement?.tryBlock.statements ?? [];
+  const parentHelpers = functionDeclarationsNamed(
+    sourceFile,
+    "prepareFinalizationPublicationParent",
+  );
+  const parentHelper = parentHelpers[0];
+  const directoryValidators = functionDeclarationsNamed(
+    sourceFile,
+    "assertRealFinalizationDirectory",
+  );
+  const parentCalls =
+    publisher === undefined
+      ? []
+      : callsNamed(publisher, "prepareFinalizationPublicationParent");
+  const firstTryStatement = tryStatements[0];
+  const componentLoops: ts.ForOfStatement[] = [];
+  const collectComponentLoops = (node: ts.Node): void => {
+    if (ts.isForOfStatement(node)) componentLoops.push(node);
+    ts.forEachChild(node, collectComponentLoops);
+  };
+  if (parentHelper !== undefined) collectComponentLoops(parentHelper);
+  const componentLoop = componentLoops[0];
+  const helperText = parentHelper?.getText(sourceFile) ?? "";
+  const loopText = componentLoop?.getText(sourceFile) ?? "";
+  const validatorText = directoryValidators[0]?.getText(sourceFile) ?? "";
+  const lstatIndex = loopText.indexOf("lstatSync(component, { bigint: true });");
+  const mkdirIndex = loopText.indexOf("mkdirSync(component, { mode: 0o700 });");
+  const validateIndex = loopText.indexOf(
+    "assertRealFinalizationDirectory(component);",
+  );
+  if (
+    parentHelpers.length !== 1 ||
+    directoryValidators.length !== 1 ||
+    parentCalls.length !== 1 ||
+    !isCallAtPath(
+      ts.isExpressionStatement(firstTryStatement)
+        ? firstTryStatement.expression
+        : undefined,
+      ["prepareFinalizationPublicationParent"],
+    ) ||
+    parentCalls[0]?.arguments.map((argument) => argument.getText(sourceFile)).join("\n") !==
+      "destination" ||
+    !helperText.includes("const root = resolve(process.cwd());") ||
+    !helperText.includes("const parent = resolve(dirname(destination));") ||
+    !helperText.includes("const suffix = relative(root, parent);") ||
+    !helperText.includes("isAbsolute(suffix)") ||
+    !helperText.includes("assertRealFinalizationDirectory(root);") ||
+    componentLoops.length !== 1 ||
+    componentLoop?.expression.getText(sourceFile) !==
+      "suffix.split(sep).filter(Boolean)" ||
+    lstatIndex < 0 ||
+    mkdirIndex < 0 ||
+    validateIndex < 0 ||
+    lstatIndex >= mkdirIndex ||
+    mkdirIndex >= validateIndex ||
+    !loopText.includes("(lstatSync(component, { bigint: true }).mode & 0o777n) !== 0o700n") ||
+    !validatorText.includes("!status.isDirectory()") ||
+    !validatorText.includes("status.isSymbolicLink()")
+  ) {
+    issues.push(
+      "finalization publication must create and validate each real parent before temporary-file creation",
+    );
+  }
+
   const commit = publisher === undefined ? undefined : variableNamed(publisher, "commit");
   const commitCall =
     commit?.initializer !== undefined &&
@@ -9946,10 +10036,100 @@ test("workflow finalization persists failure-shaped evidence", async () => {
   expect(source).not.toContain("async function attemptFinalizer");
 });
 
+test("finalization publication creates missing owner-only parents", async () => {
+  const publish = await loadFinalizationTextPublisher(await Bun.file(path).text());
+  const root = await mkdtemp(
+    join(process.cwd(), ".orcats-finalization-parent-"),
+  );
+  const destination = join(root, "missing", "nested", "report.json");
+  let commits = 0;
+  try {
+    await publish(
+      destination,
+      "published\n",
+      "run",
+      finalizationContext(() => {
+        commits += 1;
+        return { remainingMs: 1_000 };
+      }),
+    );
+    expect(await readFile(destination, "utf8")).toBe("published\n");
+    await expectRealOwnerOnlyDirectory(join(root, "missing"));
+    await expectRealOwnerOnlyDirectory(join(root, "missing", "nested"));
+    expect((await lstat(destination)).mode & 0o777).toBe(0o600);
+    expect(commits).toBe(1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("finalization publication rejects a direct symbolic-link parent", async () => {
+  const publish = await loadFinalizationTextPublisher(await Bun.file(path).text());
+  const root = await mkdtemp(
+    join(process.cwd(), ".orcats-finalization-direct-link-"),
+  );
+  const external = join(root, "external");
+  const destination = join(root, "direct", "report.json");
+  let commits = 0;
+  try {
+    await createOwnerOnlyDirectory(external);
+    await symlink(external, join(root, "direct"));
+    await expect(
+      publish(
+        destination,
+        "published\n",
+        "run",
+        finalizationContext(() => {
+          commits += 1;
+          return { remainingMs: 1_000 };
+        }),
+      ),
+    ).rejects.toThrow("is not a real owner-only directory");
+    expect(commits).toBe(0);
+    await expect(access(join(external, "report.json"))).rejects.toThrow();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("finalization publication rejects an intermediate symbolic-link parent", async () => {
+  const publish = await loadFinalizationTextPublisher(await Bun.file(path).text());
+  const root = await mkdtemp(
+    join(process.cwd(), ".orcats-finalization-intermediate-link-"),
+  );
+  const managed = join(root, "managed");
+  const external = join(root, "external");
+  const destination = join(managed, "intermediate", "nested", "report.json");
+  let commits = 0;
+  try {
+    await createOwnerOnlyDirectory(managed);
+    await createOwnerOnlyDirectory(external);
+    await createOwnerOnlyDirectory(join(external, "nested"));
+    await symlink(external, join(managed, "intermediate"));
+    await expect(
+      publish(
+        destination,
+        "published\n",
+        "run",
+        finalizationContext(() => {
+          commits += 1;
+          return { remainingMs: 1_000 };
+        }),
+      ),
+    ).rejects.toThrow("is not a real owner-only directory");
+    expect(commits).toBe(0);
+    await expect(access(join(external, "nested", "report.json"))).rejects.toThrow();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("finalization publication never follows the old predictable temporary symlink", async () => {
   const source = await Bun.file(path).text();
   const publish = await loadFinalizationTextPublisher(source);
-  const root = await mkdtemp(join(tmpdir(), "orcats-finalization-symlink-"));
+  const root = await mkdtemp(
+    join(process.cwd(), ".orcats-finalization-symlink-"),
+  );
   const destination = join(root, "report.json");
   const external = join(root, "external.txt");
   const oldTemporary = `${destination}.tmp-run-1`;
@@ -9992,6 +10172,27 @@ test("finalization publication rejects stale and terminal-order mutants", async 
   expect(finalizationPublicationContractIssues(source)).toEqual([]);
   expect(secureFinalizationPublicationContractIssues(runtimeSource)).toEqual([]);
   expect(statusAndArtifactContractIssues(source)).toEqual([]);
+
+  const parentPreparationIssue =
+    "finalization publication must create and validate each real parent before temporary-file creation";
+  const parentPreparationMutations = [
+    runtimeSource.replace(
+      "    prepareFinalizationPublicationParent(destination);\n",
+      "",
+    ),
+    runtimeSource.replace("mode: 0o700", "mode: 0o755"),
+    runtimeSource.replace(" || status.isSymbolicLink()", ""),
+    runtimeSource.replace(
+      "for (const segment of suffix.split(sep).filter(Boolean)) {",
+      "for (const segment of [suffix]) {",
+    ),
+  ];
+  for (const mutation of parentPreparationMutations) {
+    expect(mutation).not.toBe(runtimeSource);
+    expect(secureFinalizationPublicationContractIssues(mutation)).toContain(
+      parentPreparationIssue,
+    );
+  }
 
   const directTargetWrite = source.replace(
     [

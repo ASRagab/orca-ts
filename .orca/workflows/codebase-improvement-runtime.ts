@@ -6,13 +6,14 @@ import {
   fstatSync,
   fsyncSync,
   lstatSync,
+  mkdirSync,
   openSync,
   renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { lstat, readlink } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import * as ts from "typescript";
 import type {
   CommandLog,
@@ -755,6 +756,39 @@ interface FinalizationPublicationStatus {
   isSymbolicLink(): boolean;
 }
 
+function assertRealFinalizationDirectory(path: string): void {
+  const status = lstatSync(path, { bigint: true });
+  if (!status.isDirectory() || status.isSymbolicLink()) {
+    throw new Error(`${path} is not a real owner-only directory`);
+  }
+}
+
+function prepareFinalizationPublicationParent(destination: string): void {
+  const root = resolve(process.cwd());
+  const parent = resolve(dirname(destination));
+  const suffix = relative(root, parent);
+  if (suffix === ".." || suffix.startsWith(`..${sep}`) || isAbsolute(suffix)) {
+    throw new Error(`${parent} is outside its publication root`);
+  }
+  assertRealFinalizationDirectory(root);
+  let component = root;
+  for (const segment of suffix.split(sep).filter(Boolean)) {
+    component = join(component, segment);
+    let created = false;
+    try {
+      lstatSync(component, { bigint: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      mkdirSync(component, { mode: 0o700 });
+      created = true;
+    }
+    assertRealFinalizationDirectory(component);
+    if (created && (lstatSync(component, { bigint: true }).mode & 0o777n) !== 0o700n) {
+      throw new Error(`${component} is not a real owner-only directory`);
+    }
+  }
+}
+
 export async function publishFinalizationText(
   destination: string,
   value: string,
@@ -764,6 +798,7 @@ export async function publishFinalizationText(
   let descriptor: number | undefined;
   let identity: FinalizationPublicationIdentity | undefined;
   try {
+    prepareFinalizationPublicationParent(destination);
     descriptor = openSync(
       temporaryPath,
       constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
