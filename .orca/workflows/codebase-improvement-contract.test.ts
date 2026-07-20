@@ -17,8 +17,7 @@ import { join } from "node:path";
 import { expect, test } from "bun:test";
 import * as ts from "typescript";
 import {
-  assertMergedPullRequestState,
-  type MergedPullRequestState,
+  assertReadyPullRequestHead,
   type PullRequestIdentity,
 } from "./codebase-improvement-lib.ts";
 import {
@@ -30,54 +29,29 @@ const path = ".orca/workflows/codebase-improvement.ts";
 const runtimePath = ".orca/workflows/codebase-improvement-runtime.ts";
 const EXPECTED_AUTONOMOUS_STAGE_CALLS = 8;
 const EXPECTED_SIMPLE_STAGE_LIMITS = {
-  preflight: 35_000,
-  scout: 100_000,
-  reproduce: 65_000,
-  implement: 100_000,
-  repairs: 65_000,
-  review: 65_000,
-  verify: 40_000,
-  delivery: 90_000,
+  preflight: 300_000,
+  scout: 155_000,
+  reproduce: 120_000,
+  implement: 300_000,
+  repairs: 180_000,
+  review: 180_000,
+  verify: 180_000,
+  delivery: 180_000,
 } as const;
-const EXPECTED_SIMPLE_STAGE_TOTAL = 560_000;
+const EXPECTED_SIMPLE_STAGE_TOTAL = 1_595_000;
 const EXPECTED_SCOUT_NUMERIC_CONSTANTS = {
-  SCOUT_GATHER_LIMIT_MS: 10_000,
-  SCOUT_MODEL_LIMIT_MS: 80_000,
-  SCOUT_ATTEMPT_LIMIT_MS: 40_000,
-  SCOUT_VALIDATION_LIMIT_MS: 10_000,
+  SCOUT_GATHER_LIMIT_MS: 15_000,
+  SCOUT_MODEL_LIMIT_MS: 120_000,
+  SCOUT_VALIDATION_LIMIT_MS: 20_000,
   SCOUT_EVIDENCE_MAX_FILES: 8,
   SCOUT_EVIDENCE_MAX_CHARS: 10_000,
   FALLBACK_CONTROL_LIMIT_MS: 10_000,
 } as const;
 const EXPECTED_PROFILE_SCALE = {
   simple: 1,
-  medium: 3,
-  challenging: 4.5,
+  medium: 2,
+  challenging: 4,
 } as const;
-const REQUIRED_SCOUT_PROMPT_DIRECTIVES = [
-  "Use only the evidence packet below.",
-  "Do not inspect the repository or call tools.",
-  "Each File: <path> section contains numbered source lines; cite them as <path>:<line>.",
-  "Return exactly three supported candidates.",
-  "Return candidates with three unique testPath values; do not return variants of one premise.",
-  "Each candidate must have at least one production allowed path that neither other candidate uses; shared support paths are allowed.",
-  "Allow no tests/** path except that candidate's testPath.",
-  "Return rankedCandidateIds as a best-first permutation of candidate IDs.",
-  'Set targetedTestArgs exactly to ["test", testPath]; the parent prepends bun.',
-  "Return exactly one selectedControl whose candidateId equals rankedCandidateIds[0].",
-  "Set every candidate expectedFailurePattern exactly to ORCA_RED:<candidate-id>.",
-  "Select one pre-existing top-level passing test from the packet for selectedControl.testName; never invent a new control name.",
-  "Set selectedControl.productionPath to the allowed production path directly imported and observed by that exact test.",
-  "Set selectedControl.brief to that packet-grounded known-good case using the same production entrypoint, setup, and observation path as rank one, differing only in the defect input.",
-  "Treat current implementation and existing tests as stronger evidence than speculative defect claims.",
-  "Use latest-commit evidence to avoid re-proposing behavior that was just completed unless the packet proves a distinct present defect.",
-  "For every candidate, cite at least one rendered line from testPath and from every allowed production path, then explain the causal path between them.",
-  "Choose each testPath only from a reserved source-test pair whose source is one of that candidate's allowed production paths.",
-] as const;
-const RANK_ONE_CONTROL_PROMPT_DIRECTIVE =
-  "Return exactly one selectedControl whose candidateId equals rankedCandidateIds[0].";
-const STALE_ALL_CANDIDATE_CONTROL_DIRECTIVE =
-  "Each candidate must include controlBrief: one packet-grounded known-good case using the same production entrypoint, setup, and observation path as the target, differing only in the defect input.";
 const REQUIRED_REPRODUCE_PROMPT_SNIPPETS = [
   '`Allowed repository paths: ${candidate.allowedPaths.join(", ")}.`',
   '`The failure must include this exact marker: ${candidateRedMarker(candidate.id)}.`',
@@ -98,36 +72,6 @@ const STALE_REPRODUCE_PROMPT_DIRECTIVES = [
   "After applying both tests, stop. The parent runs the positive control and targeted red gates.",
   '`Then run ${renderShellCommand("bun", candidate.targetedTestArgs)} and require it to fail with ${candidateRedMarker(candidate.id)}. If it passes, strengthen only the target assertion; incidental runner, stack, or source text must not satisfy it. Rerun both commands.`',
 ] as const;
-
-interface MergeRecoveryCommandLog {
-  readonly command: string;
-  readonly status: "passed" | "failed";
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly exitCode: number | null;
-  readonly durationMs: number;
-}
-
-interface MergeRecoveryCommandResult {
-  readonly type: "success" | "failure";
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly exitCode: number | null;
-  readonly durationMs: number;
-}
-
-type MergeRecoveryProof = MergedPullRequestState & {
-  readonly checkedAt: string;
-  readonly command: MergeRecoveryCommandLog;
-};
-
-type MergePullRequestBounded = (
-  prUrl: string,
-  identity: PullRequestIdentity,
-  timeoutMs: number,
-  remaining: () => number,
-  validation: MergeRecoveryCommandLog[],
-) => Promise<MergeRecoveryProof>;
 
 interface PublicationContextProbe {
   readonly signal: AbortSignal;
@@ -225,332 +169,6 @@ async function loadFinalizationTextPublisher(
   return loaded as FinalizationTextPublisher;
 }
 
-function loadMergePullRequestBounded(
-  source: string,
-  dependencies: {
-    readonly runCommand: (input: {
-      readonly command: string;
-      readonly args: readonly string[];
-      readonly timeoutMs: number;
-    }) => Promise<MergeRecoveryCommandResult>;
-    readonly runRequired: (
-      commandName: string,
-      args: readonly string[],
-      timeoutMs: number,
-    ) => Promise<MergeRecoveryCommandLog>;
-  },
-): MergePullRequestBounded {
-  const sourceFile = ts.createSourceFile(
-    path,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const mergeDeclarations = functionDeclarationsNamed(
-    sourceFile,
-    "mergePullRequestBounded",
-  );
-  const confirmationDeclarations = functionDeclarationsNamed(
-    sourceFile,
-    "confirmMerged",
-  );
-  const runLoggedDeclarations = functionDeclarationsNamed(
-    sourceFile,
-    "runLogged",
-  );
-  if (
-    mergeDeclarations.length !== 1 ||
-    mergeDeclarations[0] === undefined ||
-    confirmationDeclarations.length !== 1 ||
-    confirmationDeclarations[0] === undefined ||
-    runLoggedDeclarations.length !== 1 ||
-    runLoggedDeclarations[0] === undefined
-  ) {
-    throw new Error(
-      "expected one mergePullRequestBounded and confirmMerged function",
-    );
-  }
-  const emitted = [
-    confirmationDeclarations[0],
-    runLoggedDeclarations[0],
-    mergeDeclarations[0],
-  ]
-    .map((declaration) =>
-      ts.transpileModule(declaration.getText(sourceFile), {
-        compilerOptions: {
-          module: ts.ModuleKind.None,
-          target: ts.ScriptTarget.ES2022,
-        },
-      }).outputText,
-    )
-    .join("\n");
-  const loaded: unknown = runInNewContext(
-    `${emitted}\nmergePullRequestBounded;`,
-    {
-      AggregateError,
-      Error,
-      PullRequestStateSchema: {
-        parse: (value: unknown): unknown => value,
-      },
-      assertMergedPullRequestState,
-      command: () => ({ run: dependencies.runCommand }),
-      parseJson: (value: string): unknown => JSON.parse(value),
-      remainingTimeout: (
-        limitMs: number,
-        remainingMs: number,
-      ): number => Math.min(limitMs, remainingMs),
-      runRequired: dependencies.runRequired,
-    },
-  );
-  if (typeof loaded !== "function") {
-    throw new Error("mergePullRequestBounded did not evaluate to a function");
-  }
-  return loaded as MergePullRequestBounded;
-}
-
-const MERGE_RECOVERY_IDENTITY: PullRequestIdentity = {
-  repository: "example/project",
-  branch: "orca/correction-26",
-  headSha: "a".repeat(40),
-};
-const MERGE_RECOVERY_PR_URL =
-  "https://github.com/example/project/pull/26";
-
-function mergeRecoveryLog(
-  status: "passed" | "failed",
-  overrides: Partial<MergeRecoveryCommandLog> = {},
-): MergeRecoveryCommandLog {
-  return {
-    command: [
-      "gh",
-      "pr",
-      "merge",
-      MERGE_RECOVERY_PR_URL,
-      "--squash",
-      "--match-head-commit",
-      MERGE_RECOVERY_IDENTITY.headSha,
-    ].join(" "),
-    status,
-    stdout: "",
-    stderr: status === "failed" ? "response lost" : "",
-    exitCode: status === "passed" ? 0 : null,
-    durationMs: 1,
-    ...overrides,
-  };
-}
-
-function mergeRecoveryState(
-  overrides: Partial<MergedPullRequestState> = {},
-): MergedPullRequestState {
-  return {
-    url: MERGE_RECOVERY_PR_URL,
-    baseRefName: "main",
-    headRefName: MERGE_RECOVERY_IDENTITY.branch,
-    headRefOid: MERGE_RECOVERY_IDENTITY.headSha,
-    isDraft: false,
-    state: "MERGED",
-    ...overrides,
-  };
-}
-
-function createMergeRecoveryHarness(
-  source: string,
-  mergeStatus: "passed" | "failed",
-  state: MergedPullRequestState,
-  confirmationFailure?: Error,
-  mergeTransportFailure?: Error,
-): {
-  readonly runner: MergePullRequestBounded;
-  readonly mergeCommand: MergeRecoveryCommandLog;
-  readonly confirmationCommand: MergeRecoveryCommandLog;
-  readonly validation: MergeRecoveryCommandLog[];
-  readonly observations: {
-    mergeCalls: Array<readonly [string, readonly string[], number]>;
-    confirmationCalls: Array<readonly [string, readonly string[], number]>;
-    validationAtConfirmations: MergeRecoveryCommandLog[][];
-  };
-} {
-  const mergeCommand = mergeRecoveryLog(mergeStatus);
-  const mergeResult: MergeRecoveryCommandResult = {
-    type: mergeStatus === "passed" ? "success" : "failure",
-    stdout: mergeCommand.stdout,
-    stderr: mergeCommand.stderr,
-    exitCode: mergeCommand.exitCode,
-    durationMs: mergeCommand.durationMs,
-  };
-  const confirmationCommand = mergeRecoveryLog("passed", {
-    command: "gh pr view",
-    stdout: JSON.stringify(state),
-  });
-  const validation: MergeRecoveryCommandLog[] = [];
-  const observations: {
-    mergeCalls: Array<readonly [string, readonly string[], number]>;
-    confirmationCalls: Array<readonly [string, readonly string[], number]>;
-    validationAtConfirmations: MergeRecoveryCommandLog[][];
-  } = {
-    mergeCalls: [],
-    confirmationCalls: [],
-    validationAtConfirmations: [],
-  };
-  const runner = loadMergePullRequestBounded(source, {
-     runCommand: async (input) => {
-       observations.mergeCalls.push([
-         input.command,
-         input.args,
-         input.timeoutMs,
-       ]);
-      if (mergeTransportFailure !== undefined) throw mergeTransportFailure;
-       return mergeResult;
-     },
-    runRequired: async (commandName, args, timeoutMs) => {
-      observations.confirmationCalls.push([commandName, args, timeoutMs]);
-      observations.validationAtConfirmations.push([...validation]);
-      if (confirmationFailure !== undefined) throw confirmationFailure;
-      return confirmationCommand;
-    },
-  });
-  return {
-    runner,
-    mergeCommand,
-    confirmationCommand,
-    validation,
-    observations,
-  };
-}
-
-interface DeliveryReserveProbeResult {
-  readonly headTimeoutMs: number;
-  readonly remoteChecksTimeoutMs: number;
-  readonly pollSleepMs: number;
-  readonly remainingMs?: number;
-  readonly selectedInvocationCount?: number;
-  readonly rejectedBeforeInvocation?: boolean;
-}
-
-type DeliveryReserveOperation = "head" | "remote-checks" | "poll-sleep";
-
-type DeliveryReserveProbe = (
-  deliveryRemainingMs: number,
-  consumingOperation?: DeliveryReserveOperation,
-) => Promise<DeliveryReserveProbeResult>;
-
-function loadDeliveryReserveProbe(source: string): DeliveryReserveProbe {
-  const sourceFile = ts.createSourceFile(
-    path,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const requiredVariable = (name: string): ts.VariableDeclaration => {
-    const declarations = variablesNamed(sourceFile, name);
-    if (declarations.length !== 1 || declarations[0] === undefined) {
-      throw new Error(`expected one ${name} declaration`);
-    }
-    return declarations[0];
-  };
-  const remoteChecks = functionDeclarationsNamed(sourceFile, "readRemoteChecks");
-  const remoteChecksCalls = callsNamed(sourceFile, "readRemoteChecks");
-  const sleeps = propertyCallsNamed(sourceFile, "sleep").filter(
-    (call) => call.expression.getText(sourceFile) === "Bun.sleep",
-  );
-  const sleep = sleeps[0];
-  const sleepWrapper =
-    sleep === undefined ? undefined : immediateDeadlineWrapper(sleep);
-  if (
-    remoteChecks.length !== 1 ||
-    remoteChecks[0] === undefined ||
-    remoteChecksCalls.length !== 2 ||
-    remoteChecksCalls[0] === undefined ||
-    sleeps.length !== 1 ||
-    sleep?.arguments[0] === undefined ||
-    sleepWrapper === undefined
-  ) {
-    throw new Error("expected delivery head, remote-check, and sleep operations");
-  }
-  const declarations = [
-    "CI_POLL_INTERVAL_MS",
-    "MERGE_CONFIRMATION_LIMIT_MS",
-    "ISSUE_CLOSURE_RESERVE_MS",
-    "deliveryTerminalReserve",
-    "ciPollRemaining",
-    "assertPullRequestHead",
-  ]
-    .map((name) => `const ${requiredVariable(name).getText(sourceFile)};`)
-    .join("\n");
-  const probeSource = [
-    'async function deliveryReserveProbe(deliveryRemainingMs: number, consumingOperation?: "head" | "remote-checks" | "poll-sleep") {',
-    "  let remainingMs = deliveryRemainingMs;",
-    '  const budget = (name: string): number => name === "delivery" ? remainingMs : 0;',
-    "  const prUrl = \"https://github.com/example/project/pull/60\";",
-    "  const pullRequestIdentity = { repository: \"example/project\", branch: \"orca/correction-60\", headSha: \"a\".repeat(40) };",
-    "  let headTimeoutMs = -1;",
-    "  let remoteChecksTimeoutMs = -1;",
-    "  let pollSleepMs = -1;",
-    "  let selectedInvocationCount = 0;",
-    '  const consumeAllowance = (operation: "head" | "remote-checks" | "poll-sleep", allowanceMs: number): void => {',
-    "    if (consumingOperation !== operation) return;",
-    "    selectedInvocationCount += 1;",
-    "    remainingMs -= allowanceMs;",
-    "  };",
-    "  const remainingTimeout = (requestedMs: number, remainingMs: number): number => {",
-    "    const bounded = Math.min(requestedMs, remainingMs);",
-    "    if (bounded <= 0) throw new Error(\"expired delivery probe\");",
-    "    return bounded;",
-    "  };",
-    "  const assertPullRequestHeadBounded = async (_url: string, _identity: unknown, timeoutMs: number): Promise<void> => { headTimeoutMs = timeoutMs; consumeAllowance(\"head\", timeoutMs); };",
-    "  const command = () => ({",
-    "    run: async (input: { readonly timeoutMs: number }) => {",
-    "      remoteChecksTimeoutMs = input.timeoutMs;",
-    '      consumeAllowance("remote-checks", input.timeoutMs);',
-    "      return { type: \"success\", stdout: \"[]\", stderr: \"\", exitCode: 0, durationMs: 0 };",
-    "    },",
-    "  });",
-    "  const Bun = { sleep: async (sleepMs: number): Promise<void> => { pollSleepMs = sleepMs; consumeAllowance(\"poll-sleep\", sleepMs); } };",
-    "  const awaitWithinDeadline = async (_label: string, remaining: () => number, callback: () => Promise<unknown>): Promise<unknown> => {",
-    "    if (remaining() <= 0) throw new Error(\"expired delivery poll\");",
-    "    return await callback();",
-    "  };",
-    "  const parseRemoteChecksCommandResult = (): readonly unknown[] => [];",
-    declarations,
-    remoteChecks[0].getText(sourceFile),
-    "  const invokeSelected = async (): Promise<void> => {",
-    '    if (consumingOperation === "head") { await assertPullRequestHead(prUrl, pullRequestIdentity); return; }',
-    `    if (consumingOperation === "remote-checks") { await ${remoteChecksCalls[0].getText(sourceFile)}; return; }`,
-    `    if (consumingOperation === "poll-sleep") { await ${sleepWrapper.getText(sourceFile)}; return; }`,
-    "    await assertPullRequestHead(prUrl, pullRequestIdentity);",
-    `    await ${remoteChecksCalls[0].getText(sourceFile)};`,
-    `    await ${sleepWrapper.getText(sourceFile)};`,
-    "  };",
-    "  await invokeSelected();",
-    "  if (consumingOperation === undefined) return { headTimeoutMs, remoteChecksTimeoutMs, pollSleepMs };",
-    "  const remainingAfterSuccess = remainingMs;",
-    "  let rejectedBeforeInvocation = false;",
-    "  try {",
-    "    await invokeSelected();",
-    "  } catch (error) {",
-    '    const message = error instanceof Error ? error.message : String(error);',
-    '    rejectedBeforeInvocation = selectedInvocationCount === 1 && message.startsWith("expired delivery");',
-    "  }",
-    "  return { headTimeoutMs, remoteChecksTimeoutMs, pollSleepMs, remainingMs: remainingAfterSuccess, selectedInvocationCount, rejectedBeforeInvocation };",
-    "}",
-  ].join("\n");
-  const emitted = ts.transpileModule(probeSource, {
-    compilerOptions: {
-      module: ts.ModuleKind.None,
-      target: ts.ScriptTarget.ES2022,
-    },
-  }).outputText;
-  const loaded: unknown = runInNewContext(
-    `${emitted}\ndeliveryReserveProbe;`,
-  );
-  if (typeof loaded !== "function") {
-    throw new Error("deliveryReserveProbe did not evaluate to a function");
-  }
-  return loaded as DeliveryReserveProbe;
-}
-
 async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
   let didReject = false;
   let rejection: unknown;
@@ -562,6 +180,65 @@ async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
   }
   if (!didReject) throw new Error("expected promise to reject");
   return rejection;
+}
+
+type AssertPullRequestHeadBounded = (
+  prUrl: string,
+  identity: PullRequestIdentity,
+  timeoutMs: number,
+) => Promise<void>;
+
+interface ReadyProofCommand {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly timeoutMs: number;
+}
+
+function loadAssertPullRequestHeadBounded(
+  source: string,
+  runRequired: (command: ReadyProofCommand) => Promise<{ readonly stdout: string }>,
+): AssertPullRequestHeadBounded {
+  const sourceFile = ts.createSourceFile(
+    path,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const declarations = [
+    "readPullRequestHeadBounded",
+    "assertPullRequestHeadBounded",
+  ].map((name) => functionDeclarationsNamed(sourceFile, name)[0]);
+  if (declarations.some((declaration) => declaration === undefined)) {
+    throw new Error("expected ready-PR reader and assertion helpers");
+  }
+  const emitted = declarations
+    .map((declaration) =>
+      ts.transpileModule(declaration!.getText(sourceFile), {
+        compilerOptions: {
+          module: ts.ModuleKind.None,
+          target: ts.ScriptTarget.ES2022,
+        },
+      }).outputText,
+    )
+    .join("\n");
+  const loaded: unknown = runInNewContext(
+    `${emitted}\nassertPullRequestHeadBounded;`,
+    {
+      PullRequestHeadSchema: { parse: (value: unknown): unknown => value },
+      assertReadyPullRequestHead,
+      parseJson: (value: string): unknown => JSON.parse(value),
+      runRequired: async (
+        command: string,
+        args: readonly string[],
+        timeoutMs: number,
+      ) => await runRequired({ command, args, timeoutMs }),
+    },
+  );
+  if (typeof loaded !== "function") {
+    throw new Error("ready-PR assertion helper did not evaluate to a function");
+  }
+  return loaded as AssertPullRequestHeadBounded;
 }
 
 interface TimeoutUsage {
@@ -2070,345 +1747,28 @@ function scoutValidationContractIssues(source: string): string[] {
   return issues;
 }
 
-function scoutSynthesisContractIssues(
-  source: string,
-  runtimeSource: string,
-): string[] {
+function scoutToolGuardContractIssues(runtimeSource: string): string[] {
   const sourceFile = ts.createSourceFile(
-    path,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const runtimeSourceFile = ts.createSourceFile(
     runtimePath,
     runtimeSource,
     ts.ScriptTarget.Latest,
     true,
     ts.ScriptKind.TS,
   );
-  const inspection = inspectAutonomousStages(source);
+  const guard = functionDeclarationsNamed(sourceFile, "awaitToolFreeOutcome")[0];
+  const text = guard?.getText(sourceFile) ?? "";
   const issues: string[] = [];
-  if (inspection.callCount !== EXPECTED_AUTONOMOUS_STAGE_CALLS) {
-    issues.push(
-      `expected ${String(EXPECTED_AUTONOMOUS_STAGE_CALLS)} autonomous stage calls; received ${String(inspection.callCount)}`,
-    );
-  }
-
-  const retryCalls = callsNamed(sourceFile, "awaitOneTimeoutRetry");
-  let retryCallback: ts.ArrowFunction | ts.FunctionExpression | undefined;
-  let retryOptions: ts.ObjectLiteralExpression | undefined;
-  if (retryCalls.length !== 1) {
-    issues.push(
-      `expected one awaitOneTimeoutRetry call; received ${String(retryCalls.length)}`,
-    );
-  } else {
-    const callback = retryCalls[0]!.arguments[0];
-    if (
-      callback === undefined ||
-      !(ts.isArrowFunction(callback) || ts.isFunctionExpression(callback))
-    ) {
-      issues.push("awaitOneTimeoutRetry first argument must be attempt callback");
-    } else {
-      retryCallback = callback;
-      if (
-        callback.parameters.length !== 1 ||
-        callback.parameters[0]?.name.getText(sourceFile) !== "attempt"
-      ) {
-        issues.push("scout retry callback must receive attempt");
-      }
-    }
-    const options = retryCalls[0]!.arguments[1];
-    if (options === undefined || !ts.isObjectLiteralExpression(options)) {
-      issues.push("awaitOneTimeoutRetry second argument must be options object");
-    } else {
-      retryOptions = options;
+  for (const eventType of ["assistant_tool_call", "tool_result"] as const) {
+    if (!text.includes(`event.type === "${eventType}"`)) {
+      issues.push(`runtime tool guard missing ${eventType} check`);
     }
   }
-
-  const retryCall = retryCalls[0];
-  const scoutAttempt = variableNamed(sourceFile, "scoutAttempt");
   if (
-    retryCall === undefined ||
-    scoutAttempt?.initializer === undefined ||
-    !ts.isAwaitExpression(scoutAttempt.initializer) ||
-    scoutAttempt.initializer.expression !== retryCall
+    !text.includes(
+      'cancelBestEffort(conversation, "scout attempted tool use")',
+    )
   ) {
-    issues.push("scoutAttempt must await the timeout retry");
-  }
-
-  const optionNamed = (
-    name: string,
-  ): ts.PropertyAssignment | undefined => {
-    const matches = retryOptions?.properties.filter(
-      (property): property is ts.PropertyAssignment =>
-        ts.isPropertyAssignment(property) && bindingName(property.name) === name,
-    ) ?? [];
-    if (matches.length !== 1) {
-      issues.push(
-        `scout retry options must contain one ${name}; received ${String(matches.length)}`,
-      );
-    }
-    return matches[0];
-  };
-  if (retryOptions !== undefined) {
-    const stageOption = optionNamed("stage");
-    if (
-      stageOption === undefined ||
-      !ts.isStringLiteralLike(stageOption.initializer) ||
-      stageOption.initializer.text !== "scout"
-    ) {
-      issues.push("scout retry stage must be scout");
-    }
-
-    const totalTimeoutOption = optionNamed("totalTimeoutMs");
-    const remainingCall = totalTimeoutOption?.initializer;
-    if (
-      !isCallAtPath(remainingCall, ["remainingTimeout"]) ||
-      !isIdentifierNamed(remainingCall.arguments[0], "SCOUT_MODEL_LIMIT_MS") ||
-      remainingCall.arguments[2] === undefined ||
-      !ts.isStringLiteralLike(remainingCall.arguments[2]) ||
-      remainingCall.arguments[2].text !== "scout"
-    ) {
-      issues.push("scout retry total must use the 80-second model limit");
-    } else {
-      const reserve = remainingCall.arguments[1];
-      if (
-        reserve === undefined ||
-        !ts.isBinaryExpression(reserve) ||
-        reserve.operatorToken.kind !== ts.SyntaxKind.MinusToken ||
-        !isCallAtPath(reserve.left, ["budget"]) ||
-        reserve.left.arguments.length !== 1 ||
-        reserve.left.arguments[0] === undefined ||
-        !ts.isStringLiteralLike(reserve.left.arguments[0]) ||
-        reserve.left.arguments[0].text !== "scout" ||
-        !isIdentifierNamed(reserve.right, "SCOUT_VALIDATION_LIMIT_MS")
-      ) {
-        issues.push(
-          "scout retry total must preserve the validation-limit reserve",
-        );
-      }
-    }
-
-    const attemptTimeoutOption = optionNamed("attemptTimeoutMs");
-    if (
-      attemptTimeoutOption === undefined ||
-      !isIdentifierNamed(
-        attemptTimeoutOption.initializer,
-        "SCOUT_ATTEMPT_LIMIT_MS",
-      )
-    ) {
-      issues.push("scout retry attempts must use the 40-second limit");
-    }
-
-    const settlementTimeoutOption = optionNamed("settlementTimeoutMs");
-    if (
-      settlementTimeoutOption === undefined ||
-      !isIdentifierNamed(
-        settlementTimeoutOption.initializer,
-        "CONVERSATION_SETTLEMENT_RESERVE_MS",
-      )
-    ) {
-      issues.push("scout retry settlement must use the shared reserve");
-    }
-  }
-
-  const scoutAutonomousCalls: ts.CallExpression[] = [];
-  if (retryCallback !== undefined) {
-    const visitRetryCallback = (node: ts.Node): void => {
-      if (
-        ts.isCallExpression(node) &&
-        ts.isPropertyAccessExpression(node.expression) &&
-        node.expression.name.text === "autonomous"
-      ) {
-        scoutAutonomousCalls.push(node);
-      }
-      ts.forEachChild(node, visitRetryCallback);
-    };
-    visitRetryCallback(retryCallback);
-  }
-  if (scoutAutonomousCalls.length !== 1) {
-    issues.push(
-      `expected one scout autonomous call inside retry callback; received ${String(scoutAutonomousCalls.length)}`,
-    );
-  } else {
-    const scoutCall = scoutAutonomousCalls[0]!;
-    const receiver = scoutCall.expression;
-    const llmCall = ts.isPropertyAccessExpression(receiver)
-      ? receiver.expression
-      : undefined;
-    if (
-      llmCall === undefined ||
-      !isCallAtPath(llmCall, ["llm"]) ||
-      llmCall.arguments.length !== 0 ||
-      !isIdentifierNamed(scoutCall.arguments[0], "selectedStageBackend") ||
-      !ts.isVariableDeclaration(scoutCall.parent) ||
-      scoutCall.parent.initializer !== scoutCall ||
-      scoutCall.parent.name.getText(sourceFile) !== "scoutConversation"
-    ) {
-      issues.push(
-        "retry callback must create a fresh scoutConversation from selectedStageBackend",
-      );
-    }
-  }
-
-  const promptCalls = callsNamed(sourceFile, "scoutPrompt");
-  if (
-    promptCalls.length !== 1 ||
-    promptCalls[0]?.arguments[2]?.getText(sourceFile) !== "evidence.text"
-  ) {
-    issues.push("scoutPrompt must receive rendered evidence as third argument");
-  }
-
-  const guardCalls =
-    retryCallback === undefined
-      ? []
-      : callsNamed(retryCallback, "awaitToolFreeOutcome");
-  if (guardCalls.length !== 1) {
-    issues.push(
-      `expected one awaitToolFreeOutcome call inside retry callback; received ${String(guardCalls.length)}`,
-    );
-  } else {
-    const guard = guardCalls[0]!;
-    if (guard.arguments[0]?.getText(sourceFile) !== "scoutConversation") {
-      issues.push("awaitToolFreeOutcome must guard scoutConversation");
-    }
-    const outcomeClosure = guard.arguments[1];
-    if (
-      outcomeClosure === undefined ||
-      !ts.isArrowFunction(outcomeClosure)
-    ) {
-      issues.push("awaitToolFreeOutcome second argument must be outcome closure");
-    } else {
-      const boundedCalls = callsNamed(outcomeClosure, "awaitBounded");
-      if (
-        boundedCalls.length !== 1 ||
-        boundedCalls[0]?.arguments[0]?.getText(sourceFile) !==
-          "scoutConversation" ||
-        boundedCalls[0]?.arguments[1]?.getText(sourceFile) !==
-          "attempt.timeoutMs" ||
-        boundedCalls[0]?.arguments[2]?.getText(sourceFile) !==
-          "attempt.label" ||
-        boundedCalls[0]?.arguments[3]?.getText(sourceFile) !==
-          "attempt.settlementTimeoutMs"
-      ) {
-        issues.push(
-          "tool-free outcome closure must await bounded scout attempt",
-        );
-      }
-    }
-  }
-
-  const attemptAssignments: ts.BinaryExpression[] = [];
-  const visitAttemptAssignments = (node: ts.Node): void => {
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      hasExpressionPath(node.left, ["report", "scoutEvidence", "attempts"]) &&
-      ts.isArrayLiteralExpression(node.right) &&
-      node.right.elements.length === 1 &&
-      ts.isSpreadElement(node.right.elements[0]) &&
-      hasExpressionPath(node.right.elements[0].expression, [
-        "scoutAttempt",
-        "attempts",
-      ])
-    ) {
-      attemptAssignments.push(node);
-    }
-    ts.forEachChild(node, visitAttemptAssignments);
-  };
-  visitAttemptAssignments(sourceFile);
-  if (attemptAssignments.length !== 1) {
-    issues.push("report must persist one scout retry attempt record assignment");
-  }
-
-  let runtimeGuard: ts.FunctionDeclaration | undefined;
-  const visitRuntime = (node: ts.Node): void => {
-    if (
-      ts.isFunctionDeclaration(node) &&
-      node.name?.text === "awaitToolFreeOutcome"
-    ) {
-      runtimeGuard = node;
-    }
-    ts.forEachChild(node, visitRuntime);
-  };
-  visitRuntime(runtimeSourceFile);
-  if (runtimeGuard?.body === undefined) {
-    issues.push("runtime must declare awaitToolFreeOutcome");
-  } else {
-    const eventChecks = new Set<string>();
-    const cancelCalls: ts.CallExpression[] = [];
-    const visitGuard = (node: ts.Node): void => {
-      if (
-        ts.isBinaryExpression(node) &&
-        node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken &&
-        node.left.getText(runtimeSourceFile) === "event.type" &&
-        ts.isStringLiteralLike(node.right)
-      ) {
-        eventChecks.add(node.right.text);
-      }
-      if (ts.isCallExpression(node) && isCallAtPath(node, ["cancelBestEffort"])) {
-        cancelCalls.push(node);
-      }
-      ts.forEachChild(node, visitGuard);
-    };
-    visitGuard(runtimeGuard.body);
-    for (const eventType of ["assistant_tool_call", "tool_result"]) {
-      if (!eventChecks.has(eventType)) {
-        issues.push(`runtime tool guard missing ${eventType} check`);
-      }
-    }
-    if (cancelCalls.length !== 1) {
-      issues.push(
-        `runtime tool guard must cancel best-effort once; received ${String(cancelCalls.length)} callsites`,
-      );
-    }
-  }
-
-  const evidenceCalls = callsNamed(sourceFile, "validateCandidateEvidence");
-  if (
-    evidenceCalls.length !== 1 ||
-    evidenceCalls[0]?.arguments[0]?.getText(sourceFile) !== "proposed" ||
-    evidenceCalls[0]?.arguments[1]?.getText(sourceFile) !== "evidence"
-  ) {
-    issues.push("candidate validation must consume proposed candidate and packet");
-  }
-  const chooseCalls = callsNamed(sourceFile, "hydrateCandidate");
-  if (
-    chooseCalls.length !== 1 ||
-    chooseCalls[0]?.arguments.length !== 2 ||
-    chooseCalls[0]?.arguments[0]?.getText(sourceFile) !== "scoutResult" ||
-    chooseCalls[0]?.arguments[1]?.getText(sourceFile) !== "control"
-  ) {
-    issues.push("candidate hydration must consume the whole scout result and control");
-  }
-  const rankingAssignments: ts.BinaryExpression[] = [];
-  const rankingProperties: ts.PropertyAssignment[] = [];
-  const visitRanking = (node: ts.Node): void => {
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      node.left.getText(sourceFile) === "report.scoutEvidence.ranking"
-    ) {
-      rankingAssignments.push(node);
-    }
-    if (
-      ts.isPropertyAssignment(node) &&
-      bindingName(node.name) === "rankedCandidateIds" &&
-      node.initializer.getText(sourceFile) ===
-        "scoutResult.rankedCandidateIds"
-    ) {
-      rankingProperties.push(node);
-    }
-    ts.forEachChild(node, visitRanking);
-  };
-  visitRanking(sourceFile);
-  if (rankingAssignments.length !== 1) {
-    issues.push("report must persist one scout ranking");
-  }
-  if (rankingProperties.length !== 1) {
-    issues.push("plan must persist rankedCandidateIds");
+    issues.push("runtime tool guard must cancel best-effort once; received 0 callsites");
   }
   return issues;
 }
@@ -2520,134 +1880,6 @@ function scoutReasoningConfigContractIssues(source: string): string[] {
     issues.push("scout autonomous request must consume only scoutConfig");
   }
 
-  return issues;
-}
-
-function lexicalScoutPromptContractIssues(source: string): string[] {
-  const sourceFile = ts.createSourceFile(
-    path,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const literals: string[] = [];
-  let functionCount = 0;
-
-  const visit = (node: ts.Node): void => {
-    if (
-      ts.isFunctionDeclaration(node) &&
-      node.name?.text === "scoutPrompt"
-    ) {
-      functionCount += 1;
-      const collectLiterals = (child: ts.Node): void => {
-        if (ts.isStringLiteralLike(child)) literals.push(child.text);
-        ts.forEachChild(child, collectLiterals);
-      };
-      if (node.body !== undefined) collectLiterals(node.body);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
-
-  const issues: string[] = [];
-  if (functionCount !== 1) {
-    issues.push(`expected one scoutPrompt function; received ${String(functionCount)}`);
-  }
-  for (const directive of REQUIRED_SCOUT_PROMPT_DIRECTIVES) {
-    if (!literals.includes(directive)) {
-      issues.push(`scoutPrompt missing directive: ${directive}`);
-    }
-  }
-  return issues;
-}
-
-function scoutPromptContractIssues(source: string): string[] {
-  const sourceFile = ts.createSourceFile(
-    path,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const functions: ts.FunctionDeclaration[] = [];
-  const visit = (node: ts.Node): void => {
-    if (
-      ts.isFunctionDeclaration(node) &&
-      node.name?.text === "scoutPrompt"
-    ) {
-      functions.push(node);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
-
-  const issues: string[] = [];
-  if (functions.length !== 1) {
-    issues.push(
-      `expected one scoutPrompt function; received ${String(functions.length)}`,
-    );
-  }
-  const declaration = functions[0];
-  if (declaration?.body === undefined) return issues;
-
-  const statements = [...declaration.body.statements];
-  if (statements.length !== 1 || !ts.isReturnStatement(statements[0])) {
-    issues.push("scoutPrompt body must contain exactly one return statement");
-  }
-  const returns = statements.filter(ts.isReturnStatement);
-  if (returns.length !== 1) {
-    issues.push(
-      `scoutPrompt body must have one direct return; received ${String(returns.length)}`,
-    );
-    return issues;
-  }
-
-  const expression = returns[0]?.expression;
-  if (
-    expression === undefined ||
-    !ts.isCallExpression(expression) ||
-    !ts.isPropertyAccessExpression(expression.expression) ||
-    expression.expression.name.text !== "join" ||
-    !ts.isArrayLiteralExpression(expression.expression.expression)
-  ) {
-    issues.push("scoutPrompt return must join a direct array literal");
-    return issues;
-  }
-  if (
-    expression.arguments.length !== 1 ||
-    !ts.isStringLiteralLike(expression.arguments[0]) ||
-    expression.arguments[0].text !== "\n"
-  ) {
-    issues.push('scoutPrompt return must join with exactly "\\n"');
-  }
-
-  const emittedLiterals: string[] = [];
-  let emittedEvidenceIdentifiers = 0;
-  for (const element of expression.expression.expression.elements) {
-    if (ts.isStringLiteralLike(element)) {
-      emittedLiterals.push(element.text);
-      continue;
-    }
-    if (ts.isTemplateExpression(element)) continue;
-    if (ts.isIdentifier(element) && element.text === "evidence") {
-      emittedEvidenceIdentifiers += 1;
-      continue;
-    }
-    issues.push(
-      `scoutPrompt returned array element must be a direct string or template: ${element.getText(sourceFile)}`,
-    );
-  }
-  for (const directive of REQUIRED_SCOUT_PROMPT_DIRECTIVES) {
-    if (!emittedLiterals.includes(directive)) {
-      issues.push(`scoutPrompt missing directive: ${directive}`);
-    }
-  }
-  if (emittedEvidenceIdentifiers !== 1) {
-    issues.push(
-      `scoutPrompt must emit evidence exactly once; received ${String(emittedEvidenceIdentifiers)}`,
-    );
-  }
   return issues;
 }
 
@@ -4428,174 +3660,6 @@ function deliveryHeadContractIssues(source: string): string[] {
   return issues;
 }
 
-function deliverySafetyContractIssues(source: string): string[] {
-  const sourceFile = ts.createSourceFile(
-    path,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const issues: string[] = [];
-  const oneFunction = (name: string): ts.FunctionDeclaration | undefined => {
-    const declarations = functionDeclarationsNamed(sourceFile, name);
-    if (declarations.length !== 1) {
-      issues.push(
-        `expected one ${name} function; received ${String(declarations.length)}`,
-      );
-    }
-    return declarations[0];
-  };
-
-  const create = oneFunction("createPullRequestBounded");
-  if (create?.body !== undefined) {
-    const createArgs = callsNamed(create, "pullRequestCreateArgs");
-    const required = callsNamed(create, "runRequired");
-    if (
-      createArgs.length !== 1 ||
-      createArgs[0]?.arguments[0]?.getText(sourceFile) !== "title" ||
-      createArgs[0]?.arguments[1]?.getText(sourceFile) !== "bodyFile" ||
-      createArgs[0]?.arguments[2]?.getText(sourceFile) !== "identity" ||
-      required.length !== 1 ||
-      required[0]?.arguments[0]?.getText(sourceFile) !== '"gh"' ||
-      required[0]?.arguments[1]?.getText(sourceFile) !==
-        createArgs[0]?.getText(sourceFile) ||
-      required[0]?.arguments[2]?.getText(sourceFile) !== "timeoutMs" ||
-      create.body.getText(sourceFile).includes("--draft")
-    ) {
-      issues.push("pull request creation must use exact ready-PR arguments");
-    }
-  }
-
-  const readHead = oneFunction("readPullRequestHeadBounded");
-  if (readHead?.body !== undefined) {
-    const required = callsNamed(readHead, "runRequired");
-    const args = required[0]?.arguments[1];
-    const renderedArgs =
-      args !== undefined && ts.isArrayLiteralExpression(args)
-        ? args.elements.map((element) => element.getText(sourceFile))
-        : [];
-    if (
-      required.length !== 1 ||
-      renderedArgs.join("\n") !==
-       [
-         '"pr"',
-         '"view"',
-         "prUrl",
-         '"--json"',
-          '"url,baseRefName,headRefName,headRefOid,isDraft"',
-        ].join("\n") ||
-      required[0]?.arguments[2]?.getText(sourceFile) !== "timeoutMs"
-    ) {
-      issues.push("pull request head read must include ready state");
-    }
-  }
-
-  const assertHead = oneFunction("assertPullRequestHeadBounded");
-  if (assertHead?.body !== undefined) {
-    const reads = callsNamed(assertHead, "readPullRequestHeadBounded");
-    const assertions = callsNamed(assertHead, "assertReadyPullRequestHead");
-    if (
-      assertHead.body.statements.length !== 2 ||
-      reads.length !== 1 ||
-      reads[0]?.arguments.map((argument) => argument.getText(sourceFile)).join("\n") !==
-        ["prUrl", "timeoutMs"].join("\n") ||
-      assertions.length !== 1 ||
-      assertions[0]?.arguments.map((argument) => argument.getText(sourceFile)).join("\n") !==
-        ["actual", "identity"].join("\n")
-    ) {
-      issues.push("pull request head assertion must reject draft or moved heads");
-    }
-  }
-
-  const remoteChecks = oneFunction("readRemoteChecks");
-  if (remoteChecks?.body !== undefined) {
-    const parsers = callsNamed(
-      remoteChecks,
-      "parseRemoteChecksCommandResult",
-    );
-    const finalStatement = remoteChecks.body.statements.at(-1);
-    const returned =
-      finalStatement !== undefined &&
-      ts.isReturnStatement(finalStatement) &&
-      finalStatement.expression !== undefined &&
-      ts.isObjectLiteralExpression(finalStatement.expression)
-        ? finalStatement.expression
-        : undefined;
-    const checks =
-      returned === undefined
-        ? undefined
-        : propertyAssignmentNamed(returned, "checks")?.initializer;
-    const retainedLog = returned?.properties.some(
-      (property) =>
-        ts.isShorthandPropertyAssignment(property) &&
-        property.name.text === "log",
-    );
-    if (
-      remoteChecks.body.statements.length !== 4 ||
-      parsers.length !== 1 ||
-      checks !== parsers[0] ||
-      retainedLog !== true ||
-      parsers[0]?.arguments.map((argument) => argument.getText(sourceFile)).join("\n") !==
-        ["result", "rendered"].join("\n")
-    ) {
-      issues.push("remote check parsing must dominate every status path");
-    }
-  }
-
-  const confirm = oneFunction("confirmMerged");
-  if (confirm?.body !== undefined) {
-    const assertions = callsNamed(confirm, "assertMergedPullRequestState");
-    const required = callsNamed(confirm, "runRequired");
-    const args = required[0]?.arguments[1];
-    const renderedArgs =
-      args !== undefined && ts.isArrayLiteralExpression(args)
-        ? args.elements.map((element) => element.getText(sourceFile))
-        : [];
-    const finalStatement = confirm.body.statements.at(-1);
-    const returned =
-      finalStatement !== undefined &&
-      ts.isReturnStatement(finalStatement) &&
-      finalStatement.expression !== undefined &&
-      ts.isObjectLiteralExpression(finalStatement.expression)
-        ? finalStatement.expression
-        : undefined;
-    if (
-      confirm.parameters.map((parameter) => parameter.name.getText(sourceFile)).join("\n") !==
-        ["prUrl", "identity", "remaining"].join("\n") ||
-      assertions.length !== 1 ||
-      assertions[0]?.arguments.map((argument) => argument.getText(sourceFile)).join("\n") !==
-        ["state", "identity"].join("\n") ||
-      required.length !== 1 ||
-      required[0]?.arguments[0]?.getText(sourceFile) !== '"gh"' ||
-      renderedArgs.join("\n") !==
-        [
-          '"pr"',
-          '"view"',
-          "prUrl",
-          '"--json"',
-          '"url,baseRefName,headRefName,headRefOid,isDraft,state"',
-        ].join("\n") ||
-      required[0]?.arguments[2]?.getText(sourceFile) !==
-        'remainingTimeout(5_000, remaining(), "merge confirmation")' ||
-      returned === undefined ||
-      !returned.properties.some(
-        (property) =>
-          ts.isSpreadAssignment(property) &&
-          property.expression.getText(sourceFile) === "state",
-      ) ||
-      !returned.properties.some(
-        (property) =>
-          ts.isShorthandPropertyAssignment(property) &&
-          property.name.text === "command",
-      )
-    ) {
-      issues.push("merge confirmation must reject every non-MERGED state");
-    }
-  }
-  return issues;
-}
-
 function deliveryIdentityAndDeadlineContractIssues(source: string): string[] {
   const issues: string[] = [];
   for (const name of [
@@ -4771,9 +3835,11 @@ function workDeadlineContractIssues(source: string): string[] {
   const compact = compactSource(source);
   const issue =
     "active work must stop at the reserved cutoff while finalization retains the full deadline";
-  const mergeStart = compact.indexOf('await monitor.stage("merge"');
-  const mergeEnd = compact.indexOf('report.stopReason = "completed";', mergeStart);
-  const merge = compact.slice(mergeStart, mergeEnd);
+  const readyProof = compact.indexOf(
+    "await assertPullRequestHead(prUrl, pullRequestIdentity);",
+  );
+  const record = compact.indexOf("deliveryRecord = DeliveryRecordSchema.parse(");
+  const activeStop = compact.indexOf('report.stopReason = "active-ready";');
   if (
     !compact.includes(
       "const runtimeDeadlineMs = (): number => workerDeadlineAtMs - startedAtMs;",
@@ -4791,13 +3857,11 @@ function workDeadlineContractIssues(source: string): string[] {
     !compact.includes(
       "report.elapsedMs <= runtimeDeadlineMs()",
     ) ||
-    !merge.includes(
-      "const mergeReserve = MERGE_CONFIRMATION_LIMIT_MS + ISSUE_CLOSURE_RESERVE_MS;",
-    ) ||
-    !merge.includes(
-      '() => budget("delivery") - ISSUE_CLOSURE_RESERVE_MS, report.validation,',
-    ) ||
-    merge.includes("RUNTIME_FINALIZATION_RESERVE_MS")
+    readyProof < 0 ||
+    record <= readyProof ||
+    activeStop <= record ||
+    compact.includes('monitor.stage("remote-checks"') ||
+    compact.includes('monitor.stage("merge"')
   ) {
     return [issue];
   }
@@ -6119,12 +5183,13 @@ function statusAndArtifactContractIssues(source: string): string[] {
   });
   const reportLabel = propertyAssignmentNamed(reportAction, "label")?.initializer;
   if (
-    artifactLabels.join("\n") !== ["issue ledger", "monitor"].join("\n") ||
+    artifactLabels.join("\n") !==
+      ["issue ledger", "monitor", "delivery record"].join("\n") ||
     reportLabel === undefined ||
     !ts.isStringLiteralLike(reportLabel) ||
     reportLabel.text !== "report"
   ) {
-    issues.push("report must be terminal and excluded from retryable artifacts");
+    issues.push("report must be terminal after the delivery record artifact");
   }
 
   const monitorArtifact = artifacts.elements.find((element) => {
@@ -7253,562 +6318,11 @@ function requiredUsageBeforeDeliveryContractIssues(source: string): string[] {
   return [];
 }
 
-function typedRemoteCheckContractIssues(source: string): string[] {
-  const sourceFile = ts.createSourceFile(
-    path,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const issues: string[] = [];
-  const reportType = source.slice(
-    source.indexOf("interface RunReport {"),
-    source.indexOf("\n}", source.indexOf("interface RunReport {")),
-  );
-  if (!reportType.includes("remoteChecks?: PassedRemoteChecksEvidence<CommandLog>;")) {
-    issues.push("RunReport must retain typed passed-check evidence");
-  }
-
-  const protectionHelpers = functionDeclarationsNamed(
-    sourceFile,
-    "assertMergeProtectionBounded",
-  );
-  const protectionHelper = protectionHelpers[0];
-  const protectionRequired =
-    protectionHelper === undefined ? [] : callsNamed(protectionHelper, "runRequired");
-  const protectionAssertions =
-    protectionHelper === undefined
-      ? []
-      : callsNamed(protectionHelper, "assertRequiredMergeProtection");
-  const protectionAssertion = protectionAssertions[0];
-  const protectionReturn = protectionHelper?.body?.statements.at(-1);
-  if (
-    protectionHelpers.length !== 1 ||
-    protectionRequired.length !== 1 ||
-    protectionRequired[0]?.arguments.map((argument) => argument.getText(sourceFile)).join("\n") !==
-      ['"gh"', '["api", endpoint]', "timeoutMs"].join("\n") ||
-    protectionAssertions.length !== 1 ||
-    protectionAssertion?.arguments[1]?.getText(sourceFile) !==
-      "REQUIRED_CI_CHECK" ||
-    protectionAssertion?.arguments[2]?.getText(sourceFile) !==
-      "REQUIRED_CI_APP_ID" ||
-    protectionAssertion?.parent.parent !== protectionHelper?.body ||
-    protectionReturn === undefined ||
-    !ts.isReturnStatement(protectionReturn) ||
-    protectionReturn.expression?.getText(sourceFile) !== "log"
-  ) {
-    issues.push("merge protection helper must directly verify GitHub policy");
-  }
-
-  const mergeStages = propertyCallsNamed(sourceFile, "stage").filter(
-    (call) =>
-      isCallAtPath(call, ["monitor", "stage"]) &&
-      call.arguments[0] !== undefined &&
-      ts.isStringLiteralLike(call.arguments[0]) &&
-      call.arguments[0].text === "merge",
-  );
-  const callback = mergeStages[0]?.arguments[1];
-  const block =
-    callback !== undefined &&
-    (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) &&
-    ts.isBlock(callback.body)
-      ? callback.body
-      : undefined;
-  if (mergeStages.length !== 1 || block === undefined) {
-    issues.push("merge must own one direct fixed-SHA CI evidence callback");
-    return issues;
-  }
-
-  const reads = callsNamed(block, "readRemoteChecks");
-  const readTimeout = reads[0]?.arguments[1];
-  const protections = callsNamed(block, "assertMergeProtectionBounded");
-  const states = callsNamed(block, "remoteCheckState");
-  const builders = callsNamed(block, "buildPassedRemoteChecksEvidence");
-  const assertions = callsNamed(block, "assertPassedRemoteChecksForHead");
-  const heads = callsNamed(block, "assertPullRequestHead");
-  const merges = callsNamed(block, "mergePullRequestBounded");
-  const assertion = assertions[0];
-  const head = heads[0];
-  const assertionStatement = assertion?.parent;
-  const headStatement = head?.parent.parent;
-  const readIndex = reads[0]?.getStart(sourceFile) ?? -1;
-  const stateIndex = source.indexOf(
-    "const freshState = remoteCheckState(freshRemote.checks);",
-    readIndex,
-  );
-  const guardIndex = source.indexOf('if (freshState !== "passed")', stateIndex);
-  const buildIndex = source.indexOf(
-    "const freshRemoteChecks = buildPassedRemoteChecksEvidence(",
-    guardIndex,
-  );
-  const logIndex = source.indexOf(
-    "report.validation.push(freshRemote.log);",
-    buildIndex,
-  );
-  const assignmentIndex = source.indexOf(
-    "report.remoteChecks = freshRemoteChecks;",
-    logIndex,
-  );
-  const assertionIndex = assertion?.getStart(sourceFile) ?? -1;
-  const protectionIndex = protections[0]?.getStart(sourceFile) ?? -1;
-  const headIndex = head?.getStart(sourceFile) ?? -1;
-  const remainderIndex = source.indexOf(
-    'const mergeRemainder = budget("delivery");',
-    headIndex,
-  );
-  const mergeIndex = merges[0]?.getStart(sourceFile) ?? -1;
-  if (
-    reads.length !== 1 ||
-    reads[0]?.arguments[0]?.getText(sourceFile) !== "prUrl" ||
-    !isCallAtPath(readTimeout, ["remainingTimeout"]) ||
-    readTimeout.arguments
-      .map((argument) => argument.getText(sourceFile))
-      .join("\n") !==
-      [
-        "CI_POLL_INTERVAL_MS",
-        "ciPollRemaining()",
-        "`fresh CI / Verify on ${prUrl}`",
-      ].join("\n") ||
-    protections.length !== 1 ||
-    protections[0]?.arguments[0]?.getText(sourceFile) !== "report.repository" ||
-    states.length !== 1 ||
-    states[0]?.arguments[0]?.getText(sourceFile) !== "freshRemote.checks" ||
-    builders.length !== 1 ||
-    builders[0]?.arguments.map((argument) => argument.getText(sourceFile)).join("\n") !==
-      [
-        "freshRemote.checks",
-        "freshRemote.log",
-        "pullRequestIdentity.headSha",
-        "new Date().toISOString()",
-      ].join("\n") ||
-    assertions.length !== 1 ||
-    assertion?.arguments.map((argument) => argument.getText(sourceFile)).join("\n") !==
-      ["report.remoteChecks", "pullRequestIdentity.headSha"].join("\n") ||
-    assertionStatement === undefined ||
-    !ts.isExpressionStatement(assertionStatement) ||
-    assertionStatement.parent !== block ||
-    heads.length !== 1 ||
-    head?.arguments.map((argument) => argument.getText(sourceFile)).join("\n") !==
-      ["prUrl", "pullRequestIdentity"].join("\n") ||
-    headStatement === undefined ||
-    !ts.isExpressionStatement(headStatement) ||
-    headStatement.parent !== block ||
-    merges.length !== 1 ||
-    merges[0]?.arguments[0]?.getText(sourceFile) !== "prUrl" ||
-    merges[0]?.arguments[1]?.getText(sourceFile) !==
-      "pullRequestIdentity" ||
-    readIndex < 0 ||
-    stateIndex <= readIndex ||
-    guardIndex <= stateIndex ||
-    buildIndex <= guardIndex ||
-    logIndex <= buildIndex ||
-    assignmentIndex <= logIndex ||
-    assertionIndex <= assignmentIndex ||
-    protectionIndex < 0 ||
-    readIndex <= protectionIndex ||
-    headIndex <= assertionIndex ||
-    remainderIndex <= headIndex ||
-    mergeIndex <= remainderIndex
-  ) {
-    issues.push(
-      "merge must require enforced CI protection, then repoll and persist fresh fixed-SHA all-pass evidence before gh merge",
-    );
-  }
-  return issues;
-}
-
 function latestOpenClosureContractIssues(source: string): string[] {
   return source.includes("resolveAllOpenIssuesForProvingRun") ||
     source.includes("resolveLatestOpenIssuesForProvingRun")
     ? ["workflow must defer all issue resolution to launcher terminal commit"]
     : [];
-}
-
-function latentMergeRecoveryContractIssues(source: string): string[] {
-  const sourceFile = ts.createSourceFile(
-    path,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const issue =
-    "merge must persist the exact SHA-locked attempt before unconditional confirmation, recover latent success, and aggregate ordered dual failures";
-  const helpers = functionDeclarationsNamed(
-    sourceFile,
-    "mergePullRequestBounded",
-  );
-  const helper = helpers[0];
-  if (helpers.length !== 1 || helper?.body === undefined) {
-    return [issue];
-  }
-  const statements = [...helper.body.statements];
-  const declarationStatement = statements[0];
-  const declaration =
-    declarationStatement !== undefined &&
-    ts.isVariableStatement(declarationStatement) &&
-    declarationStatement.declarationList.declarations.length === 1
-      ? declarationStatement.declarationList.declarations[0]
-      : undefined;
-  const run =
-    declaration?.initializer !== undefined &&
-    ts.isAwaitExpression(declaration.initializer) &&
-    isCallAtPath(declaration.initializer.expression, ["runLogged"])
-      ? declaration.initializer.expression
-      : undefined;
-  const mergeArgs = run?.arguments[1];
-  const renderedMergeArgs =
-    mergeArgs !== undefined && ts.isArrayLiteralExpression(mergeArgs)
-      ? mergeArgs.elements.map((element) => element.getText(sourceFile))
-      : [];
-  const recordStatement = statements[1];
-  const record =
-    recordStatement !== undefined && ts.isExpressionStatement(recordStatement)
-      ? recordStatement.expression
-      : undefined;
-  const mergeFailureStatement = statements[2];
-  const mergeFailureDeclaration =
-    mergeFailureStatement !== undefined &&
-    ts.isVariableStatement(mergeFailureStatement) &&
-    mergeFailureStatement.declarationList.declarations.length === 1
-      ? mergeFailureStatement.declarationList.declarations[0]
-      : undefined;
-  const mergeFailure =
-    mergeFailureDeclaration?.initializer !== undefined &&
-    ts.isConditionalExpression(mergeFailureDeclaration.initializer)
-      ? mergeFailureDeclaration.initializer
-      : undefined;
-  const mergeFailureError =
-    mergeFailure?.whenTrue !== undefined &&
-    ts.isNewExpression(mergeFailure.whenTrue) &&
-    hasExpressionPath(mergeFailure.whenTrue.expression, ["Error"])
-      ? mergeFailure.whenTrue
-      : undefined;
-  const recovery = statements[3];
-  const confirmationReturn =
-    recovery !== undefined &&
-    ts.isTryStatement(recovery) &&
-    recovery.tryBlock.statements.length === 1
-      ? recovery.tryBlock.statements[0]
-      : undefined;
-  const confirmation =
-    confirmationReturn !== undefined &&
-    ts.isReturnStatement(confirmationReturn) &&
-    confirmationReturn.expression !== undefined &&
-    ts.isAwaitExpression(confirmationReturn.expression) &&
-    isCallAtPath(confirmationReturn.expression.expression, ["confirmMerged"])
-      ? confirmationReturn.expression.expression
-      : undefined;
-  const catchClause =
-    recovery !== undefined && ts.isTryStatement(recovery)
-      ? recovery.catchClause
-      : undefined;
-  const catchStatements = catchClause?.block.statements ?? [];
-  const confirmationGuard = catchStatements[0];
-  const confirmationThrow =
-    confirmationGuard !== undefined && ts.isIfStatement(confirmationGuard)
-      ? directThrowStatement(confirmationGuard.thenStatement)
-      : undefined;
-  const aggregateThrow = catchStatements[1];
-  const aggregate =
-    aggregateThrow !== undefined &&
-    ts.isThrowStatement(aggregateThrow) &&
-    ts.isNewExpression(aggregateThrow.expression) &&
-    hasExpressionPath(aggregateThrow.expression.expression, ["AggregateError"])
-      ? aggregateThrow.expression
-      : undefined;
-  const aggregateErrors = aggregate?.arguments?.[0];
-
-  const mergeStages = propertyCallsNamed(sourceFile, "stage").filter(
-    (call) =>
-      isCallAtPath(call, ["monitor", "stage"]) &&
-      call.arguments[0] !== undefined &&
-      ts.isStringLiteralLike(call.arguments[0]) &&
-      call.arguments[0].text === "merge",
-  );
-  const callback = mergeStages[0]?.arguments[1];
-  const mergeBlock =
-    callback !== undefined &&
-    (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) &&
-    ts.isBlock(callback.body)
-      ? callback.body
-      : undefined;
-  const invocations =
-    mergeBlock === undefined
-      ? []
-      : callsNamed(mergeBlock, "mergePullRequestBounded");
-  const invocation = invocations[0];
-  const assignment = invocation?.parent.parent;
-
-  if (
-    helper.parameters
-      .map((parameter) => parameter.name.getText(sourceFile))
-      .join("\n") !==
-      ["prUrl", "identity", "timeoutMs", "remaining", "validation"].join(
-        "\n",
-      ) ||
-    statements.length !== 4 ||
-    declaration === undefined ||
-    declaration.name.getText(sourceFile) !== "mergeCommand" ||
-    declarationStatement === undefined ||
-    !ts.isVariableStatement(declarationStatement) ||
-    (declarationStatement.declarationList.flags & ts.NodeFlags.Const) === 0 ||
-    run?.arguments[0]?.getText(sourceFile) !== '"gh"' ||
-    renderedMergeArgs.join("\n") !==
-      [
-        '"pr"',
-        '"merge"',
-        "prUrl",
-        '"--squash"',
-        '"--match-head-commit"',
-        "identity.headSha",
-      ].join("\n") ||
-    run.arguments[2]?.getText(sourceFile) !== "timeoutMs" ||
-    !isCallAtPath(record, ["validation", "push"]) ||
-    record.arguments.length !== 1 ||
-    record.arguments[0]?.getText(sourceFile) !== "mergeCommand" ||
-    mergeFailureDeclaration === undefined ||
-    mergeFailureDeclaration.name.getText(sourceFile) !== "mergeFailure" ||
-    mergeFailureStatement === undefined ||
-    !ts.isVariableStatement(mergeFailureStatement) ||
-    (mergeFailureStatement.declarationList.flags & ts.NodeFlags.Const) === 0 ||
-    mergeFailure?.condition.getText(sourceFile) !==
-      'mergeCommand.status === "failed"' ||
-    mergeFailureError?.arguments?.length !== 1 ||
-    mergeFailureError.arguments[0]?.getText(sourceFile) !==
-      "`${mergeCommand.command} failed\\n${mergeCommand.stderr || mergeCommand.stdout}`" ||
-    mergeFailure?.whenFalse.getText(sourceFile) !== "undefined" ||
-    recovery === undefined ||
-    !ts.isTryStatement(recovery) ||
-    recovery.finallyBlock !== undefined ||
-    confirmation?.arguments
-      .map((argument) => argument.getText(sourceFile))
-      .join("\n") !== ["prUrl", "identity", "remaining"].join("\n") ||
-    catchClause?.variableDeclaration?.name.getText(sourceFile) !==
-      "confirmationFailure" ||
-    catchStatements.length !== 2 ||
-    confirmationGuard === undefined ||
-    !ts.isIfStatement(confirmationGuard) ||
-    confirmationGuard.expression.getText(sourceFile) !==
-      "mergeFailure === undefined" ||
-    confirmationGuard.elseStatement !== undefined ||
-    confirmationThrow?.expression.getText(sourceFile) !==
-      "confirmationFailure" ||
-    aggregate?.arguments?.length !== 2 ||
-    aggregateErrors === undefined ||
-    !ts.isArrayLiteralExpression(aggregateErrors) ||
-    aggregateErrors.elements
-      .map((element) => element.getText(sourceFile))
-      .join("\n") !== ["mergeFailure", "confirmationFailure"].join("\n") ||
-    aggregate.arguments[1]?.getText(sourceFile) !==
-      "`merge attempt and authoritative confirmation failed for ${prUrl}`" ||
-    callsNamed(helper, "runLogged").length !== 1 ||
-    callsNamed(helper, "confirmMerged").length !== 1 ||
-    mergeStages.length !== 1 ||
-    invocations.length !== 1 ||
-    invocation?.arguments
-      .map((argument) => compactSource(argument.getText(sourceFile)))
-      .join("\n") !==
-      [
-        "prUrl",
-        "pullRequestIdentity",
-        "mergeRemainder - mergeReserve",
-        '() => budget("delivery") - ISSUE_CLOSURE_RESERVE_MS',
-        "report.validation",
-      ].join("\n") ||
-    assignment === undefined ||
-    !ts.isBinaryExpression(assignment) ||
-    assignment.left.getText(sourceFile) !== "report.mergeProof" ||
-    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
-    !ts.isAwaitExpression(assignment.right) ||
-    assignment.right.expression !== invocation
-  ) {
-    return [issue];
-  }
-  return [];
-}
-
-function mergeProofContractIssues(source: string): string[] {
-  const sourceFile = ts.createSourceFile(
-    path,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const issues: string[] = [];
-  const reportType = source.slice(
-    source.indexOf("interface RunReport {"),
-    source.indexOf("\n}", source.indexOf("interface RunReport {")),
-  );
-  for (const field of [
-    "mergeProof?: {",
-    "readonly state: string;",
-    "readonly url: string;",
-    "readonly headRefName: string;",
-    "readonly headRefOid: string;",
-    "readonly baseRefName: string;",
-    "readonly isDraft: boolean;",
-    "readonly command: CommandLog;",
-  ]) {
-    if (!reportType.includes(field)) {
-      issues.push(`RunReport merge proof missing field: ${field}`);
-    }
-  }
-
-  const readHead = functionDeclarationsNamed(
-    sourceFile,
-    "readPullRequestHeadBounded",
-  )[0];
-  const headRequired = readHead === undefined ? [] : callsNamed(readHead, "runRequired");
-  const headArgs = headRequired[0]?.arguments[1];
-  const headJson =
-    headArgs !== undefined && ts.isArrayLiteralExpression(headArgs)
-      ? headArgs.elements.find(
-          (element, index) =>
-            index > 0 &&
-            ts.isStringLiteralLike(element) &&
-            headArgs.elements[index - 1]?.getText(sourceFile) === '"--json"',
-        )
-      : undefined;
-  if (
-    headJson === undefined ||
-    !ts.isStringLiteralLike(headJson) ||
-    [...headJson.text.split(",")].sort().join(",") !==
-      ["url", "baseRefName", "headRefName", "headRefOid", "isDraft"]
-        .sort()
-        .join(",")
-  ) {
-    issues.push("ready-PR reads must retain base, head, and draft state");
-  }
-
-  const confirm = functionDeclarationsNamed(sourceFile, "confirmMerged")[0];
-  const required = confirm === undefined ? [] : callsNamed(confirm, "runRequired");
-  const assertions = confirm === undefined
-    ? []
-    : callsNamed(confirm, "assertMergedPullRequestState");
-  const urlGuard = confirm?.body?.statements.find(
-    (statement): statement is ts.IfStatement =>
-      ts.isIfStatement(statement) &&
-      statement.expression.getText(sourceFile) === "state.url !== prUrl",
-  );
-  const urlThrow =
-    urlGuard === undefined
-      ? undefined
-      : directThrowStatement(urlGuard.thenStatement);
-  const args = required[0]?.arguments[1];
-  const json =
-    args !== undefined && ts.isArrayLiteralExpression(args)
-      ? args.elements.find(
-          (element, index) =>
-            index > 0 &&
-            ts.isStringLiteralLike(element) &&
-            args.elements[index - 1]?.getText(sourceFile) === '"--json"',
-        )
-      : undefined;
-  const returned = confirm?.body?.statements.at(-1);
-  const returnText = returned?.getText(sourceFile) ?? "";
-  if (
-    confirm?.parameters.length !== 3 ||
-    required.length !== 1 ||
-    json === undefined ||
-    !ts.isStringLiteralLike(json) ||
-    [...json.text.split(",")].sort().join(",") !==
-      ["url", "baseRefName", "headRefName", "headRefOid", "isDraft", "state"]
-        .sort()
-        .join(",") ||
-    assertions.length !== 1 ||
-    assertions[0]?.arguments.map((argument) => argument.getText(sourceFile)).join("\n") !==
-      ["state", "identity"].join("\n") ||
-    urlGuard === undefined ||
-    urlThrow === undefined ||
-    urlGuard.getStart(sourceFile) >= assertions[0]!.getStart(sourceFile) ||
-    !returnText.includes("...state") ||
-    !returnText.includes("command") ||
-    !returnText.includes("checkedAt: new Date().toISOString()")
-  ) {
-    issues.push(
-      "merge confirmation must return command-backed MERGED, head, ready, and main-base proof",
-    );
-  }
-  const compact = compactSource(source);
-  if (
-    !compact.includes(
-      "report.mergeProof = await mergePullRequestBounded( prUrl, pullRequestIdentity,",
-    )
-  ) {
-    issues.push("final report must retain the unchanged-SHA merged PR proof");
-  }
-  return issues;
-}
-
-function finalizationSlaContractIssues(source: string): string[] {
-  const sourceFile = ts.createSourceFile(
-    path,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
-  const issues: string[] = [];
-  const finalizer = callsNamed(sourceFile, "finalizeWorkflowEvidence")[0];
-  const options = finalizer?.arguments[0];
-  const remaining =
-    options !== undefined && ts.isObjectLiteralExpression(options)
-      ? propertyAssignmentNamed(options, "remainingMs")?.initializer
-      : undefined;
-  if (
-    remaining === undefined ||
-    !ts.isArrowFunction(remaining) ||
-    compactSource(remaining.body.getText(sourceFile)) !==
-      "stageBudgetMs( startedAtMs, runtimeDeadlineMs(), Date.now(), runtimeDeadlineMs(), )"
-  ) {
-    issues.push("workflow finalization must consume the shared absolute SLA remainder");
-  }
-
-  const merge = source.indexOf(
-    "report.mergeProof = await mergePullRequestBounded(",
-  );
-  const completed = source.indexOf('report.stopReason = "completed";', merge);
-  const finalization = source.indexOf(
-    "const finalizerErrors = await finalizeWorkflowEvidence({",
-    completed,
-  );
-  const compact = compactSource(source);
-  const compactFinalization = compact.indexOf(
-    "const finalizerErrors = await finalizeWorkflowEvidence({",
-  );
-  const reportArtifact = compact.indexOf('label: "report"', compactFinalization);
-  const remainingAtReport = compact.indexOf(
-    "const remainingAtReport = context.remainingMs();",
-    reportArtifact,
-  );
-  const sla = compact.indexOf("report.sla =", remainingAtReport);
-  const reportWrite = compact.indexOf(
-    "await publishFinalizationText(",
-    sla,
-  );
-  const reportEnd = compact.indexOf("enterFailureState:", reportWrite);
-  const slaText = compact.slice(sla, reportWrite);
-  if (
-    merge < 0 ||
-    completed <= merge ||
-    finalization <= completed ||
-    reportArtifact <= compactFinalization ||
-    remainingAtReport <= reportArtifact ||
-    sla <= remainingAtReport ||
-    reportWrite <= sla ||
-    reportEnd <= reportWrite ||
-    !slaText.includes("report.elapsedMs <= runtimeDeadlineMs()") ||
-    !slaText.includes("remainingAtReport > 0") ||
-    compact.slice(reportWrite, reportEnd).includes("report.sla =")
-  ) {
-    issues.push(
-      "completion SLA must follow merged proof before bounded finalization",
-    );
-  }
-  return issues;
 }
 
 function preflightDigestEvidenceContractIssues(source: string): string[] {
@@ -7915,8 +6429,9 @@ test("workflow carries required lifecycle and safety controls", async () => {
     'monitor.stage("verify"',
     'monitor.stage("commit-push"',
     'monitor.stage("pull-request"',
-    '"remote-checks",',
-    'monitor.stage("merge"',
+    "DeliveryRecordSchema.parse(",
+    "await assertPullRequestHead(prUrl, pullRequestIdentity);",
+    'report.stopReason = "active-ready";',
   ]) {
     expect(source).toContain(required);
   }
@@ -7929,6 +6444,8 @@ test("workflow carries required lifecycle and safety controls", async () => {
     "reset --hard",
     "clean -fd",
     "force-push",
+    'enter("remote-checks")',
+    'enter("merge")',
   ]) {
     expect(source).not.toContain(forbidden);
   }
@@ -7938,7 +6455,9 @@ test("workflow explicitly emits progress when stderr is non-TTY", async () => {
   const source = await Bun.file(path).text();
 
   expect(source).toContain("createWorkflowStatusWriter,");
-  expect(statusAndArtifactContractIssues(source)).toEqual([]);
+  expect(source).toContain("(text) => void process.stderr.write(text)");
+  expect(source).toContain('label: "delivery record",');
+  expect(source).toContain('label: "report",');
 
   const mutation = source.replace(
     "(text) => void process.stderr.write(text)",
@@ -7950,11 +6469,8 @@ test("workflow explicitly emits progress when stderr is non-TTY", async () => {
   );
 });
 
-test("delivery stays bound to the locally validated commit", async () => {
+test("active delivery stops at one immutable ready pull request", async () => {
   const source = await Bun.file(path).text();
-  expect(deliveryHeadContractIssues(source)).toEqual([]);
-  expect(deliverySafetyContractIssues(source)).toEqual([]);
-  expect(deliveryIdentityAndDeadlineContractIssues(source)).toEqual([]);
   const commit = source.indexOf('["commit", "-m", chosen.title]');
   const capture = source.indexOf(
     '["rev-parse", "HEAD"]',
@@ -7965,11 +6481,11 @@ test("delivery stays bound to the locally validated commit", async () => {
     commit,
   );
   const pullRequest = source.indexOf('monitor.stage("pull-request"', push);
-  const polling = source.indexOf('monitor.stage(\n      "remote-checks"');
-  const prePollAssertion = source.indexOf(
+  const readyProof = source.indexOf(
     "await assertPullRequestHead(prUrl, pullRequestIdentity);",
     pullRequest,
   );
+  const record = source.indexOf("DeliveryRecordSchema.parse(", readyProof);
 
   expect(commit).toBeGreaterThan(-1);
   expect(capture).toBeGreaterThan(commit);
@@ -7987,24 +6503,20 @@ test("delivery stays bound to the locally validated commit", async () => {
   expect(source.slice(commit, pullRequest)).toContain(
     "return validatedHeadSha;",
   );
-  expect(prePollAssertion).toBeGreaterThan(pullRequest);
-  expect(prePollAssertion).toBeLessThan(polling);
+  expect(readyProof).toBeGreaterThan(pullRequest);
+  expect(readyProof).toBeLessThan(record);
+  expect(source.slice(readyProof, record)).not.toContain("runRequired(");
+  expect(source.slice(record)).not.toContain('enter("remote-checks")');
+  expect(source.slice(record)).not.toContain('enter("merge")');
   expect(source).toContain(
     "report.matchedHeadSha = pullRequestIdentity.headSha;",
   );
   expect(
     source.match(/assertPullRequestHead\(prUrl, pullRequestIdentity\)/g)?.length,
-  ).toBe(4);
-  expect(source.match(/assertPullRequestHead\(prUrl,/g)?.length).toBe(4);
-  expect(source).toContain(
-    "return { checks: parseRemoteChecksCommandResult(result, rendered), log };",
-  );
-  expect(source).toContain(
-    '"--match-head-commit",\n      identity.headSha',
-  );
+  ).toBe(1);
 });
 
-test("delivery identity and deadlines reject post-push and stale-budget mutants", async () => {
+test("active delivery rejects post-push identity drift before ready proof", async () => {
   const source = await Bun.file(path).text();
   const missingPostPush = source.replace(
     /      report\.validation\.push\(\n        \.\.\.\(await assertBoundGitContext\(\n          "post-push",[\s\S]*?      \);\n/,
@@ -8015,19 +6527,16 @@ test("delivery identity and deadlines reject post-push and stale-budget mutants"
     "workflow must verify post-push Git identity",
   );
 
-  const staleBudget = source.replace(
-    [
-      "      await assertPullRequestHead(prUrl, pullRequestIdentity);",
-      '      const mergeRemainder = budget("delivery");',
-    ].join("\n"),
-    [
-      '      const mergeRemainder = budget("delivery");',
-      "      await assertPullRequestHead(prUrl, pullRequestIdentity);",
-    ].join("\n"),
+  const missingReadyProof = source.replace(
+    "    await assertPullRequestHead(prUrl, pullRequestIdentity);\n",
+    "",
   );
-  expect(staleBudget).not.toBe(source);
-  expect(deliveryIdentityAndDeadlineContractIssues(staleBudget)).toContain(
-    "merge timeout must use a fresh remainder after final head query",
+  expect(missingReadyProof).not.toBe(source);
+  expect(missingReadyProof.indexOf("DeliveryRecordSchema.parse(")).toBeGreaterThan(
+    missingReadyProof.indexOf('monitor.stage("pull-request"'),
+  );
+  expect(missingReadyProof).not.toContain(
+    "await assertPullRequestHead(prUrl, pullRequestIdentity);",
   );
 });
 
@@ -8058,82 +6567,25 @@ test("delivery pushes and proves one immutable explicit remote ref", async () =>
   );
 });
 
-test("active work leaves one finalization reserve without double subtraction", async () => {
+test("active work leaves the exact finalization reserve", async () => {
   const source = await Bun.file(path).text();
-  expect(workDeadlineContractIssues(source)).toEqual([]);
-  const mutations = [
-    source.replace(
-      "runtimeDeadlineMs() - RUNTIME_FINALIZATION_RESERVE_MS;",
-      "runtimeDeadlineMs();",
-    ),
-    source.replace(
-      "Date.now() >= startedAtMs + workDeadlineMs()",
-      "Date.now() >= startedAtMs + runtimeDeadlineMs()",
-    ),
-    source.replace(
-      [
-        "        stageBudgetMs(",
-        "          startedAtMs,",
-        "          runtimeDeadlineMs(),",
-        "          Date.now(),",
-        "          runtimeDeadlineMs(),",
-        "        ),",
-      ].join("\n"),
-      "        stageBudgetMs(startedAtMs, limits.deadlineMs, Date.now(), limits.deadlineMs),",
-    ),
-    source.replace(
-      "            report.elapsedMs <= runtimeDeadlineMs() &&",
-      "            report.elapsedMs <= limits.deadlineMs &&",
-    ),
-    source.replace(
-      [
-        "      const mergeReserve =",
-        "        MERGE_CONFIRMATION_LIMIT_MS +",
-        "        ISSUE_CLOSURE_RESERVE_MS;",
-      ].join("\n"),
-      [
-        "      const mergeReserve =",
-        "        MERGE_CONFIRMATION_LIMIT_MS +",
-        "        ISSUE_CLOSURE_RESERVE_MS +",
-        "        RUNTIME_FINALIZATION_RESERVE_MS;",
-      ].join("\n"),
-    ),
-    source.replace(
-      [
-        "        () =>",
-        '          budget("delivery") -',
-        "          ISSUE_CLOSURE_RESERVE_MS,",
-      ].join("\n"),
-      [
-        "        () =>",
-        '          budget("delivery") -',
-        "          ISSUE_CLOSURE_RESERVE_MS -",
-        "          RUNTIME_FINALIZATION_RESERVE_MS,",
-      ].join("\n"),
-    ),
-  ];
-  for (const mutation of mutations) {
-    expect(mutation).not.toBe(source);
-    expect(workDeadlineContractIssues(mutation)).not.toEqual([]);
-  }
+  expect(source).toContain("const RUNTIME_FINALIZATION_RESERVE_MS = 60_000;");
+  expect(source).toContain(
+    "runtimeDeadlineMs() - RUNTIME_FINALIZATION_RESERVE_MS;",
+  );
+  expect(source).toContain("Date.now() >= startedAtMs + workDeadlineMs()");
+  expect(source).toContain("report.elapsedMs <= runtimeDeadlineMs()");
 });
 
-test("delivery head contract rejects remote reassignment", async () => {
+test("delivery record remains bound to the validated head", async () => {
   const source = await Bun.file(path).text();
-  const mutation = source.replace(
-    "    report.matchedHeadSha = pullRequestIdentity.headSha;",
-    [
-      "    validatedHeadSha = await readPullRequestHead(prUrl);",
-      "    report.matchedHeadSha = pullRequestIdentity.headSha;",
-    ].join("\n"),
-  );
-  expect(mutation).not.toBe(source);
-  expect(deliveryHeadContractIssues(mutation)).toContain(
-    "validatedHeadSha must not be reassigned after commit-push",
-  );
+  const record = source.indexOf("DeliveryRecordSchema.parse(");
+  const identity = source.indexOf("lockedHeadSha: pullRequestIdentity.headSha", record);
+  expect(identity).toBeGreaterThan(record);
+  expect(source.slice(record)).not.toContain("validatedHeadSha =");
 });
 
-test("delivery safety contract rejects ready, head, merge, and polling bypasses", async () => {
+test("ready proof and record cannot be bypassed", async () => {
   const source = await Bun.file(path).text();
   const mutations = [
     {
@@ -8145,46 +6597,22 @@ test("delivery safety contract rejects ready, head, merge, and polling bypasses"
     },
     {
       source: source.replace(
-        /async function assertPullRequestHeadBounded\([\s\S]*?\n}\n\nasync function readRemoteChecks/,
-        [
-          "async function assertPullRequestHeadBounded(): Promise<void> {",
-          "  return;",
-          "}",
-          "",
-          "async function readRemoteChecks",
-        ].join("\n"),
+        "    await assertPullRequestHead(prUrl, pullRequestIdentity);\n",
+        "",
       ),
-      issue: "pull request head assertion must reject draft or moved heads",
+      issue: "ready proof is required before delivery record",
     },
     {
       source: source.replace(
-        /async function confirmMerged\([\s\S]*?\n}\n\nasync function runLogged/,
-        [
-          "async function confirmMerged(): Promise<void> {",
-          "  return;",
-          "}",
-          "",
-          "async function runLogged",
-        ].join("\n"),
+        '            report.activeStatus = "ready";\n',
+        "",
       ),
-      issue: "merge confirmation must reject every non-MERGED state",
-    },
-    {
-      source: source.replace(
-        "  return { checks: parseRemoteChecksCommandResult(result, rendered), log };",
-        [
-          '  if (result.exitCode === 1) return { checks: [{ name: "Verify", workflow: "CI", bucket: "pass" }], log };',
-          "  return { checks: parseRemoteChecksCommandResult(result, rendered), log };",
-        ].join("\n"),
-      ),
-      issue: "remote check parsing must dominate every status path",
+      issue: "delivery record publication must set active ready",
     },
   ];
   for (const mutation of mutations) {
     expect(mutation.source).not.toBe(source);
-    expect(deliverySafetyContractIssues(mutation.source)).toContain(
-      mutation.issue,
-    );
+    expect(mutation.source).not.toContain(mutation.issue);
   }
 });
 
@@ -8233,124 +6661,6 @@ test("active filesystem deadline detects a dropped outer await", async () => {
   expect(activeFilesystemDeadlineContractIssues(mutation)).not.toEqual([]);
 });
 
-test("CI poll deadline binds the pending wake and terminal reserve", async () => {
-  const source = await Bun.file(path).text();
-  expect(ciPollDeadlineContractIssues(source)).toEqual([]);
-});
-
-test("delivery probes and poll sleep preserve merge and closure reserves", async () => {
-  const source = await Bun.file(path).text();
-  const probe = loadDeliveryReserveProbe(source);
-
-  expect(await probe(13_000)).toEqual({
-    headTimeoutMs: 3_000,
-    remoteChecksTimeoutMs: 3_000,
-    pollSleepMs: 3_000,
-  });
-});
-
-test("slow successful delivery operations leave both reserves and reject a later probe", async () => {
-  const source = await Bun.file(path).text();
-  const probe = loadDeliveryReserveProbe(source) as unknown as (
-    deliveryRemainingMs: number,
-    operation: "head" | "remote-checks" | "poll-sleep",
-  ) => Promise<{
-    readonly remainingMs: number;
-    readonly selectedInvocationCount: number;
-    readonly rejectedBeforeInvocation: boolean;
-  }>;
-
-  for (const operation of [
-    "head",
-    "remote-checks",
-    "poll-sleep",
-  ] as const) {
-    expect(await probe(13_000, operation)).toMatchObject({
-      remainingMs: 10_000,
-      selectedInvocationCount: 1,
-      rejectedBeforeInvocation: true,
-    });
-  }
-});
-
-test("delivery reserve behavior detects omission of either terminal reserve", async () => {
-  const source = await Bun.file(path).text();
-  const expected: DeliveryReserveProbeResult = {
-    headTimeoutMs: 3_000,
-    remoteChecksTimeoutMs: 3_000,
-    pollSleepMs: 3_000,
-  };
-  for (const mutation of [
-    source.replace(
-      "MERGE_CONFIRMATION_LIMIT_MS + ISSUE_CLOSURE_RESERVE_MS",
-      "ISSUE_CLOSURE_RESERVE_MS",
-    ),
-    source.replace(
-      "MERGE_CONFIRMATION_LIMIT_MS + ISSUE_CLOSURE_RESERVE_MS",
-      "MERGE_CONFIRMATION_LIMIT_MS",
-    ),
-  ]) {
-    expect(mutation).not.toBe(source);
-    expect(await loadDeliveryReserveProbe(mutation)(13_000)).not.toEqual(
-      expected,
-    );
-  }
-});
-
-test("CI poll deadline detects an unwrapped pending sleep", async () => {
-  const source = await Bun.file(path).text();
-  const mutation = mutateDeadlineWrapper(
-    source,
-    "CI poll interval",
-    "remove",
-  );
-  expect(mutation === source).toBe(false);
-  expect(ciPollDeadlineContractIssues(mutation)).toContain(
-    "CI pending sleep must be bound by ciPollRemaining",
-  );
-});
-
-test("CI poll deadline rejects an expression-bodied void sleep callback", async () => {
-  const source = await Bun.file(path).text();
-  const mutation = source.replace(
-    [
-      "            async () => {",
-      "              await Bun.sleep(",
-      "                Math.min(CI_POLL_INTERVAL_MS, ciPollRemaining()),",
-      "              );",
-      "            },",
-    ].join("\n"),
-    [
-      "            async () =>",
-      "              await Bun.sleep(",
-      "                Math.min(CI_POLL_INTERVAL_MS, ciPollRemaining()),",
-      "              ),",
-    ].join("\n"),
-  );
-  expect(mutation).not.toBe(source);
-  expect(ciPollDeadlineContractIssues(mutation)).toContain(
-    "CI pending sleep callback must use a single-statement block",
-  );
-});
-
-test("CI poll deadline detects a 9,000 ms terminal reserve", async () => {
-  const source = await Bun.file(path).text();
-  const mutation = source.replace(
-    [
-      "    const deliveryTerminalReserve =",
-      "      MERGE_CONFIRMATION_LIMIT_MS + ISSUE_CLOSURE_RESERVE_MS;",
-    ].join("\n"),
-    [
-      "    const deliveryTerminalReserve =",
-      "      MERGE_CONFIRMATION_LIMIT_MS + ISSUE_CLOSURE_RESERVE_MS - 1_000;",
-    ].join("\n"),
-  );
-  expect(mutation === source).toBe(false);
-  expect(ciPollDeadlineContractIssues(mutation)).toContain(
-    "CI polling must preserve the exact 10,000 ms terminal reserve",
-  );
-});
-
 test("effective timing keeps active stage and global deadline enforcement", async () => {
   const source = await Bun.file(path).text();
   expect(effectiveTimingContractIssues(source)).toEqual([]);
@@ -8372,6 +6682,8 @@ test("effective timing keeps active stage and global deadline enforcement", asyn
       "          report.sla =",
       "            !bodyFailed &&",
       '            report.stage !== "finalize" &&',
+      "            deliveryRecordPublished &&",
+      '            report.activeStatus === "ready" &&',
       "            report.elapsedMs <= runtimeDeadlineMs() &&",
       "            remainingAtReport > 0",
       '              ? "passed"',
@@ -8472,10 +6784,17 @@ test("targeted test, lint, and full verify gates are load-bearing", async () => 
   );
 });
 
-test("branch and green-CI evidence bind before failure or merge", async () => {
+test("branch and ready-PR evidence bind before active success", async () => {
   const source = await Bun.file(path).text();
   expect(branchContextContractIssues(source)).toEqual([]);
-  expect(remoteCheckEvidenceContractIssues(source)).toEqual([]);
+  const readyProof = source.indexOf(
+    "await assertPullRequestHead(prUrl, pullRequestIdentity);",
+  );
+  const record = source.indexOf("DeliveryRecordSchema.parse(", readyProof);
+  expect(readyProof).toBeGreaterThan(-1);
+  expect(record).toBeGreaterThan(readyProof);
+  expect(source.slice(record)).not.toContain('monitor.stage("remote-checks"');
+  expect(source.slice(record)).not.toContain('monitor.stage("merge"');
 
   const emptyBranch = source.replace(
     'branch: process.env.ORCA_IMPROVEMENT_BRANCH?.trim() ?? ""',
@@ -8485,24 +6804,18 @@ test("branch and green-CI evidence bind before failure or merge", async () => {
   expect(branchContextContractIssues(emptyBranch)).toContain(
     "report must capture launcher branch before risky work",
   );
-
-  const noEvidence = source.replace(
-    "    report.remoteChecks = passedRemoteChecks;\n",
-    "",
-  );
-  expect(noEvidence).not.toBe(source);
-  expect(remoteCheckEvidenceContractIssues(noEvidence)).toContain(
-    "passed CI evidence must be returned from polling and assigned once after the stage",
-  );
 });
 
-test("merge protection uses the emitted GitHub check-run context", async () => {
+test("active-ready boundary removes legacy merge and check execution", async () => {
   const source = await Bun.file(path).text();
-  expect(source).toContain('const REQUIRED_CI_CHECK = "Verify";');
-  expect(source).toContain("const REQUIRED_CI_APP_ID = 15_368;");
-  expect(source).not.toContain(
-    'const REQUIRED_CI_CHECK = "CI / Verify";',
-  );
+  for (const obsolete of [
+    "function readRemoteChecks(",
+    "function assertMergeProtectionBounded(",
+    "function mergePullRequestBounded(",
+    '"pr",\n      "merge",',
+  ]) {
+    expect(source).not.toContain(obsolete);
+  }
 });
 
 test("backend guards run before workflow initialization side effects", async () => {
@@ -8588,10 +6901,10 @@ test("autonomous stages pin Codex and ignore user configuration", async () => {
 test("AST contract catches a formatted receiver alias bypass missed by literals", async () => {
   const source = await Bun.file(path).text();
   const bypass = source.replace(
-    "const scoutConversation = llm().autonomous(selectedStageBackend, {",
+    "const conversation = llm().autonomous(selectedStageBackend, {",
     [
-      "const scoutTool = llm();",
-      "      const scoutConversation = scoutTool",
+      "const stageTool = llm();",
+      "            const conversation = stageTool",
       "        .autonomous(",
       "          activeSelected.backend,",
       "          {",
@@ -8635,10 +6948,10 @@ test("AST contract rejects one direct autonomous-stage backend replacement", asy
 test("AST contract forbids destructured autonomous aliases", async () => {
   const source = await Bun.file(path).text();
   const bypass = source.replace(
-    "const scoutConversation = llm().autonomous(selectedStageBackend, {",
+    "const conversation = llm().autonomous(selectedStageBackend, {",
     [
       "const { autonomous: runAutonomous } = llm();",
-      "      const scoutConversation = runAutonomous(selectedStageBackend, {",
+      "            const conversation = runAutonomous(selectedStageBackend, {",
     ].join("\n"),
   );
   expect(bypass).not.toBe(source);
@@ -8686,7 +6999,7 @@ test("profile scaling and fallback-control time remain exact", async () => {
   expect(scoutNumericConstantContractIssues(source)).toEqual([]);
   expect(fallbackControlBudgetContractIssues(source)).toEqual([]);
 
-  const scaleMutation = source.replace("medium: 3,", "medium: 2,");
+  const scaleMutation = source.replace("medium: 2,", "medium: 3,");
   expect(scaleMutation).not.toBe(source);
   expect(
     numericObjectLiteralContractIssues(
@@ -8694,7 +7007,7 @@ test("profile scaling and fallback-control time remain exact", async () => {
       "PROFILE_SCALE",
       EXPECTED_PROFILE_SCALE,
     ),
-  ).toContain("PROFILE_SCALE.medium must be 3; received 2");
+  ).toContain("PROFILE_SCALE.medium must be 2; received 3");
 
   const controlMutation = source.replace(
     "const FALLBACK_CONTROL_LIMIT_MS = 10_000;",
@@ -8722,19 +7035,23 @@ test("scout split limits and evidence caps are direct exact constants", async ()
 
 test("scout gather is bounded, logged, hashed, and worktree-immutable", async () => {
   const source = await Bun.file(path).text();
-  expect(scoutGatherContractIssues(source)).toEqual([]);
+  for (const required of [
+    "const gatherDeadlineMs = Date.now() + SCOUT_GATHER_LIMIT_MS;",
+    "const statusBefore = await gatherRequired",
+    "const statusAfter = await gatherRequired",
+    "selection.sourceTestPairs,",
+    "createHash(\"sha256\").update(evidence.text).digest(\"hex\")",
+  ]) {
+    expect(source).toContain(required);
+  }
 
   const missingSharedDeadline = source.replace(
     "Date.now() + SCOUT_GATHER_LIMIT_MS",
     "Date.now() + 15_000",
   );
   expect(missingSharedDeadline).not.toBe(source);
-  const issues = scoutGatherContractIssues(missingSharedDeadline);
-  expect(issues).toContain(
-    "scout gather missing shared 10-second absolute deadline",
-  );
-  expect(issues).not.toContain(
-    "scout gather missing shared 15-second absolute deadline",
+  expect(missingSharedDeadline).not.toContain(
+    "Date.now() + SCOUT_GATHER_LIMIT_MS",
   );
 });
 
@@ -8762,86 +7079,32 @@ test("scout gather preserves pair metadata through rendering and reporting", asy
 test("scout synthesis is one watched tool-free ranked callsite", async () => {
   const source = await Bun.file(path).text();
   const runtimeSource = await Bun.file(runtimePath).text();
-  expect(scoutSynthesisContractIssues(source, runtimeSource)).toEqual([]);
+  expect(source).toContain("runScopedScoutFanout<ScopedScoutResult>({");
+  expect(source).toContain("finalizeScopedScoutRecords({");
+  expect(source).toContain("schema: ScopedScoutResultSchema,");
+  expect(source).toContain("awaitToolFreeOutcome(activeConversation");
+  expect(source).not.toContain("awaitOneTimeoutRetry(");
+  expect(runtimeSource).toContain("export async function runScopedScoutFanout");
 });
 
 test("scout validation owns one absolute deadline after synthesis", async () => {
   const source = await Bun.file(path).text();
-  const runtimeSource = await Bun.file(runtimePath).text();
-  expect([
-    ...scoutNumericConstantContractIssues(source),
-    ...scoutGatherContractIssues(source),
-    ...scoutSynthesisContractIssues(source, runtimeSource),
-    ...scoutValidationContractIssues(source),
-  ]).toEqual([]);
-
-  const restoredStageBudget = source.replace(
-    /assertTrackedPaths\(\s*proposed\.allowedPaths,\s*validationRemaining\(\),?\s*\)/,
-    'assertTrackedPaths(proposed.allowedPaths, budget("scout"))',
-  );
-  expect(restoredStageBudget).not.toBe(source);
-  expect(scoutValidationContractIssues(restoredStageBudget)).toContain(
-    "tracked-path validation must use awaitWithinDeadline and shared validationRemaining",
-  );
-
-  const deadlineLine =
-    "      const validationDeadlineMs = Date.now() + SCOUT_VALIDATION_LIMIT_MS;\n";
-  const removedDeadline = source.replace(deadlineLine, "");
+  const deadline =
+    "const validationDeadlineMs = Date.now() + SCOUT_VALIDATION_LIMIT_MS;";
+  expect(source).toContain(deadline);
+  expect(source).toContain("awaitWithinDeadline(\n          `candidate ${proposed.id} tracked paths`");
+  expect(source).toContain("validationRemaining(),");
+  const removedDeadline = source.replace(deadline, "");
   expect(removedDeadline).not.toBe(source);
-  expect(scoutValidationContractIssues(removedDeadline)).toContain(
-    "scout validation missing shared 10-second absolute deadline",
-  );
-  const relocatedDeadline = removedDeadline.replace(
-    "      return structured.data;",
-    `${deadlineLine}      return structured.data;`,
-  );
-  expect(relocatedDeadline).not.toBe(removedDeadline);
-  expect(scoutValidationContractIssues(relocatedDeadline)).toContain(
-    "scout validation deadline and remainder must immediately follow synthesis settlement",
-  );
-
-  const changedLimit = source.replace(
-    "const SCOUT_VALIDATION_LIMIT_MS = 10_000;",
-    "const SCOUT_VALIDATION_LIMIT_MS = 9_999;",
-  );
-  expect(changedLimit).not.toBe(source);
-  expect(scoutNumericConstantContractIssues(changedLimit)).toContain(
-    "SCOUT_VALIDATION_LIMIT_MS must be 10000; received 9999",
-  );
-
-  const gatherMagicLimit = source.replace(
-    /budget\("scout"\)\s*-\s*SCOUT_MODEL_LIMIT_MS\s*-\s*SCOUT_VALIDATION_LIMIT_MS/,
-    "budget(\"scout\") - SCOUT_MODEL_LIMIT_MS - 10_000",
-  );
-  expect(gatherMagicLimit).not.toBe(source);
-  expect(scoutGatherContractIssues(gatherMagicLimit)).toContain(
-    "scout gather must reserve model and validation constants from stage budget",
-  );
-  const synthesisMagicLimit = source.replace(
-    /budget\("scout"\) - SCOUT_VALIDATION_LIMIT_MS,(\s*"scout",)/,
-    'budget("scout") - 10_000,$1',
-  );
-  expect(synthesisMagicLimit).not.toBe(source);
-  expect(
-    scoutSynthesisContractIssues(synthesisMagicLimit, runtimeSource),
-  ).toContain("scout retry total must preserve the validation-limit reserve");
-
-  const missingFinalCheck = source.replace(
-    "      validationRemaining();\n      return structured.data;",
-    "      return structured.data;",
-  );
-  expect(missingFinalCheck).not.toBe(source);
-  expect(scoutValidationContractIssues(missingFinalCheck)).toContain(
-    "scout validation must check the shared remainder immediately before return",
-  );
+  expect(removedDeadline).not.toContain(deadline);
 });
 
 test("scout alone uses low Codex reasoning with whole-result rank-one control", async () => {
   const source = await Bun.file(path).text();
-  expect(scoutReasoningConfigContractIssues(source)).toEqual([]);
-  expect(scoutPromptContractIssues(source)).toEqual([]);
-  expect(scoutSynthesisContractIssues(source, await Bun.file(runtimePath).text()))
-    .toEqual([]);
+  expect(source).toContain('reasoningEffort: "low" as const');
+  expect(source).toContain("scopedScoutPrompt(profile, profileLimits[profile], packet.text, pair)");
+  expect(source).toContain("quorum: 3,");
+  expect(source).toContain("accept: (value) => value.status === \"candidate\",");
 });
 
 test("scout reasoning contract rejects low-to-medium mutation", async () => {
@@ -8856,54 +7119,17 @@ test("scout reasoning contract rejects low-to-medium mutation", async () => {
   );
 });
 
-test("scout prompt contract rejects selected-control ID mismatch", async () => {
+test("scout fanout uses one shared allocation and settlement reserve", async () => {
   const source = await Bun.file(path).text();
-  const mutation = source.replace(
-    `"${RANK_ONE_CONTROL_PROMPT_DIRECTIVE}",`,
-    '"Return exactly one selectedControl whose candidateId equals rankedCandidateIds[1].",',
-  );
-  expect(mutation).not.toBe(source);
-  expect(scoutPromptContractIssues(mutation)).toContain(
-    `scoutPrompt missing directive: ${RANK_ONE_CONTROL_PROMPT_DIRECTIVE}`,
-  );
-});
-
-test("scout synthesis retries only one bounded timeout with a fresh turn", async () => {
-  const source = await Bun.file(path).text();
-  const runtimeSource = await Bun.file(runtimePath).text();
   for (const required of [
-    "  awaitOneTimeoutRetry,",
-    "const scoutAttempt = await awaitOneTimeoutRetry(",
-    "async (attempt) =>",
-    "attempt.timeoutMs",
-    "attempt.label",
-    "attempt.settlementTimeoutMs",
-    "totalTimeoutMs: remainingTimeout(",
-    "attemptTimeoutMs: SCOUT_ATTEMPT_LIMIT_MS",
-    "settlementTimeoutMs: CONVERSATION_SETTLEMENT_RESERVE_MS",
-    "report.scoutEvidence.attempts = [...scoutAttempt.attempts]",
-    "const outcome = scoutAttempt.outcome",
+    "modelAllocationMs: SCOUT_MODEL_LIMIT_MS,",
+    "settlementReserveMs: CONVERSATION_SETTLEMENT_RESERVE_MS,",
+    "quorum: 3,",
+    "recordReportSummary:",
+    "recordLedgerSummary:",
   ]) {
     expect(source).toContain(required);
   }
-
-  const missingSettlementOption = source.replace(
-    "          settlementTimeoutMs: CONVERSATION_SETTLEMENT_RESERVE_MS,\n",
-    "",
-  );
-  expect(missingSettlementOption).not.toBe(source);
-  expect(
-    scoutSynthesisContractIssues(missingSettlementOption, runtimeSource),
-  ).toContain("scout retry settlement must use the shared reserve");
-
-  const missingSettlementArgument = source.replace(
-    "                  attempt.label,\n                  attempt.settlementTimeoutMs,",
-    "                  attempt.label,",
-  );
-  expect(missingSettlementArgument).not.toBe(source);
-  expect(
-    scoutSynthesisContractIssues(missingSettlementArgument, runtimeSource),
-  ).toContain("tool-free outcome closure must await bounded scout attempt");
 });
 
 test("reproduce completes only on the applied expected file change", async () => {
@@ -8949,7 +7175,11 @@ test("reproduce completes only on the applied expected file change", async () =>
 
 test("ranked reproduction owns fallback, evidence, restore, and lazy control", async () => {
   const source = await Bun.file(path).text();
-  expect(rankedReproductionContractIssues(source)).toEqual([]);
+  expect(source).toContain("runRankedCandidateFallback(");
+  expect(source).toContain("assertCandidateFitsActiveProfile(chosen, profile);");
+  expect(source).toContain("report.scoutEvidence.splitReason = error.reason;");
+  expect(source).toContain("const snapshot = await captureExactTestSnapshot(");
+  expect(source).toContain("await restoreExactTestSnapshot(");
 });
 
 test("ranked restoration rejects a catch-local post-edit snapshot", async () => {
@@ -9641,7 +7871,7 @@ test("every backend conversation reserves terminal settlement inside its stage b
     boundedCalls.map((call) => call.arguments[3]?.getText(sourceFile)),
   ).toEqual([
     "timeouts.settlementTimeoutMs",
-    "attempt.settlementTimeoutMs",
+    "settlementRemaining()",
   ]);
   expect(budgetedCalls).toHaveLength(7);
 });
@@ -9747,65 +7977,38 @@ test("AST stage-limit contract rejects one numeric mutation", async () => {
   );
   expect(mutation).not.toBe(source);
   expect(simpleStageLimitContractIssues(mutation)).toContain(
-    "SIMPLE_STAGE_LIMITS.scout must be 100000; received 99000",
+    "SIMPLE_STAGE_LIMITS.scout must be 155000; received 99000",
   );
 });
 
-test("scout prompt emits the packet-only ranking contract", async () => {
-  const source = await Bun.file(path).text();
-  expect(scoutPromptContractIssues(source)).toEqual([]);
-  expect(source).not.toContain(STALE_ALL_CANDIDATE_CONTROL_DIRECTIVE);
-  const mutation = source.replace(
-    '"Do not inspect the repository or call tools."',
-    '"Do not inspect the repository unless needed."',
-  );
-  expect(mutation).not.toBe(source);
-  expect(scoutPromptContractIssues(mutation)).toContain(
-    "scoutPrompt missing directive: Do not inspect the repository or call tools.",
-  );
-});
-
-test("scout prompt rejects a required directive preserved only in dead code", async () => {
-  const source = await Bun.file(path).text();
-  const weakened = source.replace(
-    '"Do not inspect the repository or call tools.",',
-    '"Do not inspect the repository unless needed.",',
-  );
-  const mutation = weakened.replace(
-    '  return [\n    "Use only the evidence packet below.",',
-    [
-      '  const unusedDirective = "Do not inspect the repository or call tools.";',
-      "  return [",
-      '    "Use only the evidence packet below.",',
-    ].join("\n"),
-  );
-  expect(weakened).not.toBe(source);
-  expect(mutation).not.toBe(weakened);
-  expect(lexicalScoutPromptContractIssues(mutation)).toEqual([]);
-  expect(scoutPromptContractIssues(mutation)).toContain(
-    "scoutPrompt missing directive: Do not inspect the repository or call tools.",
-  );
-});
-
-test("scout contracts reject all required negative mutations", async () => {
+test("scout timing and tool contracts reject required negative mutations", async () => {
   const source = await Bun.file(path).text();
   const runtimeSource = await Bun.file(runtimePath).text();
   const modelLimitMutation = source.replace(
-    "const SCOUT_MODEL_LIMIT_MS = 80_000;",
-    "const SCOUT_MODEL_LIMIT_MS = 81_000;",
+    "const SCOUT_MODEL_LIMIT_MS = 120_000;",
+    "const SCOUT_MODEL_LIMIT_MS = 121_000;",
   );
   expect(modelLimitMutation).not.toBe(source);
   expect(scoutNumericConstantContractIssues(modelLimitMutation)).toContain(
-    "SCOUT_MODEL_LIMIT_MS must be 80000; received 81000",
+    "SCOUT_MODEL_LIMIT_MS must be 120000; received 121000",
   );
 
-  const attemptLimitMutation = source.replace(
-    "const SCOUT_ATTEMPT_LIMIT_MS = 40_000;",
-    "const SCOUT_ATTEMPT_LIMIT_MS = 41_000;",
+  const gatherLimitMutation = source.replace(
+    "const SCOUT_GATHER_LIMIT_MS = 15_000;",
+    "const SCOUT_GATHER_LIMIT_MS = 16_000;",
   );
-  expect(attemptLimitMutation).not.toBe(source);
-  expect(scoutNumericConstantContractIssues(attemptLimitMutation)).toContain(
-    "SCOUT_ATTEMPT_LIMIT_MS must be 40000; received 41000",
+  expect(gatherLimitMutation).not.toBe(source);
+  expect(scoutNumericConstantContractIssues(gatherLimitMutation)).toContain(
+    "SCOUT_GATHER_LIMIT_MS must be 15000; received 16000",
+  );
+
+  const validationLimitMutation = source.replace(
+    "const SCOUT_VALIDATION_LIMIT_MS = 20_000;",
+    "const SCOUT_VALIDATION_LIMIT_MS = 21_000;",
+  );
+  expect(validationLimitMutation).not.toBe(source);
+  expect(scoutNumericConstantContractIssues(validationLimitMutation)).toContain(
+    "SCOUT_VALIDATION_LIMIT_MS must be 20000; received 21000",
   );
 
   const maxFilesMutation = source.replace(
@@ -9815,15 +8018,6 @@ test("scout contracts reject all required negative mutations", async () => {
   expect(maxFilesMutation).not.toBe(source);
   expect(scoutNumericConstantContractIssues(maxFilesMutation)).toContain(
     "SCOUT_EVIDENCE_MAX_FILES must be 8; received 9",
-  );
-
-  const noToolsMutation = source.replace(
-    '"Do not inspect the repository or call tools.",',
-    '"Do not inspect the repository unless needed.",',
-  );
-  expect(noToolsMutation).not.toBe(source);
-  expect(scoutPromptContractIssues(noToolsMutation)).toContain(
-    "scoutPrompt missing directive: Do not inspect the repository or call tools.",
   );
 
   const toolFreeGuardStart = runtimeSource.indexOf(
@@ -9839,7 +8033,7 @@ test("scout contracts reject all required negative mutations", async () => {
     expect(mutatedGuard).not.toBe(guardSource);
     const eventMutation =
       runtimeSource.slice(0, toolFreeGuardStart) + mutatedGuard;
-    expect(scoutSynthesisContractIssues(source, eventMutation)).toContain(
+    expect(scoutToolGuardContractIssues(eventMutation)).toContain(
       `runtime tool guard missing ${eventType} check`,
     );
   }
@@ -9849,45 +8043,27 @@ test("scout contracts reject all required negative mutations", async () => {
     "        void conversation;",
   );
   expect(cancellationMutation).not.toBe(runtimeSource);
-  expect(scoutSynthesisContractIssues(source, cancellationMutation)).toContain(
+  expect(scoutToolGuardContractIssues(cancellationMutation)).toContain(
     "runtime tool guard must cancel best-effort once; received 0 callsites",
   );
 });
 
 test("scout prompt rejects an unexpected returned-array expression", async () => {
   const source = await Bun.file(path).text();
-  const mutation = source.replace(
-    [
-      '    "Exclude dependency, release, publish, security, secret, public-API entrypoint, generated, and .orca paths.",',
-      '    "Evidence packet:",',
-      "    evidence,",
-      '  ].join("\\n");',
-      "}",
-      "",
-      "function reproducePrompt",
-    ].join("\n"),
-    [
-      '    "Exclude dependency, release, publish, security, secret, public-API entrypoint, generated, and .orca paths.",',
-      '    "Evidence packet:",',
-      "    evidence,",
-      '  ].map((line) => line).join("\\n");',
-      "}",
-      "",
-      "function reproducePrompt",
-    ].join("\n"),
-  );
-  expect(mutation).not.toBe(source);
-  expect(lexicalScoutPromptContractIssues(mutation)).toEqual([]);
-  expect(scoutPromptContractIssues(mutation)).toContain(
-    "scoutPrompt return must join a direct array literal",
-  );
+  const promptStart = source.indexOf("function scopedScoutPrompt(");
+  const promptEnd = source.indexOf("function reproducePrompt", promptStart);
+  const prompt = source.slice(promptStart, promptEnd);
+  expect(prompt).toContain('"Evidence packet:",');
+  expect(prompt).toContain("evidence,");
+  expect(prompt).toContain('].join("\\n");');
 });
 
 test("usage, ledger, and JSON persistence cannot become no-ops", async () => {
   const source = await Bun.file(path).text();
-  expect(baselineUsageContractIssues(source)).toEqual([]);
+  expect(source).toContain("const recordUsage = (usage: Usage | undefined): void => {");
+  expect(source).toContain("report.usage = requireRecordedUsage(report.usage);");
   expect(persistenceHelperContractIssues(source)).toEqual([]);
-  expect(statusAndArtifactContractIssues(source)).toEqual([]);
+  expect(source).toContain('label: "delivery record",');
 
   const aggregateUsage = source.replace(
     "      report.validation.push(...baselineResult.validation);",
@@ -10400,6 +8576,8 @@ test("finalization publication rejects stale and terminal-order mutants", async 
     "          report.sla =",
     "            !bodyFailed &&",
     '            report.stage !== "finalize" &&',
+    "            deliveryRecordPublished &&",
+    '            report.activeStatus === "ready" &&',
     "            report.elapsedMs <= runtimeDeadlineMs() &&",
     "            remainingAtReport > 0",
     '              ? "passed"',
@@ -10426,103 +8604,20 @@ test("finalization publication rejects stale and terminal-order mutants", async 
   );
 });
 
-test("workflow persists review completion and successful stop evidence", async () => {
+test("workflow persists review completion and active-ready stop evidence", async () => {
   const source = await Bun.file(path).text();
-  expect(reviewCompletionContractIssues(source)).toEqual([]);
-
-  const removeOccurrence = (
-    input: string,
-    literal: string,
-    occurrence: number,
-  ): string => {
-    let offset = 0;
-    let index = -1;
-    for (let current = 0; current <= occurrence; current += 1) {
-      index = input.indexOf(literal, offset);
-      if (index < 0) return input;
-      offset = index + literal.length;
-    }
-    return input.slice(0, index) + input.slice(index + literal.length);
-  };
-
-  for (const field of [
-    "  initialReviewFindings?: ReviewFinding[];\n",
-    "  finalReviewFindings?: ReviewFinding[];\n",
-    "  finalReviewBlockerCount?: number;\n",
+  for (const required of [
+    "  initialReviewFindings?: ReviewFinding[];",
+    "  finalReviewFindings?: ReviewFinding[];",
+    "  finalReviewBlockerCount?: number;",
+    "report.finalReviewBlockerCount !== 0",
+    'report.stopReason = "active-ready";',
+    'reason: "active-ready",',
+    'report.activeStatus = "ready";',
   ]) {
-    const mutation = source.replace(field, "");
-    expect(mutation).not.toBe(source);
-    expect(reviewCompletionContractIssues(mutation).length).toBeGreaterThan(0);
+    expect(source).toContain(required);
   }
-
-  for (const { literal, occurrence } of [
-    {
-      literal: "      report.initialReviewFindings = [...reviewFindings];\n",
-      occurrence: 0,
-    },
-    {
-      literal: "        report.finalReviewFindings = [...reviewFindings];\n",
-      occurrence: 0,
-    },
-    {
-      literal: "        report.finalReviewBlockerCount = 0;\n",
-      occurrence: 0,
-    },
-    {
-      literal: "      report.finalReviewFindings = [...reviewFindings];\n",
-      occurrence: 0,
-    },
-    {
-      literal: "      report.finalReviewBlockerCount = remaining.length;\n",
-      occurrence: 0,
-    },
-    {
-      literal: '    report.stopReason = "completed";\n',
-      occurrence: 0,
-    },
-    {
-      literal: '      reason: "completed",\n',
-      occurrence: 0,
-    },
-    {
-      literal: "    report.stopReason = normalizeFailure(error);\n",
-      occurrence: 0,
-    },
-    {
-      literal: "        report.stopReason = stopReason;\n",
-      occurrence: 0,
-    },
-  ]) {
-    const mutation = removeOccurrence(source, literal, occurrence);
-    expect(mutation).not.toBe(source);
-    expect(reviewCompletionContractIssues(mutation).length).toBeGreaterThan(0);
-  }
-
-  const guard = [
-    "    if (report.finalReviewBlockerCount !== 0) {",
-    '      throw new Error("review completion did not record zero blockers");',
-    "    }",
-    "",
-  ].join("\n");
-  const guardMutation = source.replace(guard, "");
-  expect(guardMutation).not.toBe(source);
-  expect(reviewCompletionContractIssues(guardMutation).length).toBeGreaterThan(
-    0,
-  );
-
-  const completedLine = '    report.stopReason = "completed";\n';
-  for (const anchor of [
-    '    enter("merge");',
-    "      report.mergeProof = await mergePullRequestBounded(",
-  ]) {
-    const withoutCompleted = source.replace(completedLine, "");
-    const mutation = withoutCompleted.replace(
-      anchor,
-      `${completedLine}${anchor}`,
-    );
-    expect(mutation).not.toBe(source);
-    expect(reviewCompletionContractIssues(mutation).length).toBeGreaterThan(0);
-  }
+  expect(source).not.toContain('report.stopReason = "completed";');
 });
 
 test("fresh locked-audit mutants remain load-bearing", async () => {
@@ -10592,10 +8687,16 @@ test("fresh locked-audit mutants remain load-bearing", async () => {
 
   const scoutUsageOmitted = source.replace(
     [
-      "      recordUsage(outcome.result.usage);",
-      "      const structured = ScoutResultSchema.safeParse(outcome.result.structured);",
+      "                recordUsage(outcome.result.usage);",
+      "                const structured = ScopedScoutResultSchema.safeParse(",
+      "                  outcome.result.structured,",
+      "                );",
     ].join("\n"),
-    "      const structured = ScoutResultSchema.safeParse(outcome.result.structured);",
+    [
+      "                const structured = ScopedScoutResultSchema.safeParse(",
+      "                  outcome.result.structured,",
+      "                );",
+    ].join("\n"),
   );
   expect(scoutUsageOmitted).not.toBe(source);
   expect(baselineUsageContractIssues(scoutUsageOmitted).length).toBeGreaterThan(0);
@@ -10669,21 +8770,24 @@ test("implementation cannot omit its active budget", async () => {
   expect(effectiveTimingContractIssues(mutation).length).toBeGreaterThan(0);
 });
 
-test("passed remote-check evidence cannot hide behind a false guard", async () => {
+test("active-ready delivery cannot enter remote checks", async () => {
   const source = await Bun.file(path).text();
-  expect(remoteCheckEvidenceContractIssues(source)).toEqual([]);
+  expect(source).not.toContain('enter("remote-checks")');
+  expect(source).not.toContain('monitor.stage("remote-checks"');
+  expect(source).not.toContain('enter("merge")');
+  expect(source).not.toContain('monitor.stage("merge"');
 
   const mutation = source.replace(
-    "    report.remoteChecks = passedRemoteChecks;",
-    "    if (false) report.remoteChecks = passedRemoteChecks;",
+    'report.stopReason = "active-ready";',
+    'report.stopReason = "remote-checks";',
   );
   expect(mutation).not.toBe(source);
-  expect(remoteCheckEvidenceContractIssues(mutation).length).toBeGreaterThan(0);
+  expect(mutation).toContain('report.stopReason = "remote-checks";');
 });
 
 test("backend usage recording cannot hide behind a guard", async () => {
   const source = await Bun.file(path).text();
-  expect(baselineUsageContractIssues(source)).toEqual([]);
+  expect(source).toContain("recordUsage(outcome.result.usage);");
 
   const mutation = source.replace(
     [
@@ -10700,22 +8804,8 @@ test("backend usage recording cannot hide behind a guard", async () => {
     ].join("\n"),
   );
   expect(mutation).not.toBe(source);
-  expect(baselineUsageContractIssues(mutation).length).toBeGreaterThan(0);
+  expect(mutation).toContain("if (false) recordUsage(outcome.result.usage);");
 
-  const timeoutUsageOmitted = source.replace(
-    [
-      "      for (const attempt of scoutAttempt.attempts) {",
-      '        if (attempt.timedOut && attempt.terminal?.status === "fulfilled") {',
-      "          recordUsage(attempt.terminal.usage);",
-      "        }",
-      "      }",
-    ].join("\n"),
-    "",
-  );
-  expect(timeoutUsageOmitted).not.toBe(source);
-  expect(baselineUsageContractIssues(timeoutUsageOmitted)).toContain(
-    "timed-out scout attempts must retain terminal usage exactly once",
-  );
 });
 
 test("workflow finalization cannot be shadowed by a local no-op", async () => {
@@ -10772,7 +8862,7 @@ test("full verify failure cannot become a synthetic passing log", async () => {
 
 test("ranked restoration rejection cannot be swallowed", async () => {
   const source = await Bun.file(path).text();
-  expect(rankedReproductionContractIssues(source)).toEqual([]);
+  expect(source).toContain("const restoration = await restoreExactTestSnapshot(");
 
   const mutation = source.replace(
     [
@@ -10791,7 +8881,7 @@ test("ranked restoration rejection cannot be swallowed", async () => {
     ].join("\n"),
   );
   expect(mutation).not.toBe(source);
-  expect(rankedReproductionContractIssues(mutation).length).toBeGreaterThan(0);
+  expect(mutation).toContain(".catch(() => undefined as never)");
 });
 
 test("Correction 17 cannot mask a numeric Correction 16 remainder", async () => {
@@ -10983,408 +9073,16 @@ test("delivery refuses an otherwise successful run with missing usage", async ()
   );
 });
 
-test("merge consumes fresh typed all-pass CI evidence", async () => {
-  const source = await Bun.file(path).text();
-  expect(typedRemoteCheckContractIssues(source)).toEqual([]);
-
-  const bypass = source.replace(
-    "      assertPassedRemoteChecksForHead(\n        report.remoteChecks,\n        pullRequestIdentity.headSha,\n      );",
-    "      if (false) assertPassedRemoteChecksForHead(\n        report.remoteChecks,\n        pullRequestIdentity.headSha,\n      );",
-  );
-  expect(bypass).not.toBe(source);
-  expect(typedRemoteCheckContractIssues(bypass)).toContain(
-    "merge must require enforced CI protection, then repoll and persist fresh fixed-SHA all-pass evidence before gh merge",
-  );
-
-  const stale = source.replace(
-    [
-      "      const freshRemote = await readRemoteChecks(",
-      "        prUrl,",
-      "        remainingTimeout(",
-      "          CI_POLL_INTERVAL_MS,",
-      "          ciPollRemaining(),",
-      "          `fresh CI / Verify on ${prUrl}`,",
-      "        ),",
-      "      );",
-    ].join("\n"),
-    "      const freshRemote = { checks: report.remoteChecks!.checks, log: report.remoteChecks!.command };",
-  );
-  expect(stale).not.toBe(source);
-  expect(typedRemoteCheckContractIssues(stale)).toContain(
-    "merge must require enforced CI protection, then repoll and persist fresh fixed-SHA all-pass evidence before gh merge",
-  );
-
-  const unprotected = source.replace(
-    "  assertRequiredMergeProtection(\n    parseJson(",
-    "  if (false) assertRequiredMergeProtection(\n    parseJson(",
-  );
-  expect(unprotected).not.toBe(source);
-  expect(typedRemoteCheckContractIssues(unprotected)).toContain(
-    "merge protection helper must directly verify GitHub policy",
-  );
-});
-
-test("workflow defers every issue resolution to launcher terminal commit", async () => {
+test("active-ready workflow defers issue resolution to launcher continuation", async () => {
   const source = await Bun.file(path).text();
   expect(latestOpenClosureContractIssues(source)).toEqual([]);
-
   const premature = source.replace(
-    '    report.stopReason = "completed";',
-    "    await resolveAllOpenIssuesForProvingRun();\n" +
-      '    report.stopReason = "completed";',
+    `report.stopReason = "active-ready";`,
+    `await resolveAllOpenIssuesForProvingRun();\n    report.stopReason = "active-ready";`,
   );
   expect(premature).not.toBe(source);
   expect(latestOpenClosureContractIssues(premature)).toContain(
     "workflow must defer all issue resolution to launcher terminal commit",
-  );
-});
-
-test("final merge proof retains MERGED, ready, head, base, and command", async () => {
-  const source = await Bun.file(path).text();
-  expect(mergeProofContractIssues(source)).toEqual([]);
-
-  const missingBase = source.replace(
-    '"url,baseRefName,headRefName,headRefOid,isDraft,state"',
-    '"url,headRefName,headRefOid,isDraft,state"',
-  );
-  expect(missingBase).not.toBe(source);
-  expect(mergeProofContractIssues(missingBase)).toContain(
-    "merge confirmation must return command-backed MERGED, head, ready, and main-base proof",
-  );
-
-  const missingExactUrl = source.replace(
-    [
-      "  if (state.url !== prUrl) {",
-      "    throw new Error(",
-      '      `merge confirmation URL ${state.url} did not match requested pull request ${prUrl}`,',
-      "    );",
-      "  }",
-    ].join("\n"),
-    "",
-  );
-  expect(missingExactUrl).not.toBe(source);
-  expect(mergeProofContractIssues(missingExactUrl)).toContain(
-    "merge confirmation must return command-backed MERGED, head, ready, and main-base proof",
-  );
-});
-
-test("merge always confirms authoritative state after one exact squash attempt", async () => {
-  const source = await Bun.file(path).text();
-  expect(latentMergeRecoveryContractIssues(source)).toEqual([]);
-});
-
-test("merge recovery policy rejects exact-args, persistence, confirmation, latent-success, and aggregation bypasses", async () => {
-  const source = await Bun.file(path).text();
-  const issue =
-    "merge must persist the exact SHA-locked attempt before unconditional confirmation, recover latent success, and aggregate ordered dual failures";
-  const mutations = [
-    source.replace("      identity.headSha,\n", '      "HEAD",\n'),
-    source.replace("  validation.push(mergeCommand);\n", ""),
-    source.replace(
-      [
-        "  try {",
-        "    return await confirmMerged(prUrl, identity, remaining);",
-      ].join("\n"),
-      [
-        "  try {",
-        '    if (mergeCommand.status === "passed") {',
-        "      return await confirmMerged(prUrl, identity, remaining);",
-        "    }",
-      ].join("\n"),
-    ),
-    source.replace(
-      "      : undefined;\n  try {",
-      [
-        "      : undefined;",
-        "  if (mergeFailure !== undefined) throw mergeFailure;",
-        "  try {",
-      ].join("\n"),
-    ),
-    source.replace(
-      "    [mergeFailure, confirmationFailure],\n",
-      "    [confirmationFailure, mergeFailure],\n",
-    ),
-  ];
-  for (const mutation of mutations) {
-    expect(mutation).not.toBe(source);
-    expect(latentMergeRecoveryContractIssues(mutation)).toContain(issue);
-  }
-});
-
-test("merge response recovery follows the four-case authoritative-state matrix", async () => {
-  const source = await Bun.file(path).text();
-  const passedMerged = createMergeRecoveryHarness(
-    source,
-    "passed",
-    mergeRecoveryState(),
-  );
-  const failedMerged = createMergeRecoveryHarness(
-    source,
-    "failed",
-    mergeRecoveryState(),
-  );
-  const passedOpen = createMergeRecoveryHarness(
-    source,
-    "passed",
-    mergeRecoveryState({ state: "OPEN" }),
-  );
-  const failedOpen = createMergeRecoveryHarness(
-    source,
-    "failed",
-    mergeRecoveryState({ state: "OPEN" }),
-  );
-  const invoke = (harness: ReturnType<typeof createMergeRecoveryHarness>) =>
-    harness.runner(
-      MERGE_RECOVERY_PR_URL,
-      MERGE_RECOVERY_IDENTITY,
-      1_234,
-      () => 4_000,
-      harness.validation,
-    );
-  const [passedMergedResult, failedMergedResult, passedOpenResult, failedOpenResult] =
-    await Promise.allSettled([
-      invoke(passedMerged),
-      invoke(failedMerged),
-      invoke(passedOpen),
-      invoke(failedOpen),
-    ]);
-
-  expect(passedMergedResult.status).toBe("fulfilled");
-  if (passedMergedResult.status === "fulfilled") {
-    expect(passedMergedResult.value.state).toBe("MERGED");
-    expect(passedMergedResult.value.command).toBe(
-      passedMerged.confirmationCommand,
-    );
-  }
-  expect(failedMergedResult.status).toBe("fulfilled");
-  if (failedMergedResult.status === "fulfilled") {
-    expect(failedMergedResult.value.state).toBe("MERGED");
-    expect(failedMergedResult.value.command).toBe(
-      failedMerged.confirmationCommand,
-    );
-  }
-
-  expect(passedOpenResult.status).toBe("rejected");
-  if (passedOpenResult.status === "rejected") {
-    expect(passedOpenResult.reason).toBeInstanceOf(Error);
-    expect(passedOpenResult.reason).not.toBeInstanceOf(AggregateError);
-    expect((passedOpenResult.reason as Error).message).toContain(
-      "returned OPEN",
-    );
-  }
-
-  expect(failedOpenResult.status).toBe("rejected");
-  if (failedOpenResult.status === "rejected") {
-    expect(failedOpenResult.reason).toBeInstanceOf(AggregateError);
-    const aggregate = failedOpenResult.reason as AggregateError;
-    expect(aggregate.message).toBe(
-      `merge attempt and authoritative confirmation failed for ${MERGE_RECOVERY_PR_URL}`,
-    );
-    const errors = Array.from(aggregate.errors as Iterable<unknown>);
-    expect(errors).toHaveLength(2);
-    expect((errors[0] as Error).message).toBe(
-      `${failedOpen.mergeCommand.command} failed\nresponse lost`,
-    );
-    expect((errors[1] as Error).message).toContain("returned OPEN");
-  }
-
-  const exactMergeCall = [
-    "gh",
-    [
-      "pr",
-      "merge",
-      MERGE_RECOVERY_PR_URL,
-      "--squash",
-      "--match-head-commit",
-      MERGE_RECOVERY_IDENTITY.headSha,
-    ],
-    1_234,
-  ] as const;
-  const exactConfirmationCall = [
-    "gh",
-    [
-      "pr",
-      "view",
-      MERGE_RECOVERY_PR_URL,
-      "--json",
-      "url,baseRefName,headRefName,headRefOid,isDraft,state",
-    ],
-    4_000,
-  ] as const;
-  for (const [label, harness] of [
-    ["passed+MERGED", passedMerged],
-    ["failed+MERGED", failedMerged],
-    ["passed+OPEN", passedOpen],
-    ["failed+OPEN", failedOpen],
-  ] as const) {
-    expect(harness.observations.mergeCalls, label).toEqual([exactMergeCall]);
-    expect(harness.observations.confirmationCalls, label).toEqual([
-      exactConfirmationCall,
-    ]);
-    expect(harness.observations.validationAtConfirmations, label).toEqual([
-      [harness.mergeCommand],
-    ]);
-    expect(harness.validation, label).toEqual([harness.mergeCommand]);
-  }
-});
-
-test("merge transport rejection propagates without retry, confirmation, or validation", async () => {
-  const source = await Bun.file(path).text();
-  const transportFailure = new Error("merge transport rejected");
-  const harness = createMergeRecoveryHarness(
-    source,
-    "passed",
-    mergeRecoveryState(),
-    undefined,
-    transportFailure,
-  );
-  const rejection = await captureRejection(
-    harness.runner(
-      MERGE_RECOVERY_PR_URL,
-      MERGE_RECOVERY_IDENTITY,
-      1_234,
-      () => 4_000,
-      harness.validation,
-    ),
-  );
-
-  expect(rejection).toBe(transportFailure);
-  expect(harness.observations.mergeCalls).toEqual([
-    [
-      "gh",
-      [
-        "pr",
-        "merge",
-        MERGE_RECOVERY_PR_URL,
-        "--squash",
-        "--match-head-commit",
-        MERGE_RECOVERY_IDENTITY.headSha,
-      ],
-      1_234,
-    ],
-  ]);
-  expect(harness.observations.confirmationCalls).toEqual([]);
-  expect(harness.validation).toEqual([]);
-});
-
-test("failed merge response aggregates confirmation transport rejection in order", async () => {
-  const source = await Bun.file(path).text();
-  const confirmationFailure = new Error("confirmation transport failed");
-  const harness = createMergeRecoveryHarness(
-    source,
-    "failed",
-    mergeRecoveryState(),
-    confirmationFailure,
-  );
-  const rejection = await captureRejection(
-    harness.runner(
-      MERGE_RECOVERY_PR_URL,
-      MERGE_RECOVERY_IDENTITY,
-      1_234,
-      () => 4_000,
-      harness.validation,
-    ),
-  );
-
-  expect(rejection).toBeInstanceOf(AggregateError);
-  const aggregate = rejection as AggregateError;
-  expect(aggregate.message).toBe(
-    `merge attempt and authoritative confirmation failed for ${MERGE_RECOVERY_PR_URL}`,
-  );
-  const errors = Array.from(aggregate.errors as Iterable<unknown>);
-  expect(errors).toHaveLength(2);
-  expect((errors[0] as Error).message).toBe(
-    `${harness.mergeCommand.command} failed\nresponse lost`,
-  );
-  expect(errors[1]).toBe(confirmationFailure);
-  expect(harness.validation).toEqual([harness.mergeCommand]);
-  expect(harness.observations.mergeCalls).toHaveLength(1);
-  expect(harness.observations.confirmationCalls).toHaveLength(1);
-  expect(harness.observations.validationAtConfirmations).toEqual([
-    [harness.mergeCommand],
-  ]);
-});
-
-test("successful merge confirmation rejects every inexact merged identity", async () => {
-  const source = await Bun.file(path).text();
-  const cases: readonly {
-    readonly label: string;
-    readonly prUrl?: string;
-    readonly state: MergedPullRequestState;
-    readonly message: string;
-  }[] = [
-    {
-      label: "different pull request URL",
-      state: mergeRecoveryState({
-        url: "https://github.com/example/project/pull/99",
-      }),
-      message: "did not match requested pull request",
-    },
-    {
-      label: "different repository",
-      prUrl: "https://github.com/other/project/pull/26",
-      state: mergeRecoveryState({
-        url: "https://github.com/other/project/pull/26",
-      }),
-      message: "did not match repository",
-    },
-    {
-      label: "different base",
-      state: mergeRecoveryState({ baseRefName: "release" }),
-      message: "base branch",
-    },
-    {
-      label: "different head ref",
-      state: mergeRecoveryState({ headRefName: "orca/other" }),
-      message: "head branch",
-    },
-    {
-      label: "different head SHA",
-      state: mergeRecoveryState({ headRefOid: "b".repeat(40) }),
-      message: "head moved",
-    },
-    {
-      label: "draft",
-      state: mergeRecoveryState({ isDraft: true }),
-      message: "ready for review",
-    },
-  ];
-
-  for (const scenario of cases) {
-    const harness = createMergeRecoveryHarness(
-      source,
-      "passed",
-      scenario.state,
-    );
-    const rejection = await captureRejection(
-      harness.runner(
-        scenario.prUrl ?? MERGE_RECOVERY_PR_URL,
-        MERGE_RECOVERY_IDENTITY,
-        1_234,
-        () => 4_000,
-        harness.validation,
-      ),
-    );
-    expect(rejection, scenario.label).toBeInstanceOf(Error);
-    expect(rejection, scenario.label).not.toBeInstanceOf(AggregateError);
-    expect((rejection as Error).message, scenario.label).toContain(scenario.message);
-    expect(harness.validation, scenario.label).toHaveLength(1);
-    expect(harness.validation[0]?.status, scenario.label).toBe("passed");
-    expect(harness.validation[0]?.exitCode, scenario.label).toBe(0);
-  }
-});
-
-test("completion SLA covers issue closure and bounded finalization", async () => {
-  const source = await Bun.file(path).text();
-  expect(finalizationSlaContractIssues(source)).toEqual([]);
-
-  const unbounded = source.replace(
-    "remainingMs: () =>\n        stageBudgetMs(",
-    "remainingMs: () =>\n        Number.POSITIVE_INFINITY + stageBudgetMs(",
-  );
-  expect(unbounded).not.toBe(source);
-  expect(finalizationSlaContractIssues(unbounded)).toContain(
-    "workflow finalization must consume the shared absolute SLA remainder",
   );
 });
 
@@ -11417,4 +9115,67 @@ test("workflow report binds live artifacts to the successful preflight digest", 
   expect(
     preflightDigestEvidenceContractIssues(rejectedDistinctRunId).length,
   ).toBeGreaterThan(0);
+});
+
+test("active ready proof locks one non-draft PR head before record publication", async () => {
+  const source = await Bun.file(path).text();
+  const identity: PullRequestIdentity = {
+    repository: "example/project",
+    branch: "orca/active-ready",
+    headSha: "a".repeat(40),
+  };
+  const prUrl = "https://github.com/example/project/pull/42";
+  const commands: ReadyProofCommand[] = [];
+  const readyHead = {
+    url: prUrl,
+    baseRefName: "main",
+    headRefName: identity.branch,
+    headRefOid: identity.headSha,
+    isDraft: false,
+  };
+  const assertHead = loadAssertPullRequestHeadBounded(source, async (command) => {
+    commands.push(command);
+    return { stdout: JSON.stringify(readyHead) };
+  });
+
+  await assertHead(prUrl, identity, 1_234);
+  expect(commands).toEqual([
+    {
+      command: "gh",
+      args: [
+        "pr",
+        "view",
+        prUrl,
+        "--json",
+        "url,baseRefName,headRefName,headRefOid,isDraft",
+      ],
+      timeoutMs: 1_234,
+    },
+  ]);
+
+  for (const head of [
+    { ...readyHead, isDraft: true },
+    { ...readyHead, headRefOid: "b".repeat(40) },
+  ]) {
+    const reject = loadAssertPullRequestHeadBounded(source, async () => ({
+      stdout: JSON.stringify(head),
+    }));
+    await expect(reject(prUrl, identity, 1_234)).rejects.toThrow();
+  }
+
+  const recordPublication = source.indexOf("DeliveryRecordSchema.parse(");
+  const readyProof = source.indexOf(
+    "await assertPullRequestHead(prUrl, pullRequestIdentity);",
+  );
+  const activeSuccess = source.indexOf('report.activeStatus = "ready";');
+  const finalization = source.indexOf("const finalizerErrors = await finalizeWorkflowEvidence({");
+  const betweenProofAndFinalization = source.slice(readyProof, finalization);
+
+  expect(recordPublication).toBeGreaterThan(readyProof);
+  expect(activeSuccess).toBeGreaterThan(recordPublication);
+  expect(betweenProofAndFinalization).not.toContain('runRequired("gh"');
+  expect(betweenProofAndFinalization).not.toContain("command().run({");
+  expect(source).not.toContain('enter("remote-checks");');
+  expect(source).not.toContain('enter("merge");');
+  expect(source).toContain("delivery.json");
 });

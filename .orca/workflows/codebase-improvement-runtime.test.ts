@@ -6337,7 +6337,7 @@ test("scoped fanout finalization records terminal usage once in pair order befor
         targetedTestArgs: ["test", testPath],
         expectedFailurePattern: `ORCA_RED:${id}`,
         implementationBrief: "Preserve the diagnostic.",
-        expectedMinutes: 5,
+        expectedMinutes: 10,
         risk: "low" as const,
       },
       selectedControl: {

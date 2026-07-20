@@ -26,46 +26,45 @@ import {
 } from "@twelvehart/orcats";
 import {
   assertCurrentBranch,
-  assertMergedPullRequestState,
+  assertCandidateFitsActiveProfile,
   assertImmutableTestDiff,
-  assertRequiredMergeProtection,
   assertReadyPullRequestHead,
-  buildPassedRemoteChecksEvidence,
   candidateRedMarker,
   CandidateControlSchema,
+  CandidateRequiresSplitError,
   ComplexityProfileSchema,
   controlTestArgs,
   controlTestName,
   createActiveStageBudgetTracker,
+  DeliveryRecordSchema,
   hydrateCandidate,
   mergeUsage,
   namedTestArgs,
   normalizeFailure,
-  parseRemoteChecksCommandResult,
   profileLimits,
   pullRequestCreateArgs,
-  remoteCheckState,
   renderScoutEvidence,
   renderShellCommand,
   requireLauncherDeliveryIdentity,
   requireRecordedUsage,
   runRankedCandidateFallback,
-  ScoutResultSchema,
+  ScopedScoutResultSchema,
   selectScoutEvidence,
   stageBudgetMs,
   stageConfig,
   validateCandidateEvidence,
   validateCandidateForProfile,
+  validateScopedScoutResult,
   validateChangedPaths,
   withSelectedModel,
   WorkflowConfigSchema,
   type Candidate,
   type ComplexityProfile,
-  type PassedRemoteChecksEvidence,
+  type DeliveryRecordV1,
   type PullRequestIdentity,
-  type RemoteCheck,
   type ScoutEvidenceFile,
   type ScoutResult,
+  type ScopedScoutResult,
   type WorkflowConfig,
 } from "./codebase-improvement-lib.ts";
 import {
@@ -75,7 +74,6 @@ import {
   assertSemanticPositiveControl,
   awaitBounded,
   awaitExpectedFileChange,
-  awaitOneTimeoutRetry,
   awaitToolFreeOutcome,
   awaitWithinDeadline,
   captureFileContentManifest,
@@ -99,6 +97,8 @@ import {
   restoreExactFileSnapshot,
   runTargetAfterPositiveControl,
   runRequiredCommand,
+  finalizeScopedScoutRecords,
+  runScopedScoutFanout,
   withGitManifestGuard,
   type BoundedConversation,
   type ExactFileSnapshot,
@@ -128,34 +128,28 @@ const MATCHER_PROOF_PRELOAD_PATH =
   ".orca/improvement-loop/matcher-proof-preload.ts";
 const ISSUE_PATH = ".orca/improvement-loop/issues.jsonl";
 const REPORT_DIR = ".orca/improvement-loop/runs";
-const REQUIRED_CI_CHECK = "Verify";
-const REQUIRED_CI_APP_ID = 15_368;
 const SIMPLE_STAGE_LIMITS = {
-  preflight: 35_000,
-  scout: 100_000,
-  reproduce: 65_000,
-  implement: 100_000,
-  repairs: 65_000,
-  review: 65_000,
-  verify: 40_000,
-  delivery: 90_000,
+  preflight: 300_000,
+  scout: 155_000,
+  reproduce: 120_000,
+  implement: 300_000,
+  repairs: 180_000,
+  review: 180_000,
+  verify: 180_000,
+  delivery: 180_000,
 } as const;
-const SCOUT_GATHER_LIMIT_MS = 10_000;
-const SCOUT_MODEL_LIMIT_MS = 80_000;
-const SCOUT_ATTEMPT_LIMIT_MS = 40_000;
-const SCOUT_VALIDATION_LIMIT_MS = 10_000;
+const SCOUT_GATHER_LIMIT_MS = 15_000;
+const SCOUT_MODEL_LIMIT_MS = 120_000;
+const SCOUT_VALIDATION_LIMIT_MS = 20_000;
 const CONVERSATION_SETTLEMENT_RESERVE_MS = 5_000;
 const SCOUT_EVIDENCE_MAX_FILES = 8;
 const SCOUT_EVIDENCE_MAX_CHARS = 10_000;
 const FALLBACK_CONTROL_LIMIT_MS = 10_000;
-const CI_POLL_INTERVAL_MS = 5_000;
-const MERGE_CONFIRMATION_LIMIT_MS = 5_000;
-const ISSUE_CLOSURE_RESERVE_MS = 5_000;
-const RUNTIME_FINALIZATION_RESERVE_MS = 10_000;
+const RUNTIME_FINALIZATION_RESERVE_MS = 60_000;
 const PROFILE_SCALE = {
   simple: 1,
-  medium: 3,
-  challenging: 4.5,
+  medium: 2,
+  challenging: 4,
 } as const;
 const BACKEND_READINESS: Record<
   BackendTag,
@@ -186,9 +180,6 @@ const PullRequestHeadSchema = z.object({
   headRefName: z.string().min(1),
   headRefOid: z.string().min(1),
   isDraft: z.boolean(),
-});
-const PullRequestStateSchema = PullRequestHeadSchema.extend({
-  state: z.string(),
 });
 const PreflightAttestationSchema = z.object({
   runId: z.string().min(1),
@@ -267,27 +258,27 @@ interface RunReport {
     acceptedControl?: ScoutResult["selectedControl"];
     latestCommit?: string;
     commands: CommandLog[];
+    scopes?: Array<{
+      scopeIndex: number;
+      label: string;
+      status: string;
+      reason?: string;
+      validationIssues?: readonly string[];
+    }>;
+    splitReason?: string;
   };
   redDiffPath?: string;
   rejectedCandidates: RejectedCandidateEvidence[];
   validation: CommandLog[];
   prUrl?: string;
   matchedHeadSha?: string;
+  deliveryRecordPath?: string;
+  activeStatus: "pending" | "ready" | "failed";
+  deliveryStatus: "pending" | "blocked" | "delivered";
   semanticControl?: SemanticControlEvidence;
   repository: string;
   originFetchUrl: string;
   originPushUrl: string;
-  mergeProof?: {
-    readonly checkedAt: string;
-    readonly url: string;
-    readonly baseRefName: string;
-    readonly headRefName: string;
-    readonly headRefOid: string;
-    readonly isDraft: boolean;
-    readonly state: string;
-    readonly command: CommandLog;
-  };
-  remoteChecks?: PassedRemoteChecksEvidence<CommandLog>;
   merged: boolean;
   sla: "pending" | "passed" | "failed";
   stopReason?: string;
@@ -449,6 +440,8 @@ await flow(flowArgs())(async () => {
     appliedSystemPrompts: {},
     rejectedCandidates: [],
     validation: [],
+    activeStatus: "pending",
+    deliveryStatus: "pending",
     merged: false,
     sla: "pending",
   };
@@ -459,6 +452,8 @@ await flow(flowArgs())(async () => {
   let verifiedContentManifest: readonly GitManifestEntry[] | undefined;
   let bodyFailed = false;
   let pendingIssue: RunIssue | undefined;
+  let deliveryRecord: DeliveryRecordV1 | undefined;
+  let deliveryRecordPublished = false;
   const activeStageBudgets = createActiveStageBudgetTracker<StageLimit>();
 
   const stageLimit = (name: StageLimit): number =>
@@ -795,40 +790,6 @@ await flow(flowArgs())(async () => {
       report.scoutEvidence.sha256 = evidenceSha256;
       report.scoutEvidence.latestCommit = latestCommit.stdout;
 
-      const scoutAttempt = await awaitOneTimeoutRetry(
-        async (attempt) =>
-          await monitor.stage(attempt.label, async () => {
-            const scoutConversation = llm().autonomous(selectedStageBackend, {
-              prompt: scoutPrompt(
-                profile,
-                profileLimits[profile],
-                evidence.text,
-              ),
-              schema: ScoutResultSchema,
-              config: selectedStageConfig(scoutConfig),
-            });
-            return await awaitToolFreeOutcome(
-              scoutConversation,
-              () =>
-                awaitBounded(
-                  scoutConversation,
-                  attempt.timeoutMs,
-                  attempt.label,
-                  attempt.settlementTimeoutMs,
-                ),
-            );
-          }),
-        {
-          stage: "scout",
-          totalTimeoutMs: remainingTimeout(
-            SCOUT_MODEL_LIMIT_MS,
-            budget("scout") - SCOUT_VALIDATION_LIMIT_MS,
-            "scout",
-          ),
-          attemptTimeoutMs: SCOUT_ATTEMPT_LIMIT_MS,
-          settlementTimeoutMs: CONVERSATION_SETTLEMENT_RESERVE_MS,
-        },
-      );
       const validationDeadlineMs = Date.now() + SCOUT_VALIDATION_LIMIT_MS;
       const validationRemaining = (): number =>
         remainingTimeout(
@@ -839,33 +800,120 @@ await flow(flowArgs())(async () => {
           ),
           "scout validation",
         );
-      report.scoutEvidence.attempts = [...scoutAttempt.attempts];
-      for (const attempt of scoutAttempt.attempts) {
-        if (attempt.timedOut && attempt.terminal?.status === "fulfilled") {
-          recordUsage(attempt.terminal.usage);
-        }
+      const scopedPairs = selection.sourceTestPairs.slice(0, 4);
+      if (scopedPairs.length === 0) {
+        throw new Error("scout evidence contains no reserved source-test pair");
       }
-      const outcome = scoutAttempt.outcome;
-      if (outcome.type !== "success") {
-        throw new Error(`scout failed: ${describeOutcome(outcome)}`);
-      }
-      recordUsage(outcome.result.usage);
-      const structured = ScoutResultSchema.safeParse(outcome.result.structured);
-      if (!structured.success) {
-        throw new Error(
-          `scout structured output invalid: ${structured.error.message}`,
-        );
-      }
-      for (const proposed of structured.data.candidates) {
-        const issues = [
-          ...validateCandidateForProfile(proposed, profile),
-          ...validateCandidateEvidence(proposed, evidence),
-        ];
-        if (issues.length > 0) {
-          throw new Error(
-            `candidate ${proposed.id} violates ${profile}: ${issues.join("; ")}`,
+      const scopedPackets = scopedPairs.map((pair) =>
+        renderScoutEvidence(
+          evidenceFiles.filter(
+            (file) =>
+              file.path === pair.sourcePath || file.path === pair.testPath,
+          ),
+          SCOUT_EVIDENCE_MAX_CHARS,
+          latestCommitEvidencePrefix(latestCommit.stdout),
+          [pair],
+        ),
+      );
+      const fanout = await runScopedScoutFanout<ScopedScoutResult>({
+        conversations: scopedPackets.map((packet, scopeIndex) => {
+          const pair = scopedPairs[scopeIndex];
+          if (pair === undefined) {
+            throw new Error(`scout scope ${String(scopeIndex + 1)} has no pair`);
+          }
+          const label = `scout scope ${String(scopeIndex + 1)}`;
+          let conversation:
+            | (BoundedConversation<Outcome> & {
+                events(): AsyncIterable<
+                  import("@twelvehart/orcats").ConversationEvent
+                >;
+              })
+            | undefined;
+          return {
+            label,
+            async run(activeRemaining, settlementRemaining) {
+              return await monitor.stage(label, async () => {
+                const activeConversation = llm().autonomous(selectedStageBackend, {
+                  prompt: scopedScoutPrompt(profile, profileLimits[profile], packet.text, pair),
+                  schema: ScopedScoutResultSchema,
+                  config: selectedStageConfig(scoutConfig),
+                });
+                conversation = activeConversation;
+                const outcome = await awaitToolFreeOutcome(activeConversation, async () =>
+                  awaitBounded(
+                    activeConversation,
+                    activeRemaining(),
+                    label,
+                    settlementRemaining(),
+                  ),
+                );
+                if (outcome.type !== "success") {
+                  throw new Error(`${label} failed: ${describeOutcome(outcome)}`);
+                }
+                recordUsage(outcome.result.usage);
+                const structured = ScopedScoutResultSchema.safeParse(
+                  outcome.result.structured,
+                );
+                if (!structured.success) {
+                  throw new Error(
+                    `${label} structured output invalid: ${structured.error.message}`,
+                  );
+                }
+                return structured.data;
+              });
+            },
+            async cancel(reason) {
+              await conversation?.cancel(reason);
+            },
+          };
+        }),
+        modelAllocationMs: SCOUT_MODEL_LIMIT_MS,
+        settlementReserveMs: CONVERSATION_SETTLEMENT_RESERVE_MS,
+        quorum: 3,
+        accept: (value) => value.status === "candidate",
+      });
+      const scopedResult = await finalizeScopedScoutRecords({
+        records: fanout.records,
+        validate: (value, record) => {
+          const pair = scopedPairs[record.scopeIndex];
+          const packet = scopedPackets[record.scopeIndex];
+          if (value.status !== "candidate") return [];
+          if (pair === undefined || packet === undefined) {
+            return [`scout scope ${String(record.scopeIndex + 1)} is incomplete`];
+          }
+          return [
+            ...validateScopedScoutResult(value, pair, packet, profile),
+            ...validateCandidateForProfile(value.candidate, profile),
+            ...validateCandidateEvidence(value.candidate, packet),
+          ];
+        },
+        persistScopeRecord: async (record) => {
+          await writeJson(
+            `${REPORT_DIR}/${runId}/scout-scope-${String(record.scopeIndex + 1)}.json`,
+            record,
           );
-        }
+        },
+        recordReportSummary: (summary) => {
+          const scoutEvidence = report.scoutEvidence;
+          if (scoutEvidence === undefined) {
+            throw new Error("scout evidence is missing before scoped summary");
+          }
+          scoutEvidence.scopes = summary.records.map((record) => ({
+            scopeIndex: record.scopeIndex,
+            label: record.label,
+            status: record.status,
+            ...(record.reason === undefined ? {} : { reason: record.reason }),
+            ...(record.validationIssues === undefined
+              ? {}
+              : { validationIssues: record.validationIssues }),
+          }));
+        },
+        recordLedgerSummary: async (summary) => {
+          await writeJson(`${REPORT_DIR}/${runId}/scout-ledger.json`, summary);
+        },
+      });
+      report.scoutEvidence.attempts = [];
+      for (const proposed of scopedResult.candidates) {
         await awaitWithinDeadline(
           `candidate ${proposed.id} tracked paths`,
           validationRemaining,
@@ -877,7 +925,7 @@ await flow(flowArgs())(async () => {
         );
       }
       validationRemaining();
-      return structured.data;
+      return scopedResult;
     });
 
     if (report.scoutEvidence === undefined) {
@@ -960,6 +1008,17 @@ await flow(flowArgs())(async () => {
               : await resolveFallbackControl(candidateId);
           const attempted = hydrateCandidate(scoutResult, control);
           const chosen = attempted;
+          try {
+            assertCandidateFitsActiveProfile(chosen, profile);
+          } catch (error) {
+            if (
+              error instanceof CandidateRequiresSplitError &&
+              report.scoutEvidence !== undefined
+            ) {
+              report.scoutEvidence.splitReason = error.reason;
+            }
+            throw error;
+          }
           const snapshot = await captureExactTestSnapshot(
             chosen.testPath,
             () => budget("reproduce"),
@@ -1652,10 +1711,6 @@ await flow(flowArgs())(async () => {
     });
 
     const prUrl = requirePullRequestUrl(report.prUrl);
-    const deliveryTerminalReserve =
-      MERGE_CONFIRMATION_LIMIT_MS + ISSUE_CLOSURE_RESERVE_MS;
-    const ciPollRemaining = (): number =>
-      budget("delivery") - deliveryTerminalReserve;
     const assertPullRequestHead = (
       url: string,
       identity: PullRequestIdentity,
@@ -1663,135 +1718,37 @@ await flow(flowArgs())(async () => {
       assertPullRequestHeadBounded(
         url,
         identity,
-        remainingTimeout(
-          CI_POLL_INTERVAL_MS,
-          ciPollRemaining(),
-          `pull request head for ${url}`,
-        ),
+        budget("delivery"),
       );
     await assertPullRequestHead(prUrl, pullRequestIdentity);
     report.matchedHeadSha = pullRequestIdentity.headSha;
-
-    enter("remote-checks");
-    const passedRemoteChecks = await monitor.stage(
-      "remote-checks",
-      async (): Promise<PassedRemoteChecksEvidence<CommandLog>> => {
-        while (true) {
-          const beforePoll = budget("delivery");
-          if (beforePoll <= CI_POLL_INTERVAL_MS) {
-            throw new Error(`sla-overrun waiting for CI / Verify on ${prUrl}`);
-          }
-          await assertPullRequestHead(prUrl, pullRequestIdentity);
-          if (budget("delivery") <= CI_POLL_INTERVAL_MS) {
-            throw new Error(`sla-overrun waiting for CI / Verify on ${prUrl}`);
-          }
-          const remote = await readRemoteChecks(
-            prUrl,
-            remainingTimeout(
-              CI_POLL_INTERVAL_MS,
-              ciPollRemaining(),
-              `CI / Verify on ${prUrl}`,
-            ),
-          );
-          const state = remoteCheckState(remote.checks);
-          if (state === "passed") {
-            await assertPullRequestHead(prUrl, pullRequestIdentity);
-            const evidence = buildPassedRemoteChecksEvidence(
-              remote.checks,
-              remote.log,
-              pullRequestIdentity.headSha,
-              new Date().toISOString(),
-            );
-            report.validation.push(remote.log);
-            return evidence;
-          }
-          if (state === "failed") {
-            throw new Error(
-              `gh pr checks ${prUrl} reported failure: ${JSON.stringify(remote.checks)}`,
-            );
-          }
-          if (!(ciPollRemaining() > CI_POLL_INTERVAL_MS)) {
-            throw new Error(`sla-overrun waiting for CI / Verify on ${prUrl}`);
-          }
-          await awaitWithinDeadline(
-            "CI poll interval",
-            ciPollRemaining,
-            async () => {
-              await Bun.sleep(
-                Math.min(CI_POLL_INTERVAL_MS, ciPollRemaining()),
-              );
-            },
-          );
-        }
+    const readyAtMs = Date.now();
+    deliveryRecord = DeliveryRecordSchema.parse({
+      version: 1,
+      runId,
+      repository: report.repository,
+      prUrl,
+      branch: report.branch,
+      baseRefName: "main",
+      lockedHeadSha: pullRequestIdentity.headSha,
+      active: {
+        profile,
+        startedAtMs,
+        readyAtMs,
+        elapsedMs: readyAtMs - startedAtMs,
+        activeDeadlineAtMs: workerDeadlineAtMs,
+        verification: [...report.validation],
       },
-    );
-    report.remoteChecks = passedRemoteChecks;
-
-    enter("merge");
-    await monitor.stage("merge", async () => {
-      const mergeReserve =
-        MERGE_CONFIRMATION_LIMIT_MS +
-        ISSUE_CLOSURE_RESERVE_MS;
-      const preMergeChecksRemainder = budget("delivery");
-      if (preMergeChecksRemainder <= mergeReserve + 5_000) {
-        throw new Error(`sla-overrun before refreshing CI for ${prUrl}`);
-      }
-      const mergeProtection = await assertMergeProtectionBounded(
-        report.repository,
-        remainingTimeout(
-          5_000,
-          preMergeChecksRemainder - mergeReserve,
-          `merge protection for ${report.repository}`,
-        ),
-      );
-      report.validation.push(mergeProtection);
-      const freshRemote = await readRemoteChecks(
-        prUrl,
-        remainingTimeout(
-          CI_POLL_INTERVAL_MS,
-          ciPollRemaining(),
-          `fresh CI / Verify on ${prUrl}`,
-        ),
-      );
-      const freshState = remoteCheckState(freshRemote.checks);
-      if (freshState !== "passed") {
-        throw new Error(
-          `gh pr checks ${prUrl} changed to ${freshState} before merge: ${JSON.stringify(freshRemote.checks)}`,
-        );
-      }
-      const freshRemoteChecks = buildPassedRemoteChecksEvidence(
-        freshRemote.checks,
-        freshRemote.log,
-        pullRequestIdentity.headSha,
-        new Date().toISOString(),
-      );
-      report.validation.push(freshRemote.log);
-      report.remoteChecks = freshRemoteChecks;
-      assertPassedRemoteChecksForHead(
-        report.remoteChecks,
-        pullRequestIdentity.headSha,
-      );
-      await assertPullRequestHead(prUrl, pullRequestIdentity);
-      const mergeRemainder = budget("delivery");
-      if (mergeRemainder <= mergeReserve) {
-        throw new Error(`sla-overrun before merging ${prUrl}`);
-      }
-      report.mergeProof = await mergePullRequestBounded(
-        prUrl,
-        pullRequestIdentity,
-        mergeRemainder - mergeReserve,
-        () =>
-          budget("delivery") -
-          ISSUE_CLOSURE_RESERVE_MS,
-        report.validation,
-      );
-      report.validation.push(report.mergeProof.command);
-      report.merged = true;
+      delivery: {
+        status: "pending",
+        attempts: [],
+      },
     });
-
-    report.stopReason = "completed";
+    report.deliveryRecordPath = `${REPORT_DIR}/${runId}/delivery.json`;
+    report.deliveryStatus = deliveryRecord.delivery.status;
+    report.stopReason = "active-ready";
     monitor.recordOutcome({
-      reason: "completed",
+      reason: "active-ready",
       file: chosen.title,
       verdict: "clean",
       durationMs: Date.now() - startedAtMs,
@@ -1803,6 +1760,7 @@ await flow(flowArgs())(async () => {
   } catch (error) {
     bodyFailed = true;
     report.stopReason = normalizeFailure(error);
+    report.activeStatus = "failed";
     report.sla = "failed";
     monitor.recordFailure({
       file: candidate?.title ?? "codebase-improvement",
@@ -1861,6 +1819,21 @@ await flow(flowArgs())(async () => {
             );
           },
         },
+        {
+          label: "delivery record",
+          run: async (context) => {
+            if (deliveryRecord === undefined) return;
+            const decision = await publishFinalizationText(
+              `${REPORT_DIR}/${runId}/delivery.json`,
+              `${JSON.stringify(deliveryRecord, null, 2)}\n`,
+              runId,
+              context,
+            );
+            deliveryRecordPublished = true;
+            report.activeStatus = "ready";
+            return decision;
+          },
+        },
       ],
       failureArtifactReserveMs: 2_000,
       report: {
@@ -1873,6 +1846,8 @@ await flow(flowArgs())(async () => {
           report.sla =
             !bodyFailed &&
             report.stage !== "finalize" &&
+            deliveryRecordPublished &&
+            report.activeStatus === "ready" &&
             report.elapsedMs <= runtimeDeadlineMs() &&
             remainingAtReport > 0
               ? "passed"
@@ -1894,6 +1869,7 @@ await flow(flowArgs())(async () => {
         report.finishedAtMs = finishedAtMs;
         report.elapsedMs = finishedAtMs - startedAtMs;
         report.stage = "finalize";
+        report.activeStatus = "failed";
         report.sla = "failed";
         report.stopReason = stopReason;
         pendingIssue = buildRunIssue(
@@ -2375,97 +2351,6 @@ async function assertPullRequestHeadBounded(
   assertReadyPullRequestHead(actual, identity);
 }
 
-async function readRemoteChecks(
-  prUrl: string,
-  timeoutMs: number,
-): Promise<{ readonly checks: RemoteCheck[]; readonly log: CommandLog }> {
-  const rendered = `gh pr checks ${prUrl} --json name,workflow,bucket`;
-  const result = await command().run({
-    command: "gh",
-    args: [
-      "pr",
-      "checks",
-      prUrl,
-      "--json",
-      "name,workflow,bucket",
-    ],
-    timeoutMs,
-  });
-  const log: CommandLog = {
-    command: rendered,
-    status: result.type === "success" ? "passed" : "failed",
-    stdout: result.stdout,
-    stderr: result.stderr,
-    exitCode: result.exitCode,
-    durationMs: result.durationMs,
-  };
-  return { checks: parseRemoteChecksCommandResult(result, rendered), log };
-}
-
-async function assertMergeProtectionBounded(
-  repository: string,
-  timeoutMs: number,
-): Promise<CommandLog> {
-  const endpoint = `repos/${repository}/branches/main/protection`;
-  const log = await runRequired("gh", ["api", endpoint], timeoutMs);
-  assertRequiredMergeProtection(
-    parseJson(log.stdout, `gh api ${endpoint}`),
-    REQUIRED_CI_CHECK,
-    REQUIRED_CI_APP_ID,
-  );
-  return log;
-}
-
-function assertPassedRemoteChecksForHead(
-  evidence: PassedRemoteChecksEvidence<CommandLog> | undefined,
-  expectedHeadSha: string,
-): asserts evidence is PassedRemoteChecksEvidence<CommandLog> {
-  if (
-    evidence === undefined ||
-    evidence.headSha !== expectedHeadSha ||
-    evidence.state !== "passed" ||
-    evidence.command.status !== "passed" ||
-    remoteCheckState(evidence.checks) !== "passed"
-  ) {
-    throw new Error(`remote checks are not passed for ${expectedHeadSha}`);
-  }
-}
-
-async function confirmMerged(
-  prUrl: string,
-  identity: PullRequestIdentity,
-  remaining: () => number,
-): Promise<NonNullable<RunReport["mergeProof"]>> {
-  const command = await runRequired(
-    "gh",
-    [
-      "pr",
-      "view",
-      prUrl,
-      "--json",
-      "url,baseRefName,headRefName,headRefOid,isDraft,state",
-    ],
-    remainingTimeout(5_000, remaining(), "merge confirmation"),
-  );
-  const state = PullRequestStateSchema.parse(
-    parseJson(
-      command.stdout,
-      `gh pr view ${prUrl} --json url,baseRefName,headRefName,headRefOid,isDraft,state`,
-    ),
-  );
-  if (state.url !== prUrl) {
-    throw new Error(
-      `merge confirmation URL ${state.url} did not match requested pull request ${prUrl}`,
-    );
-  }
-  assertMergedPullRequestState(state, identity);
-  return {
-    ...state,
-    checkedAt: new Date().toISOString(),
-    command,
-  };
-}
-
 async function runLogged(
   commandName: string,
   args: readonly string[],
@@ -2489,43 +2374,6 @@ async function runLogged(
     exitCode: result.exitCode,
     durationMs: result.durationMs,
   };
-}
-
-async function mergePullRequestBounded(
-  prUrl: string,
-  identity: PullRequestIdentity,
-  timeoutMs: number,
-  remaining: () => number,
-  validation: CommandLog[],
-): Promise<NonNullable<RunReport["mergeProof"]>> {
-  const mergeCommand = await runLogged(
-    "gh",
-    [
-      "pr",
-      "merge",
-      prUrl,
-      "--squash",
-      "--match-head-commit",
-      identity.headSha,
-    ],
-    timeoutMs,
-  );
-  validation.push(mergeCommand);
-  const mergeFailure =
-    mergeCommand.status === "failed"
-      ? new Error(
-          `${mergeCommand.command} failed\n${mergeCommand.stderr || mergeCommand.stdout}`,
-        )
-      : undefined;
-  try {
-    return await confirmMerged(prUrl, identity, remaining);
-  } catch (confirmationFailure) {
-    if (mergeFailure === undefined) throw confirmationFailure;
-    throw new AggregateError(
-      [mergeFailure, confirmationFailure],
-      `merge attempt and authoritative confirmation failed for ${prUrl}`,
-    );
-  }
 }
 
 async function runTargetedGate(
@@ -2730,32 +2578,19 @@ function isInvalidReproductionProof(
   return error instanceof InvalidReproductionProofError;
 }
 
-function scoutPrompt(
+function scopedScoutPrompt(
   profile: ComplexityProfile,
   limits: (typeof profileLimits)[ComplexityProfile],
   evidence: string,
+  pair: { readonly sourcePath: string; readonly testPath: string },
 ): string {
   return [
     "Use only the evidence packet below.",
     "Do not inspect the repository or call tools.",
-    "Each File: <path> section contains numbered source lines; cite them as <path>:<line>.",
-    "Return exactly three supported candidates.",
-    "Return candidates with three unique testPath values; do not return variants of one premise.",
-    "Each candidate must have at least one production allowed path that neither other candidate uses; shared support paths are allowed.",
-    "Allow no tests/** path except that candidate's testPath.",
-    "Return rankedCandidateIds as a best-first permutation of candidate IDs.",
-    'Set targetedTestArgs exactly to ["test", testPath]; the parent prepends bun.',
-    "Return exactly one selectedControl whose candidateId equals rankedCandidateIds[0].",
-    "Set every candidate expectedFailurePattern exactly to ORCA_RED:<candidate-id>.",
-    "Select one pre-existing top-level passing test from the packet for selectedControl.testName; never invent a new control name.",
-    "Set selectedControl.productionPath to the allowed production path directly imported and observed by that exact test.",
-    "Set selectedControl.brief to that packet-grounded known-good case using the same production entrypoint, setup, and observation path as rank one, differing only in the defect input.",
-    "Treat current implementation and existing tests as stronger evidence than speculative defect claims.",
-    "Use latest-commit evidence to avoid re-proposing behavior that was just completed unless the packet proves a distinct present defect.",
-    "For every candidate, cite at least one rendered line from testPath and from every allowed production path, then explain the causal path between them.",
-    "Choose each testPath only from a reserved source-test pair whose source is one of that candidate's allowed production paths.",
-    `Each candidate must be a low-risk ${profile} change requiring ${String(limits.minMinutes)}-${String(limits.maxMinutes)} minutes and at most ${String(limits.maxPaths)} tracked paths.`,
-    "Each candidate must identify one packet test path, at least one packet production path, direct path:line evidence, a bun test command, and an expected failing-output pattern.",
+    `This scope owns exactly ${pair.sourcePath} and ${pair.testPath}.`,
+    "Return one strict candidate tied to that pair, or a cited no_candidate result.",
+    "A candidate must use the reserved test path and source path, direct path:line evidence, and an exact ORCA_RED marker.",
+    `The candidate must fit the ${profile} target of ${String(limits.minMinutes)}-${String(limits.maxMinutes)} minutes and ${String(limits.activeCapMs)}ms active cap.`,
     "Exclude dependency, release, publish, security, secret, public-API entrypoint, generated, and .orca paths.",
     "Evidence packet:",
     evidence,

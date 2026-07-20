@@ -3,7 +3,9 @@ import * as improvementLib from "./codebase-improvement-lib.ts";
 import {
   assertMergedPullRequestState,
   assertReadyPullRequestHead,
+  assertCandidateFitsActiveProfile,
   buildScoutResult,
+  CandidateRequiresSplitError,
   CandidateSchema,
   chooseCandidate,
   controlTestArgs,
@@ -20,6 +22,7 @@ import {
   renderScoutEvidence,
   renderDirective,
   ScoutCandidateSchema,
+  type ScoutCandidate,
   ScoutResultSchema,
   ScopedScoutResultSchema,
   selectScoutEvidencePaths,
@@ -46,7 +49,7 @@ const candidate = {
     "A normal timed-out command preserves its stderr through the same formatter.",
   controlTestName: "preserves [stderr] (baseline)?",
   controlProductionPath: "src/tools/process.ts",
-  expectedMinutes: 6,
+  expectedMinutes: 10,
   risk: "low" as const,
 };
 const processSourceTestPairs = [
@@ -64,7 +67,7 @@ const candidates = [
     testPath: "tests/a.test.ts",
     targetedTestArgs: ["test", "tests/a.test.ts"],
     expectedFailurePattern: "ORCA_RED:a",
-    expectedMinutes: 5,
+    expectedMinutes: 10,
   },
   {
     ...candidate,
@@ -73,7 +76,7 @@ const candidates = [
     testPath: "tests/b.test.ts",
     targetedTestArgs: ["test", "tests/b.test.ts"],
     expectedFailurePattern: "ORCA_RED:b",
-    expectedMinutes: 9,
+    expectedMinutes: 10,
   },
   {
     ...candidate,
@@ -82,7 +85,7 @@ const candidates = [
     testPath: "tests/c.test.ts",
     targetedTestArgs: ["test", "tests/c.test.ts"],
     expectedFailurePattern: "ORCA_RED:c",
-    expectedMinutes: 6,
+    expectedMinutes: 10,
   },
 ];
 const scoutCandidates = candidates.map(
@@ -323,7 +326,7 @@ test("scoped validation binds a candidate to its reserved pair and profile", () 
   expect(
     issuesFor({
       ...scopedScoutCandidateResult,
-      candidate: { ...scopedScoutCandidate, expectedMinutes: 11 },
+      candidate: { ...scopedScoutCandidate, expectedMinutes: 21 },
     }),
   ).toContain("expected minutes outside simple profile");
 });
@@ -1908,7 +1911,7 @@ test("profiles enforce time and path limits", () => {
   expect(validateCandidateForProfile(candidate, "simple")).toEqual([]);
   const medium = {
     ...candidate,
-    expectedMinutes: 25,
+    expectedMinutes: 30,
     allowedPaths: [
       "src/tools/process.ts",
       "src/tools/terminal.ts",
@@ -2255,12 +2258,56 @@ test("stage budgets count only active work while retaining prior usage", () => {
 test("stage budget respects global deadline", () => {
   expect(stageBudgetMs(1_000, 600_000, 1_100, 70_000)).toBe(70_000);
   expect(stageBudgetMs(1_000, 100_000, 90_000, 70_000)).toBe(11_000);
-  expect(profileLimits.simple.deadlineMs).toBe(600_000);
-  expect(profileLimits.medium.deadlineMs).toBe(1_800_000);
-  expect(profileLimits.challenging.deadlineMs).toBe(2_700_000);
+  expect(profileLimits.simple.deadlineMs).toBe(1_800_000);
+  expect(profileLimits.medium.deadlineMs).toBe(3_600_000);
+  expect(profileLimits.challenging.deadlineMs).toBe(7_200_000);
   expect(profileLimits.simple.maxPaths).toBe(3);
   expect(profileLimits.medium.maxPaths).toBe(6);
   expect(profileLimits.challenging.maxPaths).toBe(10);
+});
+
+test("profile caps and candidate targets use the active clock", () => {
+  expect(profileLimits.simple).toMatchObject({
+    minMinutes: 10,
+    maxMinutes: 20,
+    activeCapMs: 1_800_000,
+  });
+  expect(profileLimits.medium).toMatchObject({
+    minMinutes: 30,
+    maxMinutes: 60,
+    activeCapMs: 3_600_000,
+  });
+  expect(profileLimits.challenging).toMatchObject({
+    minMinutes: 60,
+    maxMinutes: 120,
+    activeCapMs: 7_200_000,
+  });
+});
+
+test("challenging split rejects over-cap active cost and admits the exact cap", () => {
+  const atCap: ScoutCandidate = {
+    ...candidate,
+    expectedMinutes: 120,
+    estimatedActiveMs: 7_200_000,
+  };
+  expect(() =>
+    assertCandidateFitsActiveProfile(atCap, "challenging"),
+  ).not.toThrow();
+  expect(() =>
+    assertCandidateFitsActiveProfile(
+      { ...atCap, estimatedActiveMs: 7_200_001 },
+      "challenging",
+    ),
+  ).toThrow(CandidateRequiresSplitError);
+  try {
+    assertCandidateFitsActiveProfile(
+      { ...atCap, estimatedActiveMs: 7_200_001 },
+      "challenging",
+    );
+  } catch (error) {
+    expect(error).toBeInstanceOf(CandidateRequiresSplitError);
+    expect((error as CandidateRequiresSplitError).reason).toContain("split");
+  }
 });
 
 test("failure normalization always returns a string", () => {

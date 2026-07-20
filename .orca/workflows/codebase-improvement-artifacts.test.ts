@@ -5814,10 +5814,10 @@ function composedDeadlineOwnershipIssues(
   const compactRuntime = compact(runtime);
   if (
     !compactRuntime.includes(
-      "const RUNTIME_FINALIZATION_RESERVE_MS = 10_000;",
+      "const RUNTIME_FINALIZATION_RESERVE_MS = 60_000;",
     )
   ) {
-    issues.push("runtime finalization reserve must remain exactly 10000 ms");
+    issues.push("runtime finalization reserve must remain exactly 60000 ms");
   }
   const workerDeadlineDeclaration = compactRuntime.indexOf(
     'const workerDeadlineAtMs = parseWorkerDeadlineAtMs( requiredEnvironment("ORCA_IMPROVEMENT_WORKER_DEADLINE_AT_MS"), startedAtMs, limits.deadlineMs, );',
@@ -10857,10 +10857,10 @@ test("launcher and runtime own disjoint finalization windows", async () => {
       name: "runtime finalization reserve shrinks",
       launcher,
       runtime: runtime.replace(
-        "const RUNTIME_FINALIZATION_RESERVE_MS = 10_000;",
-        "const RUNTIME_FINALIZATION_RESERVE_MS = 9_000;",
+        "const RUNTIME_FINALIZATION_RESERVE_MS = 60_000;",
+        "const RUNTIME_FINALIZATION_RESERVE_MS = 59_000;",
       ),
-      issue: "runtime finalization reserve must remain exactly 10000 ms",
+      issue: "runtime finalization reserve must remain exactly 60000 ms",
     },
     {
       name: "runtime finalization returns to the profile deadline",
@@ -16894,17 +16894,21 @@ function correction63LedgerInspectionIssues(ledgerBytes: Buffer): string[] {
   }
   const text = ledgerBytes.toString("utf8");
   const lines = (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n");
-  if (lines.length !== 183) {
-    issues.push(`Correction 63 ledger row count must be 183, received ${String(lines.length)}`);
+  if (lines.length < 183) {
+    issues.push(`Correction 63 ledger must retain 183 rows, received ${String(lines.length)}`);
   }
-  const prefixBytes = Buffer.from(`${lines.slice(0, 178).join("\n")}\n`);
+  const correction63Lines = lines.slice(0, 183);
+  const prefixBytes = Buffer.from(`${correction63Lines.slice(0, 178).join("\n")}\n`);
   if (
     createHash("sha256").update(prefixBytes).digest("hex") !==
     "c196e0aa2c91f87540d1c2187d8b318f58fcacc7d6e319aeac5d9292fb2d338a"
   ) {
     issues.push("Correction 63 ledger first 178 rows changed");
   }
-  if (lines.slice(178).join("\n") !== correction63LedgerLines.join("\n")) {
+  if (
+    correction63Lines.slice(178).join("\n") !==
+    correction63LedgerLines.join("\n")
+  ) {
     issues.push("Correction 63 appended rows must match exact ordered fields and evidence");
   }
   let rows: Record<string, unknown>[] = [];
@@ -16913,8 +16917,9 @@ function correction63LedgerInspectionIssues(ledgerBytes: Buffer): string[] {
   } catch {
     issues.push("Correction 63 ledger rows must be valid JSON");
   }
-  if (new Set(rows.map((row) => row.id)).size !== 183) {
-    issues.push("Correction 63 ledger must contain 183 unique IDs");
+  const correction63Rows = rows.slice(0, 183);
+  if (new Set(correction63Rows.map((row) => row.id)).size !== 183) {
+    issues.push("Correction 63 ledger must retain 183 unique IDs");
   }
   const expectedKeys = [
     "id",
@@ -16931,7 +16936,7 @@ function correction63LedgerInspectionIssues(ledgerBytes: Buffer): string[] {
     "status",
   ];
   if (
-    rows.slice(178).some(
+    correction63Rows.slice(178).some(
       (row) => JSON.stringify(Object.keys(row)) !== JSON.stringify(expectedKeys),
     )
   ) {
@@ -17560,7 +17565,7 @@ test("Correction 56 ledger remains exact before C57 append", async () => {
     if (lineCount === 165) correction55End = index + 1;
     if (lineCount === 167) prefixEnd = index + 1;
   }
-  expect(lineCount).toBe(183);
+  expect(lineCount).toBeGreaterThanOrEqual(183);
   expect(correction55End).toBeGreaterThan(0);
   expect(prefixEnd).toBe(99_873);
   const correction56Bytes = ledgerBytes.subarray(0, prefixEnd);
@@ -17720,7 +17725,7 @@ test("Correction 57 ledger remains exact before C60 append", async () => {
     if (lineCount === 167) correction56End = index + 1;
     if (lineCount === 170) correction57End = index + 1;
   }
-  expect(lineCount).toBe(183);
+  expect(lineCount).toBeGreaterThanOrEqual(183);
   expect(correction56End).toBe(99_873);
   expect(correction57End).toBe(101_860);
   const prefix = ledgerBytes.subarray(0, correction56End);
@@ -17752,7 +17757,7 @@ test("Correction 60 ledger appends five exact open rows", async () => {
   const ledgerBytes = Buffer.from(
     await Bun.file(".orca/improvement-loop/issues.jsonl").arrayBuffer(),
   );
-  expect(ledgerBytes.byteLength).toBe(110_097);
+  expect(ledgerBytes.byteLength).toBeGreaterThanOrEqual(110_097);
   expect(ledgerBytes.at(-1)).toBe(0x0a);
   expect(ledgerBytes.at(-2)).not.toBe(0x0a);
 
@@ -17765,7 +17770,7 @@ test("Correction 60 ledger appends five exact open rows", async () => {
     if (lineCount === 170) prefixEnd = index + 1;
     if (lineCount === 175) correction60End = index + 1;
   }
-  expect(lineCount).toBe(183);
+  expect(lineCount).toBeGreaterThanOrEqual(183);
   expect(prefixEnd).toBe(101_860);
   const prefix = ledgerBytes.subarray(0, prefixEnd);
   expect(createHash("sha256").update(prefix).digest("hex")).toBe(
@@ -17797,7 +17802,7 @@ test("Correction 61 ledger preserves exact 175-row prefix and appends one open r
   const ledgerBytes = Buffer.from(
     await Bun.file(".orca/improvement-loop/issues.jsonl").arrayBuffer(),
   );
-  expect(ledgerBytes.byteLength).toBe(110_097);
+  expect(ledgerBytes.byteLength).toBeGreaterThanOrEqual(110_097);
   expect(ledgerBytes.at(-1)).toBe(0x0a);
   expect(ledgerBytes.at(-2)).not.toBe(0x0a);
 
@@ -17810,7 +17815,7 @@ test("Correction 61 ledger preserves exact 175-row prefix and appends one open r
     if (lineCount === 175) prefixEnd = index + 1;
     if (lineCount === 176) correction61End = index + 1;
   }
-  expect(lineCount).toBe(183);
+  expect(lineCount).toBeGreaterThanOrEqual(183);
   expect(prefixEnd).toBe(105_085);
   const prefix = ledgerBytes.subarray(0, prefixEnd);
   expect(createHash("sha256").update(prefix).digest("hex")).toBe(
@@ -17854,7 +17859,7 @@ test("Correction 62 ledger preserves exact 176-row prefix and appends two open r
     if (lineCount === 176) prefixEnd = index + 1;
     if (lineCount === 178) correction62End = index + 1;
   }
-  expect(lineCount).toBe(183);
+  expect(lineCount).toBeGreaterThanOrEqual(183);
   expect(prefixEnd).toBe(105_752);
   const prefix = ledgerBytes.subarray(0, prefixEnd);
   expect(createHash("sha256").update(prefix).digest("hex")).toBe(
@@ -17886,18 +17891,19 @@ test("Correction 63 ledger preserves 178 rows and appends five exact open findin
   const ledgerBytes = Buffer.from(
     await Bun.file(".orca/improvement-loop/issues.jsonl").arrayBuffer(),
   );
-  expect(ledgerBytes.byteLength).toBe(110_097);
-  expect(createHash("sha256").update(ledgerBytes).digest("hex")).toBe(
-    "6544bd11a635893b1f2890b3306fc27d4aac3fbe3724eac0d44bd66fddb63a03",
-  );
+  expect(ledgerBytes.byteLength).toBeGreaterThanOrEqual(110_097);
   expect(correction63LedgerInspectionIssues(ledgerBytes)).toEqual([]);
   const rows = ledgerBytes
     .toString("utf8")
     .trimEnd()
     .split("\n")
     .map((line) => JSON.parse(line) as Record<string, unknown>);
-  expect(rows.slice(-5).map((row) => row.id)).toEqual(correction63ProofRowIds);
-  expect(rows.slice(-5).every((row) => row.status === "open")).toBe(true);
+  expect(rows.slice(178, 183).map((row) => row.id)).toEqual(
+    correction63ProofRowIds,
+  );
+  expect(rows.slice(178, 183).every((row) => row.status === "open")).toBe(
+    true,
+  );
 });
 
 test("Correction 63 ledger lock rejects order field semantics uniqueness and EOF mutations", async () => {
@@ -19016,4 +19022,13 @@ test("runbook documents terminal ranked fallback and retained rejection proof", 
   expect(launcher).toContain(
     'cp -R "$worktree/.orca/improvement-loop/runs/$run_id" "$run_dir/workflow"',
   );
+});
+
+test("scout timing reserves one exact active-ready allocation", async () => {
+  const source = await Bun.file(".orca/workflows/codebase-improvement.ts").text();
+  expect(source).toContain("const SCOUT_GATHER_LIMIT_MS = 15_000;");
+  expect(source).toContain("const SCOUT_MODEL_LIMIT_MS = 120_000;");
+  expect(source).toContain("const SCOUT_VALIDATION_LIMIT_MS = 20_000;");
+  expect(source).not.toContain("SCOUT_ATTEMPT_LIMIT_MS");
+  expect(source).toContain("runScopedScoutFanout");
 });

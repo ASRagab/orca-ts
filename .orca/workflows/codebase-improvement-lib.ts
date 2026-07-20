@@ -54,22 +54,25 @@ export const ComplexityProfileSchema = z.enum([
 export type ComplexityProfile = z.infer<typeof ComplexityProfileSchema>;
 export const profileLimits = {
   simple: {
-    minMinutes: 5,
-    maxMinutes: 10,
+    minMinutes: 10,
+    maxMinutes: 20,
     maxPaths: 3,
-    deadlineMs: 600_000,
-  },
-  medium: {
-    minMinutes: 20,
-    maxMinutes: 30,
-    maxPaths: 6,
+    activeCapMs: 1_800_000,
     deadlineMs: 1_800_000,
   },
-  challenging: {
+  medium: {
     minMinutes: 30,
-    maxMinutes: 45,
+    maxMinutes: 60,
+    maxPaths: 6,
+    activeCapMs: 3_600_000,
+    deadlineMs: 3_600_000,
+  },
+  challenging: {
+    minMinutes: 60,
+    maxMinutes: 120,
     maxPaths: 10,
-    deadlineMs: 2_700_000,
+    activeCapMs: 7_200_000,
+    deadlineMs: 7_200_000,
   },
 } as const;
 
@@ -100,7 +103,8 @@ const ScoutCandidateBaseSchema = z.object({
     targetedTestArgs: z.array(z.string()).length(2),
     expectedFailurePattern: z.string().min(1),
     implementationBrief: z.string().trim().min(1),
-    expectedMinutes: z.number().int().min(5).max(45),
+    expectedMinutes: z.number().int().min(10).max(120),
+    estimatedActiveMs: z.number().int().positive().optional(),
     risk: z.literal("low"),
   });
 
@@ -939,6 +943,38 @@ export function validateCandidateForProfile(
   return issues;
 }
 
+export class CandidateRequiresSplitError extends Error {
+  readonly reason: string;
+
+  constructor(
+    readonly candidateId: string,
+    readonly estimatedActiveMs: number,
+    readonly activeCapMs: number,
+  ) {
+    super(
+      `candidate ${candidateId} requires split: estimated active cost ${String(estimatedActiveMs)}ms exceeds ${String(activeCapMs)}ms`,
+    );
+    this.name = "CandidateRequiresSplitError";
+    this.reason = "candidate requires split before implementation";
+  }
+}
+
+export function assertCandidateFitsActiveProfile(
+  candidate: ScoutCandidate,
+  profile: ComplexityProfile,
+): void {
+  const estimatedActiveMs =
+    candidate.estimatedActiveMs ?? candidate.expectedMinutes * 60_000;
+  const activeCapMs = profileLimits[profile].activeCapMs;
+  if (estimatedActiveMs > activeCapMs) {
+    throw new CandidateRequiresSplitError(
+      candidate.id,
+      estimatedActiveMs,
+      activeCapMs,
+    );
+  }
+}
+
 export function chooseCandidate(
   result: ScoutResult,
 ): Candidate {
@@ -1255,6 +1291,73 @@ export interface PullRequestIdentity {
   readonly branch: string;
   readonly headSha: string;
 }
+
+const DeliveryCommandLogSchema = z
+  .object({
+    command: z.string(),
+    status: z.enum(["passed", "failed"]),
+    stdout: z.string(),
+    stderr: z.string(),
+    exitCode: z.number().int().nullable(),
+    durationMs: z.number(),
+  })
+  .strict();
+
+export const ActiveDeliveryEvidenceSchema = z
+  .object({
+    profile: ComplexityProfileSchema,
+    startedAtMs: z.number().int().nonnegative(),
+    readyAtMs: z.number().int().nonnegative(),
+    elapsedMs: z.number().int().nonnegative(),
+    activeDeadlineAtMs: z.number().int().positive(),
+    verification: z.array(DeliveryCommandLogSchema),
+  })
+  .strict();
+
+export const DeliveryAttemptSchema = z
+  .object({
+    startedAtMs: z.number().int().nonnegative(),
+    finishedAtMs: z.number().int().nonnegative(),
+    status: z.enum(["pending", "blocked", "delivered"]),
+    pr: z
+      .object({
+        url: z.url(),
+        baseRefName: z.literal("main"),
+        headRefName: z.string().min(1),
+        headRefOid: z.string().regex(/^[0-9a-f]{40}$/),
+        isDraft: z.boolean(),
+      })
+      .strict()
+      .optional(),
+    checks: z.array(DeliveryCommandLogSchema).optional(),
+    merge: DeliveryCommandLogSchema.optional(),
+  })
+  .strict();
+
+export const DeliveryStatusEvidenceSchema = z
+  .object({
+    status: z.enum(["pending", "blocked", "delivered"]),
+    attempts: z.array(DeliveryAttemptSchema),
+  })
+  .strict();
+
+export const DeliveryRecordSchema = z
+  .object({
+    version: z.literal(1),
+    runId: z.string().min(1),
+    repository: z.string().regex(/^[^/\s]+\/[^/\s]+$/),
+    prUrl: z.url(),
+    branch: z.string().min(1),
+    baseRefName: z.literal("main"),
+    lockedHeadSha: z.string().regex(/^[0-9a-f]{40}$/),
+    active: ActiveDeliveryEvidenceSchema,
+    delivery: DeliveryStatusEvidenceSchema,
+  })
+  .strict();
+
+export type ActiveDeliveryEvidence = z.infer<typeof ActiveDeliveryEvidenceSchema>;
+export type DeliveryStatusEvidence = z.infer<typeof DeliveryStatusEvidenceSchema>;
+export type DeliveryRecordV1 = z.infer<typeof DeliveryRecordSchema>;
 
 export interface PullRequestHeadState {
   readonly url: string;
