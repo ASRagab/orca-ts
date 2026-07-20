@@ -22,8 +22,11 @@ import type {
   Usage,
 } from "@twelvehart/orcats";
 import {
+  buildScoutResult,
   isGenericExpectedFailurePattern,
   normalizeFailure,
+  type ScoutResult,
+  type ScopedScoutResult,
 } from "./codebase-improvement-lib.ts";
 
 interface ToolFreeConversation {
@@ -3222,6 +3225,427 @@ export async function awaitOneTimeoutRetry<T extends TimeoutRetryOutcome>(
   }
 
   throw new Error(`unreachable ${options.stage} retry state`);
+}
+
+export interface ScopedScoutConversation<T> {
+  readonly label: string;
+  run(
+    activeRemaining: () => number,
+    settlementRemaining: () => number,
+  ): Promise<T>;
+  cancel(reason: string): void | Promise<void>;
+}
+
+export type ScopedScoutRecordStatus =
+  | "accepted"
+  | "cancelled"
+  | "failed"
+  | "invalid"
+  | "no_candidate"
+  | "timed_out";
+
+export interface ScopedScoutCancellationEvidence {
+  readonly requestedAtMs: number;
+  readonly reason: string;
+  readonly rejection?: string;
+  readonly settlementTimedOut?: true;
+}
+
+export interface ScopedScoutRecord<T> {
+  readonly scopeIndex: number;
+  readonly label: string;
+  readonly startedAtMs: number;
+  readonly status: ScopedScoutRecordStatus;
+  readonly terminal?: TerminalSettlement<T>;
+  readonly cancellation?: ScopedScoutCancellationEvidence;
+  readonly validationIssues?: readonly string[];
+  readonly reason?: string;
+}
+
+export interface ScopedScoutFanoutResult<T> {
+  readonly modelStartedAtMs: number;
+  readonly deadlineAtMs: number;
+  readonly records: readonly ScopedScoutRecord<T>[];
+  readonly accepted: readonly {
+    readonly scopeIndex: number;
+    readonly value: T;
+  }[];
+}
+
+export interface ScopedScoutFanoutOptions<T> {
+  readonly conversations: readonly ScopedScoutConversation<T>[];
+  readonly modelAllocationMs: number;
+  readonly settlementReserveMs: number;
+  readonly quorum: number;
+  readonly accept: (value: T) => boolean;
+  readonly now?: () => number;
+}
+
+interface MutableScopedScoutRecord<T> {
+  readonly conversation: ScopedScoutConversation<T>;
+  readonly scopeIndex: number;
+  readonly label: string;
+  readonly startedAtMs: number;
+  status: ScopedScoutRecordStatus | "pending";
+  terminalPromise: Promise<TerminalSettlement<T>>;
+  terminal?: TerminalSettlement<T>;
+  cancellation?: ScopedScoutCancellationEvidence;
+  cancellationSettled?: Promise<void>;
+  validationIssues?: readonly string[];
+  reason?: string;
+}
+
+function scopedScoutNoCandidate(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "status" in value &&
+    value.status === "no_candidate"
+  );
+}
+
+function toScopedScoutRecord<T>(
+  record: MutableScopedScoutRecord<T>,
+): ScopedScoutRecord<T> {
+  return {
+    scopeIndex: record.scopeIndex,
+    label: record.label,
+    startedAtMs: record.startedAtMs,
+    status: record.status === "pending" ? "timed_out" : record.status,
+    ...(record.terminal === undefined ? {} : { terminal: record.terminal }),
+    ...(record.cancellation === undefined
+      ? {}
+      : { cancellation: record.cancellation }),
+    ...(record.validationIssues === undefined
+      ? {}
+      : { validationIssues: record.validationIssues }),
+    ...(record.reason === undefined
+      ? record.status === "pending"
+        ? { reason: "scope did not reach terminal settlement" }
+        : {}
+      : { reason: record.reason }),
+  };
+}
+
+function scopedScoutDeadline<T>(
+  states: ReadonlySet<MutableScopedScoutRecord<T>>,
+  deadlineAtMs: number,
+  now: () => number,
+): Promise<
+  | {
+      readonly type: "terminal";
+      readonly state: MutableScopedScoutRecord<T>;
+      readonly terminal: TerminalSettlement<T>;
+    }
+  | { readonly type: "deadline" }
+> {
+  const remainingMs = deadlineAtMs - now();
+  if (remainingMs <= 0) return Promise.resolve({ type: "deadline" });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<{ readonly type: "deadline" }>((resolve) => {
+    timer = setTimeout(() => {
+      resolve({ type: "deadline" });
+    }, remainingMs);
+  });
+  const terminals = [...states].map((state) =>
+    state.terminalPromise.then((terminal) => ({
+      type: "terminal" as const,
+      state,
+      terminal,
+    })),
+  );
+  return Promise.race([...terminals, deadline]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
+
+async function settleScopedScoutCancellations<T>(
+  states: readonly MutableScopedScoutRecord<T>[],
+  deadlineAtMs: number,
+  now: () => number,
+): Promise<void> {
+  const cancellations = states.flatMap((state) => {
+    const settled = state.cancellationSettled;
+    return settled === undefined ? [] : [{ state, settled }];
+  });
+  if (cancellations.length === 0 || now() >= deadlineAtMs) return;
+  const remainingMs = deadlineAtMs - now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<{ readonly type: "deadline" }>((resolve) => {
+    timer = setTimeout(() => {
+      resolve({ type: "deadline" });
+    }, remainingMs);
+  });
+  const settled = Promise.all(
+    cancellations.map((cancellation) => cancellation.settled),
+  ).then(() => ({ type: "settled" as const }));
+  try {
+    const first = await Promise.race([settled, deadline]);
+    if (first.type === "deadline") {
+      for (const { state } of cancellations) {
+        if (
+          state.cancellation !== undefined &&
+          state.cancellation.rejection === undefined
+        ) {
+          state.cancellation = {
+            ...state.cancellation,
+            settlementTimedOut: true,
+          };
+        }
+      }
+    }
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+function requestScopedScoutCancellation<T>(
+  state: MutableScopedScoutRecord<T>,
+  reason: string,
+  now: () => number,
+): void {
+  if (state.cancellation !== undefined) return;
+  state.cancellation = { requestedAtMs: now(), reason };
+  try {
+    const cancellation = state.conversation.cancel(reason);
+    state.cancellationSettled = Promise.resolve(cancellation).then(
+      () => undefined,
+      (error: unknown) => {
+        const cancellationEvidence = state.cancellation;
+        if (cancellationEvidence === undefined) return;
+        state.cancellation = {
+          ...cancellationEvidence,
+          rejection: normalizeFailure(error),
+        };
+      },
+    );
+  } catch (error) {
+    state.cancellation = {
+      ...state.cancellation,
+      rejection: normalizeFailure(error),
+    };
+    state.cancellationSettled = Promise.resolve();
+  }
+}
+
+export async function runScopedScoutFanout<T>(
+  options: ScopedScoutFanoutOptions<T>,
+): Promise<ScopedScoutFanoutResult<T>> {
+  if (!Number.isFinite(options.modelAllocationMs) || options.modelAllocationMs <= 0) {
+    throw new Error("scoped scout model allocation must be positive");
+  }
+  if (
+    !Number.isFinite(options.settlementReserveMs) ||
+    options.settlementReserveMs < 0 ||
+    options.settlementReserveMs >= options.modelAllocationMs
+  ) {
+    throw new Error("scoped scout settlement reserve must fit the model allocation");
+  }
+  if (!Number.isInteger(options.quorum) || options.quorum <= 0) {
+    throw new Error("scoped scout quorum must be a positive integer");
+  }
+
+  const now = options.now ?? Date.now;
+  const modelStartedAtMs = now();
+  const deadlineAtMs = modelStartedAtMs + options.modelAllocationMs;
+  const records: MutableScopedScoutRecord<T>[] = [];
+  const pending = new Set<MutableScopedScoutRecord<T>>();
+  const accepted: Array<{ readonly scopeIndex: number; readonly value: T }> = [];
+  const activeRemaining = () =>
+    Math.max(
+      0,
+      deadlineAtMs - options.settlementReserveMs - now(),
+    );
+  const settlementRemaining = () =>
+    Math.max(
+      0,
+      Math.min(options.settlementReserveMs, deadlineAtMs - now()),
+    );
+
+  for (const [scopeIndex, conversation] of options.conversations.entries()) {
+    const startedAtMs = now();
+    if (startedAtMs >= deadlineAtMs) {
+      records.push({
+        conversation,
+        scopeIndex,
+        label: conversation.label,
+        startedAtMs,
+        status: "timed_out",
+        terminalPromise: Promise.resolve({
+          status: "rejected",
+          reason: "shared scout deadline reached before scope start",
+          completedAtMs: startedAtMs,
+        }),
+        reason: "shared scout deadline reached before scope start",
+      });
+      continue;
+    }
+    let terminalPromise: Promise<TerminalSettlement<T>>;
+    try {
+      terminalPromise = Promise.resolve(
+        conversation.run(activeRemaining, settlementRemaining),
+      ).then(
+        (value): TerminalSettlement<T> => ({
+          status: "fulfilled",
+          value,
+          completedAtMs: now(),
+        }),
+        (reason: unknown): TerminalSettlement<T> => ({
+          status: "rejected",
+          reason,
+          completedAtMs: now(),
+        }),
+      );
+    } catch (reason) {
+      terminalPromise = Promise.resolve({
+        status: "rejected",
+        reason,
+        completedAtMs: now(),
+      });
+    }
+    const record: MutableScopedScoutRecord<T> = {
+      conversation,
+      scopeIndex,
+      label: conversation.label,
+      startedAtMs,
+      status: "pending",
+      terminalPromise,
+    };
+    records.push(record);
+    pending.add(record);
+  }
+
+  while (pending.size > 0) {
+    if (now() >= deadlineAtMs) break;
+    const next = await scopedScoutDeadline(pending, deadlineAtMs, now);
+    if (next.type === "deadline") break;
+    pending.delete(next.state);
+    next.state.terminal = next.terminal;
+    if (next.terminal.completedAtMs >= deadlineAtMs) {
+      next.state.status = "timed_out";
+      next.state.reason = "scope reached terminal settlement at the shared deadline";
+      continue;
+    }
+    if (next.state.cancellation !== undefined) {
+      next.state.status = "cancelled";
+      continue;
+    }
+    if (next.terminal.status === "rejected") {
+      next.state.status = "failed";
+      next.state.reason = normalizeFailure(next.terminal.reason);
+      continue;
+    }
+    try {
+      if (!options.accept(next.terminal.value)) {
+        next.state.status = scopedScoutNoCandidate(next.terminal.value)
+          ? "no_candidate"
+          : "invalid";
+        continue;
+      }
+    } catch (error) {
+      next.state.status = "invalid";
+      next.state.reason = normalizeFailure(error);
+      continue;
+    }
+    next.state.status = "accepted";
+    accepted.push({
+      scopeIndex: next.state.scopeIndex,
+      value: next.terminal.value,
+    });
+    if (accepted.length === options.quorum && now() < deadlineAtMs) {
+      const reason = `scoped scout quorum reached (${String(options.quorum)})`;
+      for (const state of pending) {
+        requestScopedScoutCancellation(state, reason, now);
+      }
+    }
+  }
+
+  for (const state of pending) {
+    state.status = "timed_out";
+    state.reason = "scope did not reach terminal settlement before shared deadline";
+  }
+  await settleScopedScoutCancellations(records, deadlineAtMs, now);
+  return {
+    modelStartedAtMs,
+    deadlineAtMs,
+    records: records
+      .sort((left, right) => left.scopeIndex - right.scopeIndex)
+      .map(toScopedScoutRecord),
+    accepted: accepted.sort((left, right) => left.scopeIndex - right.scopeIndex),
+  };
+}
+
+export interface ScopedScoutFinalizationSummary {
+  readonly records: readonly ScopedScoutRecord<ScopedScoutResult>[];
+  readonly acceptedScopeIndexes: readonly number[];
+}
+
+export interface FinalizeScopedScoutRecordsOptions {
+  readonly records: readonly ScopedScoutRecord<ScopedScoutResult>[];
+  readonly validate: (
+    value: ScopedScoutResult,
+    record: ScopedScoutRecord<ScopedScoutResult>,
+  ) => readonly string[];
+  readonly persistScopeRecord: (
+    record: ScopedScoutRecord<ScopedScoutResult>,
+  ) => void | Promise<void>;
+  readonly recordTerminalUsage?: (
+    record: ScopedScoutRecord<ScopedScoutResult>,
+  ) => void | Promise<void>;
+  readonly recordReportSummary: (
+    summary: ScopedScoutFinalizationSummary,
+  ) => void | Promise<void>;
+  readonly recordLedgerSummary: (
+    summary: ScopedScoutFinalizationSummary,
+  ) => void | Promise<void>;
+}
+
+export async function finalizeScopedScoutRecords(
+  options: FinalizeScopedScoutRecordsOptions,
+): Promise<ScoutResult> {
+  const records = [...options.records]
+    .sort((left, right) => left.scopeIndex - right.scopeIndex)
+    .map((record) => ({ ...record }));
+  for (const record of records) {
+    if (
+      record.status === "accepted" &&
+      record.terminal?.status === "fulfilled" &&
+      record.cancellation === undefined
+    ) {
+      const validationIssues = options.validate(record.terminal.value, record);
+      if (validationIssues.length > 0) {
+        record.status = "invalid";
+        record.validationIssues = [...validationIssues];
+      }
+    }
+    if (record.terminal !== undefined) {
+      await options.recordTerminalUsage?.(record);
+    }
+    await options.persistScopeRecord(record);
+  }
+  const accepted = records.flatMap((record) => {
+    if (
+      record.status !== "accepted" ||
+      record.terminal?.status !== "fulfilled" ||
+      record.cancellation !== undefined ||
+      record.terminal.value.status !== "candidate"
+    ) {
+      return [];
+    }
+    return [
+      {
+        scopeIndex: record.scopeIndex,
+        result: record.terminal.value,
+      },
+    ];
+  });
+  const summary: ScopedScoutFinalizationSummary = {
+    records,
+    acceptedScopeIndexes: accepted.map((record) => record.scopeIndex),
+  };
+  await options.recordReportSummary(summary);
+  await options.recordLedgerSummary(summary);
+  return buildScoutResult(accepted);
 }
 
 export async function awaitWithinDeadline<T>(

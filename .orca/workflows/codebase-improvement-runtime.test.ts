@@ -5807,3 +5807,419 @@ test("real Git manifests preserve symlink bytes and reject divergent trees befor
     await rm(root, { recursive: true, force: true });
   }
 }, 15_000);
+
+interface ScopedScoutTestConversation<T> {
+  readonly label: string;
+  run(
+    activeRemaining: () => number,
+    settlementRemaining: () => number,
+  ): Promise<T>;
+  cancel(reason: string): void | Promise<void>;
+}
+
+interface ScopedScoutTestRecord<T> {
+  readonly scopeIndex: number;
+  readonly label: string;
+  readonly status: string;
+  readonly terminal?: {
+    readonly status: "fulfilled" | "rejected";
+    readonly value?: unknown;
+    readonly completedAtMs: number;
+  };
+  readonly cancellation?: {
+    readonly reason: string;
+    readonly rejection?: string;
+  };
+}
+
+interface ScopedScoutTestRuntime {
+  readonly runScopedScoutFanout: <T>(options: {
+    readonly conversations: readonly ScopedScoutTestConversation<T>[];
+    readonly modelAllocationMs: number;
+    readonly settlementReserveMs: number;
+    readonly quorum: number;
+    readonly accept: (value: T) => boolean;
+    readonly now?: () => number;
+  }) => Promise<{
+    readonly modelStartedAtMs: number;
+    readonly deadlineAtMs: number;
+    readonly records: readonly ScopedScoutTestRecord<T>[];
+    readonly accepted: readonly { readonly scopeIndex: number; readonly value: T }[];
+  }>;
+  readonly finalizeScopedScoutRecords: (options: {
+    readonly records: readonly ScopedScoutTestRecord<unknown>[];
+    readonly validate: (
+      value: unknown,
+      record: ScopedScoutTestRecord<unknown>,
+    ) => readonly string[];
+    readonly persistScopeRecord: (
+      record: ScopedScoutTestRecord<unknown>,
+    ) => void | Promise<void>;
+    readonly recordTerminalUsage?: (
+      record: ScopedScoutTestRecord<unknown>,
+    ) => void | Promise<void>;
+    readonly recordReportSummary: () => void | Promise<void>;
+    readonly recordLedgerSummary: () => void | Promise<void>;
+  }) => Promise<unknown>;
+}
+
+async function scopedScoutRuntime(): Promise<ScopedScoutTestRuntime | undefined> {
+  const loaded = (await import(
+    "./codebase-improvement-runtime.ts"
+  )) as unknown as Record<string, unknown>;
+  expect(loaded.runScopedScoutFanout).toBeFunction();
+  expect(loaded.finalizeScopedScoutRecords).toBeFunction();
+  if (
+    typeof loaded.runScopedScoutFanout !== "function" ||
+    typeof loaded.finalizeScopedScoutRecords !== "function"
+  ) {
+    return undefined;
+  }
+  return loaded as unknown as ScopedScoutTestRuntime;
+}
+
+async function flushScopedScoutTurns(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+test("scoped fanout starts every scope before a result and shares one model deadline", async () => {
+  const runtime = await scopedScoutRuntime();
+  if (runtime === undefined) return;
+  let clockMs = 0;
+  const started: string[] = [];
+  const limits: Array<{
+    readonly activeRemainingMs: number;
+    readonly settlementRemainingMs: number;
+  }> = [];
+  const deferred = [
+    Promise.withResolvers<string>(),
+    Promise.withResolvers<string>(),
+    Promise.withResolvers<string>(),
+    Promise.withResolvers<string>(),
+  ];
+  const resultPromise = runtime.runScopedScoutFanout({
+    conversations: deferred.map((pending, scopeIndex) => ({
+      label: `scope ${String(scopeIndex)}`,
+      async run(activeRemaining, settlementRemaining): Promise<string> {
+        started.push(`scope ${String(scopeIndex)}`);
+        limits.push({
+          activeRemainingMs: activeRemaining(),
+          settlementRemainingMs: settlementRemaining(),
+        });
+        return await pending.promise;
+      },
+      cancel(): void {},
+    })),
+    modelAllocationMs: 120_000,
+    settlementReserveMs: 5_000,
+    quorum: 5,
+    accept: () => true,
+    now: () => clockMs,
+  });
+
+  await flushScopedScoutTurns();
+  expect(started).toEqual(["scope 0", "scope 1", "scope 2", "scope 3"]);
+  expect(limits).toEqual([
+    { activeRemainingMs: 115_000, settlementRemainingMs: 5_000 },
+    { activeRemainingMs: 115_000, settlementRemainingMs: 5_000 },
+    { activeRemainingMs: 115_000, settlementRemainingMs: 5_000 },
+    { activeRemainingMs: 115_000, settlementRemainingMs: 5_000 },
+  ]);
+
+  for (const [scopeIndex, pending] of deferred.entries()) {
+    pending.resolve(`candidate ${String(scopeIndex)}`);
+  }
+  const result = await resultPromise;
+  expect(result.modelStartedAtMs).toBe(0);
+  expect(result.deadlineAtMs).toBe(120_000);
+  expect(result.accepted.map((record) => record.scopeIndex)).toEqual([
+    0, 1, 2, 3,
+  ]);
+});
+
+test("shared model deadline subtracts settlement reserve and stops exact-boundary work", async () => {
+  const runtime = await scopedScoutRuntime();
+  if (runtime === undefined) return;
+
+  let beforeClockMs = 0;
+  const beforeLimits: Array<{
+    readonly active: number;
+    readonly settlement: number;
+  }> = [];
+  const beforeDeadline = await runtime.runScopedScoutFanout({
+    conversations: [0, 1].map((scopeIndex) => ({
+      label: `before ${String(scopeIndex)}`,
+      async run(activeRemaining, settlementRemaining): Promise<string> {
+        beforeLimits.push({
+          active: activeRemaining(),
+          settlement: settlementRemaining(),
+        });
+        if (scopeIndex === 0) beforeClockMs = 119_999;
+        return "not accepted";
+      },
+      cancel(): void {},
+    })),
+    modelAllocationMs: 120_000,
+    settlementReserveMs: 5_000,
+    quorum: 3,
+    accept: () => false,
+    now: () => beforeClockMs,
+  });
+  expect(beforeLimits).toEqual([
+    { active: 115_000, settlement: 5_000 },
+    { active: 0, settlement: 1 },
+  ]);
+  expect(beforeDeadline.records.map((record) => record.status)).toEqual([
+    "invalid",
+    "invalid",
+  ]);
+
+  let exactClockMs = 0;
+  const exactStarts: string[] = [];
+  const exactCancels: string[] = [];
+  const exactDeadline = await runtime.runScopedScoutFanout({
+    conversations: [0, 1].map((scopeIndex) => ({
+      label: `exact ${String(scopeIndex)}`,
+      async run(): Promise<string> {
+        exactStarts.push(`exact ${String(scopeIndex)}`);
+        exactClockMs = 120_000;
+        return "late";
+      },
+      cancel(reason): void {
+        exactCancels.push(reason);
+      },
+    })),
+    modelAllocationMs: 120_000,
+    settlementReserveMs: 5_000,
+    quorum: 3,
+    accept: () => true,
+    now: () => exactClockMs,
+  });
+  expect(exactStarts).toEqual(["exact 0"]);
+  expect(exactCancels).toEqual([]);
+  expect(exactDeadline.records.map((record) => record.status)).toEqual([
+    "timed_out",
+    "timed_out",
+  ]);
+});
+
+test("scoped fanout retains a valid sibling beside invalid timeout and failure records", async () => {
+  const runtime = await scopedScoutRuntime();
+  if (runtime === undefined) return;
+  let clockMs = 0;
+  const valid = Promise.withResolvers<string>();
+  const invalid = Promise.withResolvers<string>();
+  const failure = Promise.withResolvers<string>();
+  const timeout = Promise.withResolvers<string>();
+  const resultPromise = runtime.runScopedScoutFanout({
+    conversations: [
+      {
+        label: "valid",
+        run: async () => await valid.promise,
+        cancel(): void {},
+      },
+      {
+        label: "invalid",
+        run: async () => await invalid.promise,
+        cancel(): void {},
+      },
+      {
+        label: "failure",
+        run: async () => await failure.promise,
+        cancel(): void {},
+      },
+      {
+        label: "timeout",
+        run: async () => await timeout.promise,
+        cancel(): void {},
+      },
+    ],
+    modelAllocationMs: 120_000,
+    settlementReserveMs: 5_000,
+    quorum: 3,
+    accept: (value) => value === "valid",
+    now: () => clockMs,
+  });
+
+  valid.resolve("valid");
+  await flushScopedScoutTurns();
+  invalid.resolve("invalid");
+  await flushScopedScoutTurns();
+  failure.reject(new Error("backend failed"));
+  await flushScopedScoutTurns();
+  clockMs = 120_000;
+  timeout.resolve("late");
+
+  const result = await resultPromise;
+  expect(result.accepted).toEqual([{ scopeIndex: 0, value: "valid" }]);
+  expect(result.records.map((record) => record.status)).toEqual([
+    "accepted",
+    "invalid",
+    "failed",
+    "timed_out",
+  ]);
+});
+
+test("scoped fanout quorum cancels each pending scope once and drains cancellation rejection", async () => {
+  const runtime = await scopedScoutRuntime();
+  if (runtime === undefined) return;
+  const pending = Promise.withResolvers<string>();
+  const cancels: string[] = [];
+  const resultPromise = runtime.runScopedScoutFanout({
+    conversations: [
+      ...[0, 1, 2].map((scopeIndex) => ({
+        label: `accepted ${String(scopeIndex)}`,
+        async run(): Promise<string> {
+          return `accepted ${String(scopeIndex)}`;
+        },
+        cancel(): void {},
+      })),
+      {
+        label: "pending",
+        async run(): Promise<string> {
+          return await pending.promise;
+        },
+        cancel(reason): Promise<void> {
+          cancels.push(reason);
+          pending.resolve("cancelled sibling");
+          return Promise.reject(new Error("cancel transport failed"));
+        },
+      },
+    ],
+    modelAllocationMs: 120_000,
+    settlementReserveMs: 5_000,
+    quorum: 3,
+    accept: (value) => value.startsWith("accepted"),
+  });
+
+  const result = await settleWithin(resultPromise, 100);
+  expect(cancels).toHaveLength(1);
+  expect(result.accepted.map((record) => record.scopeIndex)).toEqual([0, 1, 2]);
+  expect(result.records[3]?.status).toBe("cancelled");
+  expect(result.records[3]?.cancellation?.rejection).toContain(
+    "cancel transport failed",
+  );
+});
+
+test("scoped fanout finalization persists zero-valid scope evidence before summaries and typed error", async () => {
+  const runtime = await scopedScoutRuntime();
+  if (runtime === undefined) return;
+  const order: string[] = [];
+  let thrown: unknown;
+  try {
+    await runtime.finalizeScopedScoutRecords({
+      records: [
+        {
+          scopeIndex: 1,
+          label: "scope one",
+          status: "invalid",
+        },
+        {
+          scopeIndex: 0,
+          label: "scope zero",
+          status: "failed",
+        },
+      ],
+      validate: () => [],
+      persistScopeRecord: (record) => {
+        order.push(`scope ${String(record.scopeIndex)}`);
+      },
+      recordReportSummary: () => {
+        order.push("report");
+      },
+      recordLedgerSummary: () => {
+        order.push("ledger");
+      },
+    });
+  } catch (error) {
+    thrown = error;
+  }
+  expect(order).toEqual(["scope 0", "scope 1", "report", "ledger"]);
+  expect((thrown as Error | undefined)?.name).toBe(
+    "NoSuitableScoutCandidateError",
+  );
+});
+
+test("scoped fanout finalization records terminal usage once in pair order before aggregation", async () => {
+  const runtime = await scopedScoutRuntime();
+  if (runtime === undefined) return;
+  const order: string[] = [];
+  const candidate = (id: string) => {
+    const sourcePath = `src/scoped/${id}.ts`;
+    const testPath = `tests/scoped-${id}.test.ts`;
+    return {
+      status: "candidate" as const,
+      candidate: {
+        id,
+        title: `fix: preserve ${id} diagnostics`,
+        problem: "The scoped command drops a diagnostic.",
+        evidence: [`${sourcePath}:1 evidence`, `${testPath}:1 evidence`],
+        allowedPaths: [sourcePath, testPath],
+        testPath,
+        targetedTestArgs: ["test", testPath],
+        expectedFailurePattern: `ORCA_RED:${id}`,
+        implementationBrief: "Preserve the diagnostic.",
+        expectedMinutes: 5,
+        risk: "low" as const,
+      },
+      selectedControl: {
+        candidateId: id,
+        brief: "A known-good scoped behavior.",
+        testName: `preserves ${id} baseline`,
+        productionPath: sourcePath,
+      },
+    };
+  };
+  const result = (await runtime.finalizeScopedScoutRecords({
+    records: [
+      {
+        scopeIndex: 1,
+        label: "scope one",
+        status: "accepted",
+        terminal: {
+          status: "fulfilled",
+          value: candidate("scope-one"),
+          completedAtMs: 2,
+        },
+      },
+      {
+        scopeIndex: 0,
+        label: "scope zero",
+        status: "accepted",
+        terminal: {
+          status: "fulfilled",
+          value: candidate("scope-zero"),
+          completedAtMs: 1,
+        },
+      },
+    ],
+    validate: (_value, record) =>
+      record.scopeIndex === 1 ? ["tracked path mismatch"] : [],
+    recordTerminalUsage: (record: ScopedScoutTestRecord<unknown>) => {
+      order.push(`usage ${String(record.scopeIndex)}`);
+    },
+    persistScopeRecord: (record) => {
+      order.push(`scope ${String(record.scopeIndex)}`);
+    },
+    recordReportSummary: () => {
+      order.push("report");
+    },
+    recordLedgerSummary: () => {
+      order.push("ledger");
+    },
+  })) as {
+    readonly candidates: readonly { readonly id: string }[];
+  };
+
+  expect(order).toEqual([
+    "usage 0",
+    "scope 0",
+    "usage 1",
+    "scope 1",
+    "report",
+    "ledger",
+  ]);
+  expect(result.candidates.map((item) => item.id)).toEqual(["scope-zero"]);
+});
