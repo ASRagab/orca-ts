@@ -575,18 +575,60 @@ export const CandidateControlSchema = z.object({
   productionPath: z.string().trim().min(1),
 });
 
+const StrictScoutCandidateSchema = ScoutCandidateBaseSchema.strict().superRefine(
+  (value, context) => {
+    for (const message of candidateContractIssues(value)) {
+      context.addIssue({
+        code: "custom",
+        message,
+      });
+    }
+  },
+);
+const StrictCandidateControlSchema = CandidateControlSchema.strict();
+const ScopedScoutCandidateResultSchema = z
+  .object({
+    status: z.literal("candidate"),
+    candidate: StrictScoutCandidateSchema,
+    selectedControl: StrictCandidateControlSchema,
+  })
+  .strict();
+const ScopedScoutNoCandidateResultSchema = z
+  .object({
+    status: z.literal("no_candidate"),
+    reason: z.string().trim().min(1),
+  })
+  .strict();
+export const ScopedScoutResultSchema = z
+  .discriminatedUnion("status", [
+    ScopedScoutCandidateResultSchema,
+    ScopedScoutNoCandidateResultSchema,
+  ])
+  .superRefine((value, context) => {
+    if (
+      value.status === "candidate" &&
+      value.selectedControl.candidateId !== value.candidate.id
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "selected control must target the scoped candidate",
+      });
+    }
+  });
+
 export const ScoutResultSchema = z
   .object({
-    candidates: z.array(ScoutCandidateSchema).length(3),
-    rankedCandidateIds: z.array(z.string()).length(3),
+    candidates: z.array(ScoutCandidateSchema).min(1).max(3),
+    rankedCandidateIds: z.array(z.string()).min(1).max(3),
+    candidateControls: z.array(CandidateControlSchema).min(1).max(3),
     selectedControl: CandidateControlSchema,
   })
   .superRefine((value, context) => {
     const candidateIds = [...value.candidates.map((item) => item.id)].sort();
     const rankedIds = [...new Set(value.rankedCandidateIds)].sort();
     if (
-      new Set(candidateIds).size !== 3 ||
-      rankedIds.length !== 3 ||
+      new Set(candidateIds).size !== value.candidates.length ||
+      rankedIds.length !== value.rankedCandidateIds.length ||
       rankedIds.join("\n") !== candidateIds.join("\n")
     ) {
       context.addIssue({
@@ -594,10 +636,49 @@ export const ScoutResultSchema = z
         message: "rankedCandidateIds must be the candidate-ID permutation",
       });
     }
+    if (value.candidateControls.length !== value.candidates.length) {
+      context.addIssue({
+        code: "custom",
+        message: "candidateControls must have one control per candidate",
+      });
+    }
+    if (
+      new Set(value.candidateControls.map((control) => control.candidateId)).size !==
+      value.candidateControls.length
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "candidateControls must have unique candidate IDs",
+      });
+    }
+    if (
+      value.candidateControls.some(
+        (control, index) =>
+          control.candidateId !== value.rankedCandidateIds[index],
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "candidateControls must match ranked candidate order",
+      });
+    }
     if (value.selectedControl.candidateId !== value.rankedCandidateIds[0]) {
       context.addIssue({
         code: "custom",
         message: "selectedControl must target the rank-one candidate",
+      });
+    }
+    const rankOneControl = value.candidateControls[0];
+    if (
+      rankOneControl !== undefined &&
+      (rankOneControl.candidateId !== value.selectedControl.candidateId ||
+        rankOneControl.brief !== value.selectedControl.brief ||
+        rankOneControl.testName !== value.selectedControl.testName ||
+        rankOneControl.productionPath !== value.selectedControl.productionPath)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "selectedControl must equal the rank-one candidate control",
       });
     }
     const testPaths = value.candidates.map((candidate) => candidate.testPath);
@@ -632,6 +713,67 @@ export type ScoutCandidate = z.infer<typeof ScoutCandidateSchema>;
 export type ScoutResult = z.infer<typeof ScoutResultSchema>;
 export type Candidate = z.infer<typeof CandidateSchema>;
 export type CandidateControl = z.infer<typeof CandidateControlSchema>;
+export type ScopedScoutResult = z.infer<typeof ScopedScoutResultSchema>;
+
+export class NoSuitableScoutCandidateError extends Error {
+  constructor() {
+    super("no suitable scoped scout candidates");
+    this.name = "NoSuitableScoutCandidateError";
+  }
+}
+
+export function buildScoutResult(
+  results: readonly {
+    readonly scopeIndex: number;
+    readonly result: Extract<
+      ScopedScoutResult,
+      { readonly status: "candidate" }
+    >;
+  }[],
+): ScoutResult {
+  const ordered = [...results].sort(
+    (left, right) =>
+      left.scopeIndex - right.scopeIndex ||
+      left.result.candidate.id.localeCompare(right.result.candidate.id) ||
+      left.result.candidate.testPath.localeCompare(right.result.candidate.testPath),
+  );
+  const candidateIds = new Set<string>();
+  const controls = new Set<string>();
+  const testPaths = new Set<string>();
+  const accepted: typeof ordered = [];
+  for (const record of ordered) {
+    const { candidate, selectedControl } = record.result;
+    const controlKey = JSON.stringify([
+      selectedControl.candidateId,
+      selectedControl.brief,
+      selectedControl.testName,
+      selectedControl.productionPath,
+    ]);
+    if (
+      candidateIds.has(candidate.id) ||
+      controls.has(controlKey) ||
+      testPaths.has(candidate.testPath)
+    ) {
+      continue;
+    }
+    candidateIds.add(candidate.id);
+    controls.add(controlKey);
+    testPaths.add(candidate.testPath);
+    accepted.push(record);
+  }
+  const ranked = accepted.slice(0, 3);
+  if (ranked.length === 0) throw new NoSuitableScoutCandidateError();
+  const candidates = ranked.map((record) => record.result.candidate);
+  const candidateControls = ranked.map(
+    (record) => record.result.selectedControl,
+  );
+  return ScoutResultSchema.parse({
+    candidates,
+    rankedCandidateIds: candidates.map((candidate) => candidate.id),
+    candidateControls,
+    selectedControl: candidateControls[0]!,
+  });
+}
 
 export type RankedCandidateAttempt<T> =
   | { readonly status: "accepted"; readonly value: T }
@@ -804,6 +946,96 @@ export function chooseCandidate(
   return hydrateCandidate(parsed, parsed.selectedControl);
 }
 
+const citationTokenCharacter = /[\w./\\-]/;
+
+function containsRenderedCitation(value: string, marker: string): boolean {
+  for (
+    let index = value.indexOf(marker);
+    index >= 0;
+    index = value.indexOf(marker, index + marker.length)
+  ) {
+    const previousCharacter = value[index - 1];
+    const nextCharacter = value[index + marker.length];
+    if (
+      (previousCharacter === undefined ||
+        !citationTokenCharacter.test(previousCharacter)) &&
+      (nextCharacter === undefined || !citationTokenCharacter.test(nextCharacter))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function citesRenderedMarker(
+  citations: readonly string[],
+  markers: readonly string[],
+): boolean {
+  return citations.some((citation) =>
+    markers.some((marker) => containsRenderedCitation(citation, marker)),
+  );
+}
+
+export function validateScopedScoutResult(
+  result: ScopedScoutResult,
+  pair: ScoutSourceTestPair,
+  packet: ScoutEvidencePacket,
+  profile: ComplexityProfile,
+): string[] {
+  const parsed = ScopedScoutResultSchema.safeParse(result);
+  if (!parsed.success) {
+    return parsed.error.issues.map(
+      (issue) => `scoped scout result invalid: ${issue.message}`,
+    );
+  }
+
+  const issues: string[] = [];
+  const pairIsReserved = packet.sourceTestPairs.some(
+    (reserved) =>
+      reserved.sourcePath === pair.sourcePath &&
+      reserved.testPath === pair.testPath,
+  );
+  if (!pairIsReserved) {
+    issues.push("scoped scout pair must be reserved in the evidence packet");
+  }
+
+  if (parsed.data.status === "no_candidate") {
+    const sourceMarkers = packet.renderedLineMarkers.filter((marker) =>
+      marker.startsWith(`${pair.sourcePath}:`),
+    );
+    if (!citesRenderedMarker([parsed.data.reason], sourceMarkers)) {
+      issues.push("no_candidate reason must cite a rendered source path line");
+    }
+    const testMarkers = packet.renderedLineMarkers.filter((marker) =>
+      marker.startsWith(`${pair.testPath}:`),
+    );
+    if (!citesRenderedMarker([parsed.data.reason], testMarkers)) {
+      issues.push("no_candidate reason must cite a rendered test path line");
+    }
+    return issues;
+  }
+
+  const { candidate, selectedControl } = parsed.data;
+  const allowedPaths = new Set(candidate.allowedPaths);
+  if (
+    candidate.allowedPaths.length !== 2 ||
+    allowedPaths.size !== 2 ||
+    !allowedPaths.has(pair.sourcePath) ||
+    !allowedPaths.has(pair.testPath)
+  ) {
+    issues.push("candidate allowed paths must equal the reserved source-test pair");
+  }
+  if (candidate.testPath !== pair.testPath) {
+    issues.push("candidate test path must equal the reserved test path");
+  }
+  if (selectedControl.productionPath !== pair.sourcePath) {
+    issues.push("control production path must equal the reserved source path");
+  }
+  issues.push(...validateCandidateEvidence(candidate, packet));
+  issues.push(...validateCandidateForProfile(candidate, profile));
+  return issues;
+}
+
 export function validateCandidateEvidence(
   candidate: ScoutCandidate,
   packet: ScoutEvidencePacket,
@@ -829,41 +1061,21 @@ export function validateCandidateEvidence(
       `candidate target test must be reserved for an allowed production path: ${candidate.testPath}`,
     );
   }
-  const renderedCitationMarkers = new Set(packet.renderedLineMarkers);
-  const citationTokenCharacter = /[\w./\\-]/;
-  const containsRenderedMarker = (item: string, marker: string): boolean => {
-    for (
-      let index = item.indexOf(marker);
-      index >= 0;
-      index = item.indexOf(marker, index + marker.length)
-    ) {
-      const previousCharacter = item[index - 1];
-      const nextCharacter = item[index + marker.length];
-      if (
-        (previousCharacter === undefined ||
-          !citationTokenCharacter.test(previousCharacter)) &&
-        (nextCharacter === undefined ||
-          !citationTokenCharacter.test(nextCharacter))
-      ) {
-        return true;
-      }
-    }
-    return false;
-  };
-  const hasCitation = candidate.evidence.some((item) =>
-    [...renderedCitationMarkers].some((marker) =>
-      containsRenderedMarker(item, marker),
-    ),
+  const renderedCitationMarkers = packet.renderedLineMarkers;
+  const hasCitation = citesRenderedMarker(
+    candidate.evidence,
+    renderedCitationMarkers,
   );
   if (!hasCitation) {
     issues.push("candidate evidence must cite an evidence packet path and line");
   } else {
     const citedPaths = new Set(
       packet.paths.filter((path) =>
-        candidate.evidence.some((item) =>
-          [...renderedCitationMarkers]
-            .filter((marker) => marker.startsWith(`${path}:`))
-            .some((marker) => containsRenderedMarker(item, marker)),
+        citesRenderedMarker(
+          candidate.evidence,
+          renderedCitationMarkers.filter((marker) =>
+            marker.startsWith(`${path}:`),
+          ),
         ),
       ),
     );

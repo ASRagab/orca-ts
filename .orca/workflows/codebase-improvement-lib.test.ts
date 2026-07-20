@@ -3,6 +3,7 @@ import * as improvementLib from "./codebase-improvement-lib.ts";
 import {
   assertMergedPullRequestState,
   assertReadyPullRequestHead,
+  buildScoutResult,
   CandidateSchema,
   chooseCandidate,
   controlTestArgs,
@@ -11,6 +12,7 @@ import {
   isRemoteChecksStartupPending,
   namedTestArgs,
   normalizeFailure,
+  NoSuitableScoutCandidateError,
   parseRemoteChecksCommandResult,
   profileLimits,
   pullRequestCreateArgs,
@@ -19,12 +21,15 @@ import {
   renderDirective,
   ScoutCandidateSchema,
   ScoutResultSchema,
+  ScopedScoutResultSchema,
   selectScoutEvidencePaths,
   stageConfig,
   stageBudgetMs,
   validateCandidateEvidence,
   validateCandidateForProfile,
+  validateScopedScoutResult,
   validateChangedPaths,
+  hydrateCandidate,
 } from "./codebase-improvement-lib.ts";
 
 const candidate = {
@@ -94,11 +99,347 @@ const selectedControl = {
   testName: "preserves stderr through b [baseline]?",
   productionPath: "src/b.ts",
 };
+const candidateControlFor = (candidateId: string) =>
+  candidateId === selectedControl.candidateId
+    ? selectedControl
+    : {
+        candidateId,
+        brief: `A known-good ${candidateId} behavior.`,
+        testName: `preserves ${candidateId} [baseline]?`,
+        productionPath: `src/${candidateId}.ts`,
+      };
 const scoutResult = {
   candidates: scoutCandidates,
   rankedCandidateIds: ["b", "c", "a"],
+  candidateControls: ["b", "c", "a"].map(candidateControlFor),
   selectedControl,
 };
+
+const scopedScoutPair = {
+  sourcePath: "src/tools/process.ts",
+  testPath: "tests/tools.test.ts",
+} as const;
+const scopedScoutPacket = renderScoutEvidence(
+  [
+    { path: scopedScoutPair.sourcePath, content: "export const process = 1;\n" },
+    { path: scopedScoutPair.testPath, content: "test(\"process\", () => {});\n" },
+  ],
+  1_000,
+  "",
+  [scopedScoutPair],
+);
+const {
+  controlBrief: _scopedControlBrief,
+  controlTestName: _scopedControlTestName,
+  controlProductionPath: _scopedControlProductionPath,
+  ...scopedScoutBaseCandidate
+} = candidate;
+const scopedScoutCandidate = {
+  ...scopedScoutBaseCandidate,
+  allowedPaths: [scopedScoutPair.sourcePath, scopedScoutPair.testPath],
+  testPath: scopedScoutPair.testPath,
+  targetedTestArgs: ["test", scopedScoutPair.testPath],
+  evidence: [
+    `${scopedScoutPair.sourcePath}:1 drops output`,
+    `${scopedScoutPair.testPath}:1 exercises the same path`,
+  ],
+};
+const scopedScoutControl = {
+  candidateId: scopedScoutCandidate.id,
+  brief: "A normal timed-out command preserves stderr through the same formatter.",
+  testName: "preserves stderr through the scoped path",
+  productionPath: scopedScoutPair.sourcePath,
+};
+const scopedScoutCandidateResult = {
+  status: "candidate" as const,
+  candidate: scopedScoutCandidate,
+  selectedControl: scopedScoutControl,
+};
+
+function scopedAggregationRecord(scopeIndex: number, id: string) {
+  const sourcePath = `src/scoped/${id}.ts`;
+  const testPath = `tests/scoped-${id}.test.ts`;
+  return {
+    scopeIndex,
+    result: {
+      status: "candidate" as const,
+      candidate: {
+        ...scopedScoutCandidate,
+        id,
+        allowedPaths: [sourcePath, testPath],
+        testPath,
+        targetedTestArgs: ["test", testPath],
+        expectedFailurePattern: `ORCA_RED:${id}`,
+        evidence: [`${sourcePath}:1 scoped evidence`, `${testPath}:1 scoped test`],
+      },
+      selectedControl: {
+        candidateId: id,
+        brief: `Known-good ${id} behavior.`,
+        testName: `scoped ${id} baseline`,
+        productionPath: sourcePath,
+      },
+    },
+  };
+}
+
+function scoutResultForRecords(
+  records: readonly ReturnType<typeof scopedAggregationRecord>[],
+) {
+  const candidates = records.map((record) => record.result.candidate);
+  const candidateControls = records.map(
+    (record) => record.result.selectedControl,
+  );
+  return {
+    candidates,
+    rankedCandidateIds: candidates.map((item) => item.id),
+    candidateControls,
+    selectedControl: candidateControls[0],
+  };
+}
+
+test("scoped scout schema accepts a strict candidate and cited no_candidate", () => {
+  expect(ScopedScoutResultSchema.parse(scopedScoutCandidateResult)).toEqual(
+    scopedScoutCandidateResult,
+  );
+  expect(
+    ScopedScoutResultSchema.parse({
+      status: "no_candidate",
+      reason:
+        "src/tools/process.ts:1 has no safe small repair; tests/tools.test.ts:1 covers the behavior.",
+    }),
+  ).toEqual({
+    status: "no_candidate",
+    reason:
+      "src/tools/process.ts:1 has no safe small repair; tests/tools.test.ts:1 covers the behavior.",
+  });
+  for (const result of [
+    {
+      ...scopedScoutCandidateResult,
+      selectedControl: { ...scopedScoutControl, candidateId: "other" },
+    },
+    { ...scopedScoutCandidateResult, unexpected: true },
+    {
+      status: "no_candidate" as const,
+      reason: "src/tools/process.ts:1 and tests/tools.test.ts:1",
+      unexpected: true,
+    },
+  ]) {
+    expect(ScopedScoutResultSchema.safeParse(result).success).toBe(false);
+  }
+});
+
+test("scoped validation binds a candidate to its reserved pair and profile", () => {
+  expect(
+    validateScopedScoutResult(
+      scopedScoutCandidateResult,
+      scopedScoutPair,
+      scopedScoutPacket,
+      "simple",
+    ),
+  ).toEqual([]);
+
+  const issuesFor = (result: typeof scopedScoutCandidateResult) =>
+    validateScopedScoutResult(result, scopedScoutPair, scopedScoutPacket, "simple");
+
+  expect(
+    issuesFor({
+      ...scopedScoutCandidateResult,
+      candidate: {
+        ...scopedScoutCandidate,
+        allowedPaths: [
+          scopedScoutPair.sourcePath,
+          "src/tools/other.ts",
+          scopedScoutPair.testPath,
+        ],
+      },
+    }),
+  ).toContain("candidate allowed paths must equal the reserved source-test pair");
+  expect(
+    issuesFor({
+      ...scopedScoutCandidateResult,
+      candidate: {
+        ...scopedScoutCandidate,
+        allowedPaths: [scopedScoutPair.sourcePath, "tests/other.test.ts"],
+        testPath: "tests/other.test.ts",
+        targetedTestArgs: ["test", "tests/other.test.ts"],
+        evidence: [
+          `${scopedScoutPair.sourcePath}:1 drops output`,
+          "tests/other.test.ts:1 exercises the same path",
+        ],
+      },
+    }),
+  ).toContain("candidate test path must equal the reserved test path");
+  expect(
+    issuesFor({
+      ...scopedScoutCandidateResult,
+      selectedControl: {
+        ...scopedScoutControl,
+        productionPath: "src/tools/other.ts",
+      },
+    }),
+  ).toContain("control production path must equal the reserved source path");
+  expect(
+    issuesFor({
+      ...scopedScoutCandidateResult,
+      candidate: {
+        ...scopedScoutCandidate,
+        evidence: [
+          "src/decoy.ts:1 fabricated source line",
+          "tests/tools.test.ts:1 exercises the same path",
+        ],
+      },
+    }),
+  ).toContain(
+    "candidate evidence must cite a rendered production path line: src/tools/process.ts",
+  );
+  expect(
+    issuesFor({
+      ...scopedScoutCandidateResult,
+      candidate: { ...scopedScoutCandidate, expectedMinutes: 11 },
+    }),
+  ).toContain("expected minutes outside simple profile");
+});
+
+test("scoped validation requires exact source and test citations for no_candidate", () => {
+  const valid = {
+    status: "no_candidate" as const,
+    reason:
+      "src/tools/process.ts:1 has no safe repair; tests/tools.test.ts:1 covers the behavior.",
+  };
+  expect(
+    validateScopedScoutResult(valid, scopedScoutPair, scopedScoutPacket, "simple"),
+  ).toEqual([]);
+  expect(
+    validateScopedScoutResult(
+      {
+        ...valid,
+        reason:
+          "src/tools/process.ts:10 has no safe repair; tests/tools.test.ts:1 covers the behavior.",
+      },
+      scopedScoutPair,
+      scopedScoutPacket,
+      "simple",
+    ),
+  ).toContain("no_candidate reason must cite a rendered source path line");
+});
+
+test("scout result accepts one to three ranked candidates and rejects invalid cardinality", () => {
+  for (const count of [1, 2, 3]) {
+    const records = Array.from({ length: count }, (_, index) =>
+      scopedAggregationRecord(index, `rank-${String(index + 1)}`),
+    );
+    expect(ScoutResultSchema.safeParse(scoutResultForRecords(records)).success).toBe(
+      true,
+    );
+  }
+  for (const count of [0, 4]) {
+    const records = Array.from({ length: count }, (_, index) =>
+      scopedAggregationRecord(index, `rank-${String(index + 1)}`),
+    );
+    expect(ScoutResultSchema.safeParse(scoutResultForRecords(records)).success).toBe(
+      false,
+    );
+  }
+});
+
+test("scout result rejects duplicate IDs, controls, and target tests", () => {
+  const first = scopedAggregationRecord(0, "a");
+  const second = scopedAggregationRecord(1, "b");
+  expect(
+    ScoutResultSchema.safeParse(
+      scoutResultForRecords([
+        first,
+        {
+          ...second,
+          result: {
+            ...second.result,
+            candidate: {
+              ...second.result.candidate,
+              id: first.result.candidate.id,
+              expectedFailurePattern: first.result.candidate.expectedFailurePattern,
+            },
+            selectedControl: {
+              ...second.result.selectedControl,
+              candidateId: first.result.selectedControl.candidateId,
+            },
+          },
+        },
+      ]),
+    ).success,
+  ).toBe(false);
+  expect(
+    ScoutResultSchema.safeParse({
+      ...scoutResultForRecords([first, second]),
+      candidateControls: [
+        first.result.selectedControl,
+        first.result.selectedControl,
+      ],
+    }).success,
+  ).toBe(false);
+  expect(
+    ScoutResultSchema.safeParse(
+      scoutResultForRecords([
+        first,
+        {
+          ...second,
+          result: {
+            ...second.result,
+            candidate: {
+              ...second.result.candidate,
+              allowedPaths: [
+                second.result.selectedControl.productionPath,
+                first.result.candidate.testPath,
+              ],
+              testPath: first.result.candidate.testPath,
+              targetedTestArgs: ["test", first.result.candidate.testPath],
+              evidence: [
+                `${second.result.selectedControl.productionPath}:1 scoped evidence`,
+                `${first.result.candidate.testPath}:1 scoped test`,
+              ],
+            },
+          },
+        },
+      ]),
+    ).success,
+  ).toBe(false);
+});
+
+test("scoped aggregation orders and deduplicates pair results before truncating", () => {
+  const first = scopedAggregationRecord(0, "a");
+  const result = buildScoutResult([
+    scopedAggregationRecord(3, "c"),
+    { ...first, scopeIndex: 1 },
+    scopedAggregationRecord(2, "b"),
+    first,
+  ]);
+
+  expect(result.rankedCandidateIds).toEqual(["a", "b", "c"]);
+  expect(result.candidates.map((item) => item.id)).toEqual(["a", "b", "c"]);
+  expect(result.candidateControls.map((item) => item.candidateId)).toEqual([
+    "a",
+    "b",
+    "c",
+  ]);
+  expect(result.selectedControl).toEqual(result.candidateControls[0]);
+  expect(() => buildScoutResult([])).toThrow(NoSuitableScoutCandidateError);
+});
+
+test("one to three ranks hydrate every ordered control", () => {
+  for (const count of [1, 2, 3]) {
+    const result = buildScoutResult(
+      Array.from({ length: count }, (_, index) =>
+        scopedAggregationRecord(index, `rank-${String(index + 1)}`),
+      ),
+    );
+    for (const [rank, candidateId] of result.rankedCandidateIds.entries()) {
+      expect(hydrateCandidate(result, result.candidateControls[rank]!)).toMatchObject({
+        id: candidateId,
+        controlProductionPath:
+          result.candidateControls[rank]!.productionPath,
+      });
+    }
+  }
+});
 
 test("derives the exact positive-control test command", () => {
   expect(controlTestName(candidate)).toBe("preserves [stderr] (baseline)?");
@@ -594,7 +935,8 @@ test("ranked candidate IDs must be an exact permutation", () => {
     ScoutResultSchema.parse({
       candidates,
       rankedCandidateIds: ["c", "a", "b"],
-      selectedControl: { ...selectedControl, candidateId: "c" },
+      candidateControls: ["c", "a", "b"].map(candidateControlFor),
+      selectedControl: candidateControlFor("c"),
     }).rankedCandidateIds,
   ).toEqual(["c", "a", "b"]);
   for (const rankedCandidateIds of [
@@ -783,7 +1125,8 @@ test("ranked candidates may share support paths when each has an exclusive path"
     ScoutResultSchema.safeParse({
       candidates: sharedSupport,
       rankedCandidateIds: ["a", "b", "c"],
-      selectedControl: { ...selectedControl, candidateId: "a" },
+      candidateControls: ["a", "b", "c"].map(candidateControlFor),
+      selectedControl: candidateControlFor("a"),
     }).success,
   ).toBe(true);
 });
