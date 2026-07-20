@@ -6103,6 +6103,72 @@ test("scoped fanout quorum cancels each pending scope once and drains cancellati
   );
 });
 
+test("scoped fanout quorum does not start a later cancellation at the exact shared deadline", async () => {
+  const runtime = await scopedScoutRuntime();
+  if (runtime === undefined) return;
+  let clockMs = 0;
+  const accepted = [
+    Promise.withResolvers<string>(),
+    Promise.withResolvers<string>(),
+    Promise.withResolvers<string>(),
+  ];
+  const firstPending = Promise.withResolvers<string>();
+  const secondPending = Promise.withResolvers<string>();
+  const cancellations: string[] = [];
+  const resultPromise = runtime.runScopedScoutFanout({
+    conversations: [
+      ...accepted.map((pending, scopeIndex) => ({
+        label: `accepted ${String(scopeIndex)}`,
+        async run(): Promise<string> {
+          return await pending.promise;
+        },
+        cancel(): void {},
+      })),
+      {
+        label: "first pending",
+        async run(): Promise<string> {
+          return await firstPending.promise;
+        },
+        cancel(): void {
+          cancellations.push("first pending");
+          clockMs = 120_000;
+        },
+      },
+      {
+        label: "later pending",
+        async run(): Promise<string> {
+          return await secondPending.promise;
+        },
+        cancel(): void {
+          cancellations.push("later pending");
+        },
+      },
+    ],
+    modelAllocationMs: 120_000,
+    settlementReserveMs: 5_000,
+    quorum: 3,
+    accept: (value) => value.startsWith("accepted"),
+    now: () => clockMs,
+  });
+
+  for (const [scopeIndex, pending] of accepted.entries()) {
+    pending.resolve(`accepted ${String(scopeIndex)}`);
+    await flushScopedScoutTurns();
+  }
+
+  const result = await resultPromise;
+  expect(cancellations).toEqual(["first pending"]);
+  expect(result.records.map((record) => record.status)).toEqual([
+    "accepted",
+    "accepted",
+    "accepted",
+    "timed_out",
+    "timed_out",
+  ]);
+  expect(result.records[3]?.cancellation?.reason).toContain("quorum reached");
+  expect(result.records[4]?.cancellation).toBeUndefined();
+});
+
 test("scoped fanout finalization persists zero-valid scope evidence before summaries and typed error", async () => {
   const runtime = await scopedScoutRuntime();
   if (runtime === undefined) return;

@@ -3402,9 +3402,10 @@ async function settleScopedScoutCancellations<T>(
 function requestScopedScoutCancellation<T>(
   state: MutableScopedScoutRecord<T>,
   reason: string,
+  deadlineAtMs: number,
   now: () => number,
 ): void {
-  if (state.cancellation !== undefined) return;
+  if (state.cancellation !== undefined || now() >= deadlineAtMs) return;
   state.cancellation = { requestedAtMs: now(), reason };
   try {
     const cancellation = state.conversation.cancel(reason);
@@ -3555,7 +3556,7 @@ export async function runScopedScoutFanout<T>(
     if (accepted.length === options.quorum && now() < deadlineAtMs) {
       const reason = `scoped scout quorum reached (${String(options.quorum)})`;
       for (const state of pending) {
-        requestScopedScoutCancellation(state, reason, now);
+        requestScopedScoutCancellation(state, reason, deadlineAtMs, now);
       }
     }
   }
