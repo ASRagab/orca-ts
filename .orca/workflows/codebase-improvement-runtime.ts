@@ -3368,8 +3368,10 @@ async function settleScopedScoutCancellations<T>(
     const settled = state.cancellationSettled;
     return settled === undefined ? [] : [{ state, settled }];
   });
-  if (cancellations.length === 0 || now() >= deadlineAtMs) return;
-  const remainingMs = deadlineAtMs - now();
+  if (cancellations.length === 0) return;
+  const settlementStartedAtMs = now();
+  if (settlementStartedAtMs >= deadlineAtMs) return;
+  const remainingMs = deadlineAtMs - settlementStartedAtMs;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<{ readonly type: "deadline" }>((resolve) => {
     timer = setTimeout(() => {

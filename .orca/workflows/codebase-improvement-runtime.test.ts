@@ -5830,6 +5830,7 @@ interface ScopedScoutTestRecord<T> {
     readonly requestedAtMs: number;
     readonly reason: string;
     readonly rejection?: string;
+    readonly settlementTimedOut?: boolean;
   };
 }
 
@@ -6151,6 +6152,65 @@ test("scoped fanout quorum does not start a cancellation that crosses the shared
   expect(cancellationStartedAtMs).toEqual([119_999]);
   expect(result.records[3]?.status).toBe("timed_out");
   expect(result.records[3]?.cancellation?.requestedAtMs).toBe(119_999);
+});
+
+test("scoped fanout quorum does not start settlement at the shared deadline", async () => {
+  const runtime = await scopedScoutRuntime();
+  if (runtime === undefined) return;
+  let cancellationRequested = false;
+  let postCancellationNowReads = 0;
+  const timerDelays: number[] = [];
+  const originalSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+    timerDelays.push(Number(args[1] ?? 0));
+    return originalSetTimeout(...args);
+  }) as typeof setTimeout;
+  try {
+    const result = await runtime.runScopedScoutFanout({
+      conversations: [
+        ...[0, 1, 2].map((scopeIndex) => ({
+          label: `accepted ${String(scopeIndex)}`,
+          async run(): Promise<string> {
+            return `accepted ${String(scopeIndex)}`;
+          },
+          cancel(): void {},
+        })),
+        {
+          label: "pending",
+          async run(): Promise<string> {
+            return await new Promise<string>(() => {});
+          },
+          cancel(): Promise<void> {
+            cancellationRequested = true;
+            return new Promise<void>(() => {});
+          },
+        },
+      ],
+      modelAllocationMs: 120_000,
+      settlementReserveMs: 5_000,
+      quorum: 3,
+      accept: (value) => value.startsWith("accepted"),
+      now: () => {
+        if (!cancellationRequested) return 0;
+        postCancellationNowReads += 1;
+        return postCancellationNowReads <= 3 ? 119_999 : 120_000;
+      },
+    });
+
+    expect(timerDelays.slice(-2)).toEqual([1, 1]);
+    expect(result.records.map((record) => record.status)).toEqual([
+      "accepted",
+      "accepted",
+      "accepted",
+      "timed_out",
+    ]);
+    expect(result.records[3]?.cancellation).toMatchObject({
+      requestedAtMs: 0,
+      settlementTimedOut: true,
+    });
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
 });
 
 test("scoped fanout quorum does not start a later cancellation at the exact shared deadline", async () => {
