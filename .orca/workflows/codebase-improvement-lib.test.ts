@@ -108,6 +108,27 @@ const candidateControlFor = (candidateId: string) =>
         testName: `preserves ${candidateId} [baseline]?`,
         productionPath: `src/${candidateId}.ts`,
       };
+function candidateControlsFor(
+  candidateSet: readonly {
+    readonly id: string;
+    readonly allowedPaths: readonly string[];
+    readonly testPath: string;
+  }[],
+  rankedCandidateIds: readonly string[],
+) {
+  return rankedCandidateIds.map((candidateId) => {
+    const candidate = candidateSet.find((item) => item.id === candidateId);
+    const productionPath = candidate?.allowedPaths.find(
+      (path) => path !== candidate.testPath && !path.startsWith("tests/"),
+    );
+    return {
+      candidateId,
+      brief: `A known-good ${candidateId} behavior.`,
+      testName: `preserves ${candidateId} [baseline]?`,
+      productionPath: productionPath ?? `src/${candidateId}.ts`,
+    };
+  });
+}
 const scoutResult = {
   candidates: scoutCandidates,
   rankedCandidateIds: ["b", "c", "a"],
@@ -195,6 +216,13 @@ function scoutResultForRecords(
     candidateControls,
     selectedControl: candidateControls[0],
   };
+}
+
+function expectScoutResultIssue(value: unknown, message: string): void {
+  const result = ScoutResultSchema.safeParse(value);
+  expect(result.success).toBe(false);
+  if (result.success) return;
+  expect(result.error.issues.map((issue) => issue.message)).toContain(message);
 }
 
 test("scoped scout schema accepts a strict candidate and cited no_candidate", () => {
@@ -944,37 +972,64 @@ test("ranked candidate IDs must be an exact permutation", () => {
     ["a", "b", "missing"],
     ["a", "b"],
   ]) {
-    expect(
-      ScoutResultSchema.safeParse({
+    const candidateControls = candidateControlsFor(candidates, rankedCandidateIds);
+    expectScoutResultIssue(
+      {
         candidates,
         rankedCandidateIds,
-        selectedControl: { ...selectedControl, candidateId: "a" },
-      }).success,
-    ).toBe(false);
+        candidateControls,
+        selectedControl: candidateControls[0]!,
+      },
+      "rankedCandidateIds must be the candidate-ID permutation",
+    );
   }
-  expect(
-    ScoutResultSchema.safeParse({
-      candidates: [
-        { ...candidate, id: "a" },
-        { ...candidate, id: "a" },
-        { ...candidate, id: "c" },
-      ],
+  const duplicateCandidateIds = [
+    { ...scoutCandidates[0], id: "a" },
+    {
+      ...scoutCandidates[1],
+      id: "a",
+      expectedFailurePattern: "ORCA_RED:a",
+    },
+    { ...scoutCandidates[2], id: "c" },
+  ];
+  const duplicateCandidateControls = candidateControlsFor(
+    duplicateCandidateIds,
+    ["a", "b", "c"],
+  );
+  expectScoutResultIssue(
+    {
+      candidates: duplicateCandidateIds,
       rankedCandidateIds: ["a", "b", "c"],
-      selectedControl: { ...selectedControl, candidateId: "a" },
-    }).success,
-  ).toBe(false);
-  for (const candidateSet of [
-    candidates.slice(0, 2),
-    [...candidates, { ...candidate, id: "d" }],
-  ]) {
-    expect(
-      ScoutResultSchema.safeParse({
-        candidates: candidateSet,
-        rankedCandidateIds: candidateSet.map((item) => item.id),
-        selectedControl,
-      }).success,
-    ).toBe(false);
-  }
+      candidateControls: duplicateCandidateControls,
+      selectedControl: duplicateCandidateControls[0]!,
+    },
+    "rankedCandidateIds must be the candidate-ID permutation",
+  );
+});
+
+test("scout result rejects more than three candidates", () => {
+  const extraCandidate = {
+    ...scoutCandidates[0],
+    id: "d",
+    allowedPaths: ["src/d.ts", "tests/d.test.ts"],
+    testPath: "tests/d.test.ts",
+    targetedTestArgs: ["test", "tests/d.test.ts"],
+    expectedFailurePattern: "ORCA_RED:d",
+  };
+  const candidateSet = [...candidates, extraCandidate];
+  const rankedCandidateIds = candidateSet.map((item) => item.id);
+  const candidateControls = candidateControlsFor(candidateSet, rankedCandidateIds);
+  const result = ScoutResultSchema.safeParse({
+    candidates: candidateSet,
+    rankedCandidateIds,
+    candidateControls,
+    selectedControl: candidateControls[0]!,
+  });
+  expect(result.success).toBe(false);
+  if (result.success) return;
+  expect(result.error.issues.some((issue) => issue.path[0] === "candidates")).toBe(
+    true,
+  );
 });
 
 test("scout result requires one selected control", () => {
@@ -1002,17 +1057,35 @@ test("selected control must target the rank-one candidate", () => {
 });
 
 test("ranked fallback candidates require independent file scopes", () => {
-  const collapsed = ["a", "b", "c"].map((id) => ({
-    ...scoutCandidates[0],
-    id,
-  }));
-  expect(
-    ScoutResultSchema.safeParse({
+  const collapsed = [
+    { ...scoutCandidates[0], id: "a" },
+    {
+      ...scoutCandidates[1],
+      id: "b",
+      allowedPaths: ["src/a.ts", "tests/b.test.ts"],
+      testPath: "tests/b.test.ts",
+      targetedTestArgs: ["test", "tests/b.test.ts"],
+      expectedFailurePattern: "ORCA_RED:b",
+    },
+    {
+      ...scoutCandidates[2],
+      id: "c",
+      allowedPaths: ["src/a.ts", "tests/c.test.ts"],
+      testPath: "tests/c.test.ts",
+      targetedTestArgs: ["test", "tests/c.test.ts"],
+      expectedFailurePattern: "ORCA_RED:c",
+    },
+  ];
+  const candidateControls = candidateControlsFor(collapsed, ["a", "b", "c"]);
+  expectScoutResultIssue(
+    {
       candidates: collapsed,
       rankedCandidateIds: ["a", "b", "c"],
-      selectedControl: { ...selectedControl, candidateId: "a" },
-    }).success,
-  ).toBe(false);
+      candidateControls,
+      selectedControl: candidateControls[0]!,
+    },
+    "each ranked candidate must have an exclusive production path",
+  );
 });
 
 test("duplicate allowed paths cannot manufacture independent scopes", () => {
@@ -1022,20 +1095,25 @@ test("duplicate allowed paths cannot manufacture independent scopes", () => {
       ...scoutCandidates[0],
       id: "b",
       allowedPaths: ["src/a.ts", "src/a.ts", "tests/a.test.ts"],
+      expectedFailurePattern: "ORCA_RED:b",
     },
     {
       ...scoutCandidates[0],
       id: "c",
       allowedPaths: ["src/a.ts", "src/a.ts", "src/a.ts", "tests/a.test.ts"],
+      expectedFailurePattern: "ORCA_RED:c",
     },
   ];
-  expect(
-    ScoutResultSchema.safeParse({
+  const candidateControls = candidateControlsFor(duplicateNoise, ["a", "b", "c"]);
+  expectScoutResultIssue(
+    {
       candidates: duplicateNoise,
       rankedCandidateIds: ["a", "b", "c"],
-      selectedControl: { ...selectedControl, candidateId: "a" },
-    }).success,
-  ).toBe(false);
+      candidateControls,
+      selectedControl: candidateControls[0]!,
+    },
+    "allowed paths must be unique",
+  );
 });
 
 test("reordered allowed paths cannot manufacture independent scopes", () => {
@@ -1051,16 +1129,20 @@ test("reordered allowed paths cannot manufacture independent scopes", () => {
       allowedPaths: ["src/shared.ts", "tests/b.test.ts", "src/a.ts"],
       testPath: "tests/b.test.ts",
       targetedTestArgs: ["test", "tests/b.test.ts"],
+      expectedFailurePattern: "ORCA_RED:b",
     },
     { ...scoutCandidates[2], id: "c" },
   ];
-  expect(
-    ScoutResultSchema.safeParse({
+  const candidateControls = candidateControlsFor(reordered, ["a", "b", "c"]);
+  expectScoutResultIssue(
+    {
       candidates: reordered,
       rankedCandidateIds: ["a", "b", "c"],
-      selectedControl: { ...selectedControl, candidateId: "a" },
-    }).success,
-  ).toBe(false);
+      candidateControls,
+      selectedControl: candidateControls[0]!,
+    },
+    "each ranked candidate must have an exclusive production path",
+  );
 });
 
 test("ranked fallback candidates require unique target tests", () => {
@@ -1075,13 +1157,16 @@ test("ranked fallback candidates require unique target tests", () => {
     },
     { ...scoutCandidates[2], id: "c" },
   ];
-  expect(
-    ScoutResultSchema.safeParse({
+  const candidateControls = candidateControlsFor(sharedTest, ["a", "b", "c"]);
+  expectScoutResultIssue(
+    {
       candidates: sharedTest,
       rankedCandidateIds: ["a", "b", "c"],
-      selectedControl: { ...selectedControl, candidateId: "a" },
-    }).success,
-  ).toBe(false);
+      candidateControls,
+      selectedControl: candidateControls[0]!,
+    },
+    "ranked candidates must use unique target test paths",
+  );
 });
 
 test("each ranked candidate requires an exclusive production path", () => {
@@ -1098,13 +1183,16 @@ test("each ranked candidate requires an exclusive production path", () => {
     },
     { ...scoutCandidates[2], id: "c" },
   ];
-  expect(
-    ScoutResultSchema.safeParse({
+  const candidateControls = candidateControlsFor(supersetNoise, ["a", "b", "c"]);
+  expectScoutResultIssue(
+    {
       candidates: supersetNoise,
       rankedCandidateIds: ["a", "b", "c"],
-      selectedControl: { ...selectedControl, candidateId: "a" },
-    }).success,
-  ).toBe(false);
+      candidateControls,
+      selectedControl: candidateControls[0]!,
+    },
+    "each ranked candidate must have an exclusive production path",
+  );
 });
 
 test("ranked candidates may share support paths when each has an exclusive path", () => {
