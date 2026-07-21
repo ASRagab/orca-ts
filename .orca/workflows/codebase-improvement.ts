@@ -595,7 +595,11 @@ async function acquireDeliveryRecordLock(
   deadlineAtMs?: number,
 ): Promise<string> {
   const lock = `${destination}.lock`;
+  let retryingExistingLock = false;
   while (true) {
+    if (retryingExistingLock && deadlineAtMs !== undefined && Date.now() >= deadlineAtMs) {
+      throw new Error("delivery record lock wait exceeded continuation deadline");
+    }
     try {
       await mkdir(lock, { mode: 0o700 });
       return lock;
@@ -609,6 +613,7 @@ async function acquireDeliveryRecordLock(
       if (delayMs <= 0) {
         throw new Error("delivery record lock wait exceeded continuation deadline");
       }
+      retryingExistingLock = true;
       await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
     }
   }

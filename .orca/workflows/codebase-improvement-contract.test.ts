@@ -9985,6 +9985,41 @@ test("delivery record persistence acquires a fresh lock at its continuation dead
   });
 });
 
+test("delivery record persistence does not reacquire a released stale lock after its deadline", async () => {
+  const source = await Bun.file(path).text();
+  const destination = "/tmp/delivery.json";
+  const files = new Map<string, string>([[destination, JSON.stringify(deliveryRecordFixture())]]);
+  let now = 0;
+  let mkdirCalls = 0;
+  const persistence = loadDeliveryRecordPersistence(source, {
+    Date: { now: () => now },
+    mkdir: async () => {
+      mkdirCalls += 1;
+      if (mkdirCalls === 1) throw Object.assign(new Error("lock exists"), { code: "EEXIST" });
+    },
+    readFile: async (file: string) => files.get(file) ?? "",
+    rename: async (from: string, to: string) => {
+      files.set(to, files.get(from) ?? "");
+      files.delete(from);
+    },
+    rm: async () => undefined,
+    setTimeout: (resolve: () => void) => {
+      now = 1;
+      resolve();
+    },
+    writeFile: async (file: string, value: string) => {
+      files.set(file, value);
+    },
+  });
+  expect(persistence).toBeFunction();
+  if (persistence === undefined) return;
+
+  await expect(
+    persistence(destination, deliveryRecordFixture(), 1),
+  ).rejects.toThrow("delivery record lock wait exceeded continuation deadline");
+  expect(mkdirCalls).toBe(1);
+});
+
 test("delivery record persistence bounds a stale lock by the continuation deadline", async () => {
   const source = await Bun.file(path).text();
   let now = 0;
