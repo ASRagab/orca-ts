@@ -169,6 +169,129 @@ async function loadFinalizationTextPublisher(
   return loaded as FinalizationTextPublisher;
 }
 
+type PublishActiveReadyDeliveryRecord = (
+  destination: string,
+  value: string,
+  runId: string,
+  context: PublicationContextProbe,
+  onPublished: () => void,
+) => Promise<{ readonly remainingMs: number }>;
+
+function loadPublishActiveReadyDeliveryRecord(
+  source: string,
+  publisher: FinalizationTextPublisher,
+): PublishActiveReadyDeliveryRecord | undefined {
+  const sourceFile = ts.createSourceFile(
+    path,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const declarations = functionDeclarationsNamed(
+    sourceFile,
+    "publishActiveReadyDeliveryRecord",
+  );
+  if (declarations.length !== 1 || declarations[0] === undefined) {
+    return undefined;
+  }
+  const emitted = ts.transpileModule(declarations[0].getText(sourceFile), {
+    compilerOptions: {
+      module: ts.ModuleKind.None,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
+  const loaded: unknown = runInNewContext(
+    `${emitted}\npublishActiveReadyDeliveryRecord;`,
+    { publishFinalizationText: publisher },
+  );
+  return typeof loaded === "function"
+    ? (loaded as PublishActiveReadyDeliveryRecord)
+    : undefined;
+}
+
+function activeReadyBoundaryContractIssues(source: string): string[] {
+  const issues = [...immutablePushContractIssues(source)];
+  const remoteProof = source.indexOf("const remoteBranch = await runRequired(");
+  const readyProof = source.indexOf(
+    "await assertPullRequestHead(prUrl, pullRequestIdentity);",
+    remoteProof,
+  );
+  const record = source.indexOf("DeliveryRecordSchema.parse(", readyProof);
+  if (remoteProof < 0 || readyProof <= remoteProof || record <= readyProof) {
+    issues.push("ready PR proof must follow exact remote branch proof");
+  }
+
+  const sourceFile = ts.createSourceFile(
+    path,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const finalizer = callsNamed(sourceFile, "finalizeWorkflowEvidence")[0];
+  const options = finalizer?.arguments[0];
+  const artifacts =
+    options !== undefined && ts.isObjectLiteralExpression(options)
+      ? propertyAssignmentNamed(options, "artifacts")?.initializer
+      : undefined;
+  const labels =
+    artifacts !== undefined && ts.isArrayLiteralExpression(artifacts)
+      ? artifacts.elements.map((artifact) => {
+          if (!ts.isObjectLiteralExpression(artifact)) return undefined;
+          const label = propertyAssignmentNamed(artifact, "label")?.initializer;
+          return label !== undefined && ts.isStringLiteralLike(label)
+            ? label.text
+            : undefined;
+        })
+      : [];
+  if (
+    labels.join("\n") !==
+    ["issue ledger", "delivery record", "monitor"].join("\n")
+  ) {
+    issues.push("delivery record must publish before monitor and terminal report");
+  }
+
+  const publisher = functionDeclarationsNamed(
+    sourceFile,
+    "publishActiveReadyDeliveryRecord",
+  )[0];
+  const publisherText = publisher?.getText(sourceFile) ?? "";
+  const publish = publisher === undefined
+    ? undefined
+    : callsNamed(publisher, "publishFinalizationText")[0];
+  if (
+    publisher === undefined ||
+    publish === undefined ||
+    !publisherText.includes("const decision = await publishFinalizationText(") ||
+    !publisherText.includes("onPublished();") ||
+    publisherText.indexOf("onPublished();") <
+      publisherText.indexOf("const decision = await publishFinalizationText(") ||
+    !publisherText.includes("return decision;")
+  ) {
+    issues.push("delivery record publication must gate active-ready monitor success");
+  }
+
+  const workflowEnd = source.indexOf("\n  }\n});", record);
+  const afterRecord = source.slice(
+    record,
+    workflowEnd < 0 ? source.length : workflowEnd,
+  );
+  if (
+    [
+      "resolveAllOpenIssuesForProvingRun",
+      'runRequired("gh", ["pr", "checks"]',
+      'enter("remote-checks")',
+      'enter("merge")',
+    ].some((forbidden) => afterRecord.includes(forbidden))
+  ) {
+    issues.push(
+      "active-ready publication must not start checks, merge, or issue closure",
+    );
+  }
+  return issues;
+}
+
 async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
   let didReject = false;
   let rejection: unknown;
@@ -5184,7 +5307,7 @@ function statusAndArtifactContractIssues(source: string): string[] {
   const reportLabel = propertyAssignmentNamed(reportAction, "label")?.initializer;
   if (
     artifactLabels.join("\n") !==
-      ["issue ledger", "monitor", "delivery record"].join("\n") ||
+      ["issue ledger", "delivery record", "monitor"].join("\n") ||
     reportLabel === undefined ||
     !ts.isStringLiteralLike(reportLabel) ||
     reportLabel.text !== "report"
@@ -6585,34 +6708,98 @@ test("delivery record remains bound to the validated head", async () => {
   expect(source.slice(record)).not.toContain("validatedHeadSha =");
 });
 
-test("ready proof and record cannot be bypassed", async () => {
+test("delivery record publication gates active-ready success", async () => {
   const source = await Bun.file(path).text();
+  const events: string[] = [];
+  const publish = loadPublishActiveReadyDeliveryRecord(
+    source,
+    async () => {
+      events.push("delivery record");
+      throw new Error("delivery record write failed");
+    },
+  );
+  expect(publish).toBeFunction();
+  if (publish === undefined) return;
+
+  await expect(
+    publish(
+      ".orca/improvement-loop/runs/run/delivery.json",
+      "{}\n",
+      "run",
+      finalizationContext(() => ({ remainingMs: 1_000 })),
+      () => events.push("active-ready monitor success"),
+    ),
+  ).rejects.toThrow("delivery record write failed");
+  expect(events).toEqual(["delivery record"]);
+
+  const published = await loadPublishActiveReadyDeliveryRecord(
+    source,
+    async () => {
+      events.push("delivery record");
+      return { remainingMs: 1_000 };
+    },
+  );
+  expect(published).toBeFunction();
+  if (published === undefined) return;
+  await published(
+    ".orca/improvement-loop/runs/run/delivery.json",
+    "{}\n",
+    "run",
+    finalizationContext(() => ({ remainingMs: 1_000 })),
+    () => events.push("active-ready monitor success"),
+  );
+  expect(events).toEqual([
+    "delivery record",
+    "delivery record",
+    "active-ready monitor success",
+  ]);
+});
+
+test("active boundary contract checker rejects ready-PR path bypasses", async () => {
+  const source = await Bun.file(path).text();
+  expect(activeReadyBoundaryContractIssues(source)).toEqual([]);
   const mutations = [
     {
       source: source.replace(
-        "    pullRequestCreateArgs(title, bodyFile, identity),",
-        '    [...pullRequestCreateArgs(title, bodyFile, identity), "--draft"],',
+        "`${validatedHeadSha}\\trefs/heads/${report.branch}`",
+        "`${report.baseSha}\\trefs/heads/${report.branch}`",
       ),
-      issue: "pull request creation must use exact ready-PR arguments",
+      issue:
+        "delivery must push and prove the captured validated SHA on the explicit remote branch",
     },
     {
       source: source.replace(
         "    await assertPullRequestHead(prUrl, pullRequestIdentity);\n",
         "",
       ),
-      issue: "ready proof is required before delivery record",
+      issue: "ready PR proof must follow exact remote branch proof",
     },
     {
       source: source.replace(
-        '            report.activeStatus = "ready";\n',
-        "",
+        '          label: "delivery record",',
+        '          label: "monitor",',
       ),
-      issue: "delivery record publication must set active ready",
+      issue: "delivery record must publish before monitor and terminal report",
+    },
+    {
+      source: source.replace(
+        'report.stopReason = "active-ready";',
+        [
+          'report.stopReason = "active-ready";',
+          'await resolveAllOpenIssuesForProvingRun();',
+          'await runRequired("gh", ["pr", "checks"], budget("delivery"));',
+          'enter("merge");',
+        ].join("\n"),
+      ),
+      issue:
+        "active-ready publication must not start checks, merge, or issue closure",
     },
   ];
   for (const mutation of mutations) {
     expect(mutation.source).not.toBe(source);
-    expect(mutation.source).not.toContain(mutation.issue);
+    expect(activeReadyBoundaryContractIssues(mutation.source)).toContain(
+      mutation.issue,
+    );
   }
 });
 

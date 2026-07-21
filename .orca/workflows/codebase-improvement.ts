@@ -1746,17 +1746,6 @@ await flow(flowArgs())(async () => {
     });
     report.deliveryRecordPath = `${REPORT_DIR}/${runId}/delivery.json`;
     report.deliveryStatus = deliveryRecord.delivery.status;
-    report.stopReason = "active-ready";
-    monitor.recordOutcome({
-      reason: "active-ready",
-      file: chosen.title,
-      verdict: "clean",
-      durationMs: Date.now() - startedAtMs,
-      smellsRemoved: [chosen.problem],
-      changedPaths: validatedPaths,
-      validation: report.validation,
-      usage: requireRecordedUsage(report.usage),
-    });
   } catch (error) {
     bodyFailed = true;
     report.stopReason = normalizeFailure(error);
@@ -1809,6 +1798,35 @@ await flow(flowArgs())(async () => {
           },
         },
         {
+          label: "delivery record",
+          run: async (context) => {
+            if (deliveryRecord === undefined) return;
+            return await publishActiveReadyDeliveryRecord(
+              `${REPORT_DIR}/${runId}/delivery.json`,
+              `${JSON.stringify(deliveryRecord, null, 2)}\n`,
+              runId,
+              context,
+              () => {
+                deliveryRecordPublished = true;
+                if (report.activeStatus !== "pending") return;
+                const readyCandidate = requireCandidate(candidate);
+                report.activeStatus = "ready";
+                report.stopReason = "active-ready";
+                monitor.recordOutcome({
+                  reason: "active-ready",
+                  file: readyCandidate.title,
+                  verdict: "clean",
+                  durationMs: Date.now() - startedAtMs,
+                  smellsRemoved: [readyCandidate.problem],
+                  changedPaths: validatedPaths,
+                  validation: report.validation,
+                  usage: requireRecordedUsage(report.usage),
+                });
+              },
+            );
+          },
+        },
+        {
           label: "monitor",
           run: async (context) => {
             return await publishFinalizationText(
@@ -1817,21 +1835,6 @@ await flow(flowArgs())(async () => {
               runId,
               context,
             );
-          },
-        },
-        {
-          label: "delivery record",
-          run: async (context) => {
-            if (deliveryRecord === undefined) return;
-            const decision = await publishFinalizationText(
-              `${REPORT_DIR}/${runId}/delivery.json`,
-              `${JSON.stringify(deliveryRecord, null, 2)}\n`,
-              runId,
-              context,
-            );
-            deliveryRecordPublished = true;
-            report.activeStatus = "ready";
-            return decision;
           },
         },
       ],
@@ -1977,6 +1980,23 @@ async function readConfig(): Promise<WorkflowConfig> {
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   await writeText(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function publishActiveReadyDeliveryRecord(
+  destination: string,
+  value: string,
+  runId: string,
+  context: FinalizationContext,
+  onPublished: () => void,
+): Promise<FinalizationCommitDecision> {
+  const decision = await publishFinalizationText(
+    destination,
+    value,
+    runId,
+    context,
+  );
+  onPublished();
+  return decision;
 }
 
 async function publishFinalizationText(
