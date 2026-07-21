@@ -7297,12 +7297,17 @@ test("scout synthesis is one watched tool-free ranked callsite", async () => {
 
 test("scoped scout prompt requires exact candidate fields and single-line citations", async () => {
   const source = await Bun.file(path).text();
+  const start = source.indexOf("function scopedScoutPrompt(");
+  const end = source.indexOf("\nfunction reproducePrompt(", start);
+  expect(start).toBeGreaterThan(-1);
+  expect(end).toBeGreaterThan(start);
+  const prompt = source.slice(start, end);
   for (const required of [
     "Candidate expectedFailurePattern must be exactly ORCA_RED:<candidate-id> using that candidate's id.",
     '`Candidate targetedTestArgs must be exactly ["test", "${pair.testPath}"].`',
     "Each source and test citation must be one exact rendered path:line marker; never use a range such as path:start-end.",
   ]) {
-    expect(source).toContain(required);
+    expect(prompt).toContain(required);
   }
 });
 
