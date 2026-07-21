@@ -72,6 +72,20 @@ describe("skill flow templates", () => {
     expect(text).toContain('git", args: ["rev-parse", "--git-path", path]');
     expect(text).not.toContain("baselineDirtyPaths");
   });
+
+  test("orcats-flow keeps workflow completion separate from merged-PR delivery", () => {
+    const text = readFileSync("skills/orcats-flow/SKILL.md", "utf8");
+    const contract =
+      "Workflow execution and delivery are separate. A run that has created a ready pull request is not delivered when its requested outcome is a merged pull request.";
+
+    expect(text).toContain(contract);
+    expect(text).toContain('deliveryStatus: "delivered"');
+    expect(text).toContain('state: "MERGED"');
+    expect(text).toContain("locked head SHA");
+    expect(text).toContain(
+      "Do not force-push, rewrite history, or merge manually.",
+    );
+  });
 });
 
 // Each skill installs as a self-contained directory via `npx skills`, so scripts
