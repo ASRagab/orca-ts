@@ -148,6 +148,23 @@ ensure no `opencode serve` is left running. Well-authored flows call
 `selected.shutdown?.()` in a `finally`; if a crash bypassed it, the operator can
 stop the stray server. Confirm none is dangling before declaring the run done.
 
+## Delivery-aware workflow outcomes
+
+Workflow execution and delivery are separate. A run that has created a ready
+pull request is not delivered when its requested outcome is a merged pull
+request.
+
+1. Preserve run report and worktree when delivery is pending or blocked.
+2. Check gh pr view <url> --json state,headRefOid,isDraft and gh pr checks
+   <url>; remote head must equal locked head SHA.
+3. Report deliveryStatus: "delivered" for a merged objective only with state:
+   "MERGED" at that locked head SHA; otherwise report separate run and delivery
+   states plus blocker.
+
+Do not force-push, rewrite history, or merge manually. The workflow owns
+delivery policy; this skill observes, heals safe local failures, and escalates
+remote-policy failures.
+
 ## Done when
 
 The workflow or loop completed (or was healed to completion, or escalated with a
