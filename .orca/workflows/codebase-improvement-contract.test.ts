@@ -9832,6 +9832,32 @@ test("delivery continuation recovers a merged PR after a lost merge response", a
   expect(result).toMatchObject({ status: "delivered", exitCode: 0 });
 });
 
+test("delivery continuation keeps an unavailable merged confirmation retryable", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  const persisted: Record<string, unknown>[] = [];
+  const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+    now: () => 10,
+    requireActiveReadyReport: async () => {},
+    readProtection: async () => ({ valid: true, log: deliveryCommand("protection") }),
+    readChecks: async () => ({ state: "passed", log: deliveryCommand("checks") }),
+    readPullRequest: async (phase) => {
+      if (phase === "merged") throw new Error("GitHub response unavailable");
+      return { pr: readyDeliveryPr(), log: deliveryCommand("pr:ready") };
+    },
+    merge: async () => deliveryCommand("merge"),
+    persist: async (record) => {
+      persisted.push(record);
+    },
+  });
+
+  expect(result).toMatchObject({ status: "pending", exitCode: 75 });
+  expect(persisted[0]?.delivery).toMatchObject({ status: "pending" });
+});
+
 test("delivery continuation writes blocked and exits nonzero for failed checks and identity drift", async () => {
   const source = await Bun.file(path).text();
   const continuation = loadDeliveryContinuation(source);
@@ -10341,6 +10367,7 @@ test("delivery record persistence reclaims a stale lock from a dead owner", asyn
     readFile: async (file: string) => files.get(file) ?? "",
     rename: async (from: string, to: string) => {
       files.set(to, files.get(from) ?? "");
+      if (from === lock) lockHeld = false;
     },
     rm: async (file: string) => {
       removed.push(file);
@@ -10365,7 +10392,7 @@ test("delivery record persistence reclaims a stale lock from a dead owner", asyn
     }),
   );
 
-  expect(removed).toContain(lock);
+  expect(removed.some((file) => file.startsWith(`${lock}.stale-`))).toBe(true);
   expect(DeliveryRecordSchema.parse(JSON.parse(files.get(destination) ?? ""))).toBeDefined();
 });
 
@@ -10375,7 +10402,6 @@ test("delivery record persistence retries after another waiter reclaims a stale 
   const lock = `${destination}.lock`;
   let lockHeld = true;
   let mkdirCalls = 0;
-  let staleRemoval = true;
   const persistence = loadDeliveryRecordPersistence(source, {
     Date: { now: () => 60_001 },
     mkdir: async () => {
@@ -10393,15 +10419,10 @@ test("delivery record persistence retries after another waiter reclaims a stale 
       file === destination
         ? JSON.stringify(deliveryRecordFixture())
         : JSON.stringify({ pid: 991, createdAtMs: 0 }),
-    rename: async () => {},
-    rm: async (file: string) => {
-      if (file !== lock) return;
-      lockHeld = false;
-      if (staleRemoval) {
-        staleRemoval = false;
-        throw Object.assign(new Error("already removed"), { code: "ENOENT" });
-      }
+    rename: async (from: string) => {
+      if (from === lock) lockHeld = false;
     },
+    rm: async () => {},
     stat: async () => ({ mtimeMs: 0 }),
     writeFile: async () => {},
   });
@@ -10420,6 +10441,19 @@ test("delivery record persistence retries after another waiter reclaims a stale 
   );
 
   expect(mkdirCalls).toBe(2);
+});
+
+test("delivery record persistence atomically claims a stale lock before removing it", async () => {
+  const source = await Bun.file(path).text();
+  const start = source.indexOf("async function recoverStaleDeliveryRecordLock(");
+  const end = source.indexOf("function mergeDeliveryAttempt(", start);
+  const recovery = source.slice(start, end);
+  const claim = recovery.indexOf("await rename(lock, staleLock);");
+  const removal = recovery.indexOf("await rm(staleLock, { recursive: true, force: true });");
+
+  expect(claim).toBeGreaterThan(-1);
+  expect(removal).toBeGreaterThan(claim);
+  expect(recovery).not.toContain("await rm(lock,");
 });
 
 test("delivery record persistence never reclaims a stale-looking lock with a live owner", async () => {
@@ -10544,7 +10578,7 @@ test("delivery blocks a pending record when active-ready report proof fails", as
 test("delivery preloads report evidence and persists its blocked mirror after proof failure", async () => {
   const source = await Bun.file(path).text();
   const reportRead = source.indexOf(
-    'const activeReadyReport = await readFile(deliveryReportPath, "utf8");',
+    'let activeReadyReport = await readFile(deliveryReportPath, "utf8");',
   );
   const continuation = source.indexOf("const outcome = await runDeliveryContinuation(rawRecord, {");
   const proof = source.indexOf("assertActiveReadyDeliveryReport(", continuation);
@@ -10581,9 +10615,18 @@ test("delivery reconciles its report mirror before terminal return and record ad
     "await persistDeliveryRecordAtomically(",
     continuation,
   );
+  const reportDeclaration = source.indexOf(
+    'let activeReadyReport = await readFile(deliveryReportPath, "utf8");',
+  );
+  const reportUpdate = source.indexOf(
+    "activeReadyReport = renderedDeliveryReport;",
+    terminalReport,
+  );
 
+  expect(reportDeclaration).toBeGreaterThan(-1);
   expect(terminalRecord).toBeGreaterThan(-1);
   expect(terminalReport).toBeGreaterThan(-1);
+  expect(reportUpdate).toBeGreaterThan(terminalReport);
   expect(terminalRecord).toBeGreaterThan(terminalReport);
   expect(continuation).toBeGreaterThan(terminalRecord);
   expect(reportPersistence).toBeGreaterThan(continuation);
@@ -10705,7 +10748,7 @@ test("delivery report evidence preserves immutable identity while mirroring term
 test("delivery proof preloads a readable report before status validation so blocked delivery mirrors it", async () => {
   const source = await Bun.file(path).text();
   const reportRead = source.indexOf(
-    'const activeReadyReport = await readFile(deliveryReportPath, "utf8");',
+    'let activeReadyReport = await readFile(deliveryReportPath, "utf8");',
   );
   const continuation = source.indexOf("const outcome = await runDeliveryContinuation(rawRecord, {");
   const proofStart = source.indexOf("requireActiveReadyReport: (record) => {");

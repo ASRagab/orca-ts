@@ -632,11 +632,18 @@ async function runDeliveryContinuation(
   let merge: CommandLog | undefined;
   const confirmMerged = async (): Promise<DeliveryContinuationResult | undefined> => {
     if (expired()) return await finish("pending", merge);
+    let confirmation: { readonly pr: DeliveryReadyPullRequest; readonly log: CommandLog };
     try {
-      const confirmation = await dependencies.readPullRequest(
+      confirmation = await dependencies.readPullRequest(
         "merged",
         remaining("merged confirmation"),
       );
+    } catch {
+      // A post-merge read can fail after GitHub accepted the merge. The
+      // terminal state is unknown, so preserve the record for a retry.
+      return await finish("pending", merge);
+    }
+    try {
       const mergedPr = confirmation.pr as DeliveryMergedPullRequest;
       assertMergedPullRequestState(mergedPr, identity);
       latestPr = {
@@ -648,7 +655,9 @@ async function runDeliveryContinuation(
       };
       return await finish("delivered", merge);
     } catch {
-      return undefined;
+      // The response was authoritative, but it no longer proves the
+      // immutable delivery identity or merged state.
+      return await finish("blocked", merge);
     }
   };
   try {
@@ -767,11 +776,14 @@ async function recoverStaleDeliveryRecordLock(lock: string): Promise<boolean> {
     if (isErrnoCode(error, "ENOENT")) return true;
     throw error;
   }
+  const staleLock = `${lock}.stale-${String(process.pid)}-${String(Date.now())}`;
   try {
-    await rm(lock, { recursive: true, force: false });
+    await rename(lock, staleLock);
   } catch (error) {
-    if (!isErrnoCode(error, "ENOENT")) throw error;
+    if (isErrnoCode(error, "ENOENT")) return true;
+    throw error;
   }
+  await rm(staleLock, { recursive: true, force: true });
   return true;
 }
 
@@ -868,19 +880,22 @@ await flow(flowArgs())(async () => {
         0,
         -"delivery.json".length,
       )}report.json`;
-      const activeReadyReport = await readFile(deliveryReportPath, "utf8");
+      let activeReadyReport = await readFile(deliveryReportPath, "utf8");
       const persistDeliveryReportMirror = async (record: DeliveryRecordV1) => {
+        const renderedDeliveryReport = renderDeliveryReportEvidence(
+          activeReadyReport,
+          record,
+          deliveryRecordPath,
+        );
         await persistDeliveryReportEvidence(
           deliveryReportPath,
-          renderDeliveryReportEvidence(
-            activeReadyReport,
-            record,
-            deliveryRecordPath,
-          ),
+          renderedDeliveryReport,
           deliveryDeadlineAtMs,
         );
+        return renderedDeliveryReport;
       };
-      await persistDeliveryReportMirror(launcherValidatedRecord);
+      const renderedDeliveryReport = await persistDeliveryReportMirror(launcherValidatedRecord);
+      activeReadyReport = renderedDeliveryReport;
       if (launcherValidatedRecord.delivery.status !== "pending") {
         process.exitCode = launcherValidatedRecord.delivery.status === "delivered" ? 0 : 1;
         return;
@@ -1005,7 +1020,8 @@ await flow(flowArgs())(async () => {
             )
           ).log,
         persist: async (record, persistenceDeadlineAtMs) => {
-          await persistDeliveryReportMirror(record);
+          const renderedDeliveryReport = await persistDeliveryReportMirror(record);
+          activeReadyReport = renderedDeliveryReport;
           await persistDeliveryRecordAtomically(
             deliveryRecordPath,
             record,

@@ -4909,6 +4909,7 @@ async function runFinalizerHarness(
     600000;
   const launcherFinalizationDeadlineAtMs =
     options.launcherFinalizationDeadlineAtMs ??
+    options.launcherDeadlineAtMs ??
     launcherWorkDeadlineAtMs;
   await mkdir(join(worktree, ".orca", "monitoring"), { recursive: true });
   await mkdir(state, { recursive: true });
@@ -19266,6 +19267,7 @@ test("finalizer artifact harness defaults to the production active deadline", as
     [
       "const launcherFinalizationDeadlineAtMs =",
       "    options.launcherFinalizationDeadlineAtMs ??",
+      "    options.launcherDeadlineAtMs ??",
       "    launcherWorkDeadlineAtMs;",
     ].join("\n"),
   );
