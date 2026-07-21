@@ -3278,6 +3278,8 @@ export interface ScopedScoutFanoutOptions<T> {
   readonly settlementReserveMs: number;
   readonly quorum: number;
   readonly accept: (value: T) => boolean;
+  /** Validation that must pass before a candidate can contribute to quorum. */
+  readonly validateAccepted?: (value: T, scopeIndex: number) => readonly string[];
   readonly now?: () => number;
 }
 
@@ -3545,6 +3547,21 @@ export async function runScopedScoutFanout<T>(
         next.state.status = scopedScoutNoCandidate(next.terminal.value)
           ? "no_candidate"
           : "invalid";
+        continue;
+      }
+    } catch (error) {
+      next.state.status = "invalid";
+      next.state.reason = normalizeFailure(error);
+      continue;
+    }
+    try {
+      const validationIssues = options.validateAccepted?.(
+        next.terminal.value,
+        next.state.scopeIndex,
+      ) ?? [];
+      if (validationIssues.length > 0) {
+        next.state.status = "invalid";
+        next.state.validationIssues = [...validationIssues];
         continue;
       }
     } catch (error) {

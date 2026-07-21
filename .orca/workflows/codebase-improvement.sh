@@ -412,7 +412,10 @@ select_terminal_monitor() {
       and (.summary | type == "object")
       and (if $requireSuccess then
         (.outcomes | length == 1)
-        and .outcomes[0].reason == "completed"
+        and (
+          .outcomes[0].reason == "active-ready"
+          or .outcomes[0].reason == "completed"
+        )
         and .outcomes[0].verdict == "clean"
         and (.failures | length == 0)
         and .summary.pass == 1
@@ -431,12 +434,14 @@ validate_terminal_report() {
   local terminal_monitor="$2"
   local worker_deadline_at_ms="$3"
   local monitor_run_id=""
+  local monitor_outcome_reason=""
   local pr_prefix="https://github.com/$repository/pull/"
 
   monitor_run_id=$(basename "$terminal_monitor" .json) || return $?
   if [[ -z "$monitor_run_id" ]]; then
     return 65
   fi
+  monitor_outcome_reason=$(jq -r '.outcomes[0].reason // ""' "$terminal_monitor") || return $?
   jq -e --arg runId "$run_id" \
     --arg monitorRunId "$monitor_run_id" \
     --arg profile "$complexity" \
@@ -447,6 +452,7 @@ validate_terminal_report() {
     --arg repository "$repository" \
     --arg prUrl "$pr_url" \
     --arg prPrefix "$pr_prefix" \
+    --arg monitorOutcomeReason "$monitor_outcome_reason" \
     --argjson startedAtMs "$started_at_ms" \
     --argjson deadlineMs "$launcher_deadline_ms" \
     --argjson workerDeadlineAtMs "$worker_deadline_at_ms" '
@@ -490,9 +496,7 @@ validate_terminal_report() {
       and (.elapsedMs | nonnegative_integer)
       and .elapsedMs == (.finishedAtMs - .startedAtMs)
       and .elapsedMs <= $deadlineMs
-      and .merged == true
       and .sla == "passed"
-      and .stopReason == "completed"
       and .prUrl == $prUrl
       and (.prUrl | (
         type == "string"
@@ -509,47 +513,62 @@ validate_terminal_report() {
         (.reasoning | nonnegative_integer)
       else true end)
       and ((.usage.input + .usage.output + (.usage.reasoning // 0)) > 0)
-      and ($report.validation | if type == "array" then
-        any(.[];
-          passed_command and .command == $remoteChecksCommand
+      and (
+        (
+          .activeStatus == "ready"
+          and .deliveryStatus == "pending"
+          and (.deliveryRecordPath | (type == "string" and length > 0))
+          and .merged == false
+          and .stopReason == "active-ready"
+          and $monitorOutcomeReason == "active-ready"
         )
-        and any(.[];
-          recorded_command and .command == $mergeRequestCommand
+        or (
+          .merged == true
+          and .stopReason == "completed"
+          and $monitorOutcomeReason == "completed"
+          and ($report.validation | if type == "array" then
+            any(.[];
+              passed_command and .command == $remoteChecksCommand
+            )
+            and any(.[];
+              recorded_command and .command == $mergeRequestCommand
+            )
+            and any(.[];
+              passed_command and .command == $mergeConfirmationCommand
+            )
+          else false end)
+          and (.remoteChecks | type == "object")
+          and .remoteChecks.state == "passed"
+          and (.remoteChecks.checkedAt | (
+            type == "string" and length > 0
+          ))
+          and .remoteChecks.headSha == .matchedHeadSha
+          and (.remoteChecks.command | passed_command)
+          and .remoteChecks.command.command == $remoteChecksCommand
+          and (.remoteChecks.checks | (
+            type == "array"
+            and length > 0
+            and all(.[]; .bucket == "pass")
+            and any(.[];
+              .name == "Verify"
+              and .workflow == "CI"
+              and .bucket == "pass"
+            )
+          ))
+          and (.mergeProof | type == "object")
+          and (.mergeProof.checkedAt | (
+            type == "string" and length > 0
+          ))
+          and .mergeProof.url == .prUrl
+          and .mergeProof.baseRefName == "main"
+          and .mergeProof.headRefName == $branch
+          and .mergeProof.headRefOid == .matchedHeadSha
+          and .mergeProof.isDraft == false
+          and .mergeProof.state == "MERGED"
+          and (.mergeProof.command | passed_command)
+          and .mergeProof.command.command == $mergeConfirmationCommand
         )
-        and any(.[];
-          passed_command and .command == $mergeConfirmationCommand
-        )
-      else false end)
-      and (.remoteChecks | type == "object")
-      and .remoteChecks.state == "passed"
-      and (.remoteChecks.checkedAt | (
-        type == "string" and length > 0
-      ))
-      and .remoteChecks.headSha == .matchedHeadSha
-      and (.remoteChecks.command | passed_command)
-      and .remoteChecks.command.command == $remoteChecksCommand
-      and (.remoteChecks.checks | (
-        type == "array"
-        and length > 0
-        and all(.[]; .bucket == "pass")
-        and any(.[];
-          .name == "Verify"
-          and .workflow == "CI"
-          and .bucket == "pass"
-        )
-      ))
-      and (.mergeProof | type == "object")
-      and (.mergeProof.checkedAt | (
-        type == "string" and length > 0
-      ))
-      and .mergeProof.url == .prUrl
-      and .mergeProof.baseRefName == "main"
-      and .mergeProof.headRefName == $branch
-      and .mergeProof.headRefOid == .matchedHeadSha
-      and .mergeProof.isDraft == false
-      and .mergeProof.state == "MERGED"
-      and (.mergeProof.command | passed_command)
-      and .mergeProof.command.command == $mergeConfirmationCommand
+      )
     ' "$terminal_report" >/dev/null
 }
 
@@ -605,6 +624,7 @@ launcher_finalization_reserve_ms=60000
 canonical_recovery_reserve_ms=1000
 launcher_absolute_deadline_at_ms=0
 launcher_work_deadline_at_ms=0
+launcher_finalization_deadline_at_ms=0
 launcher_deadline_at_ms=0
 monitor_path=""
 report_path=""
@@ -2079,7 +2099,10 @@ run_delivery_continuation() {
   fi
   launcher_deadline_ms=1803000
   launcher_absolute_deadline_at_ms=$(( started_at_ms + launcher_deadline_ms ))
-  launcher_deadline_at_ms="$launcher_absolute_deadline_at_ms"
+  launcher_finalization_deadline_at_ms=$((
+    launcher_absolute_deadline_at_ms + launcher_finalization_reserve_ms
+  ))
+  launcher_deadline_at_ms="$launcher_finalization_deadline_at_ms"
   delivery_deadline_at_ms=$(( started_at_ms + 1800000 ))
   phase=delivery-continuation
   cd "$source_root" || return $?
@@ -2400,8 +2423,9 @@ finalize() {
     trap - EXIT
     exit "$original_status"
   fi
-  launcher_deadline_at_ms="$launcher_absolute_deadline_at_ms"
+  launcher_deadline_at_ms="$launcher_finalization_deadline_at_ms"
   local final_status="$original_status"
+  local terminal_delivery_state=""
   local ended_at_ms=""
   local latest_tmp="${latest}.tmp.$$"
   local candidate_ledger="$worktree/.orca/improvement-loop/issues.jsonl"
@@ -2614,6 +2638,16 @@ finalize() {
       return $?
     fi
     if [[ "$mode" == live && "$final_status" -eq 0 ]]; then
+      if [[ "${terminal_delivery_state:-completed}" == "active-ready" ]]; then
+        discard_private_path_before_deadline \
+          "$ledger_base_snapshot" 2>/dev/null || true
+        ledger_base_snapshot=""
+        exit 0
+      fi
+      if [[ "${terminal_delivery_state:-completed}" != "completed" ]]; then
+        release_failed_terminal_commit 65
+        return $?
+      fi
       terminal_commit_owned=true
       if [[ "$terminal_commit_signal_status" -ne 0 ]]; then
         release_failed_terminal_commit "$terminal_commit_signal_status"
@@ -2796,6 +2830,10 @@ finalize() {
     then
       terminal_report_rejected=true
       record_finalize_failure "validate terminal report"
+    elif ! capture_before_deadline terminal_delivery_state jq -r \
+      '.stopReason' "$report_path";
+    then
+      record_finalize_failure "read terminal delivery state"
     fi
   fi
   if ! assert_package_lock_unchanged; then
@@ -2808,7 +2846,7 @@ finalize() {
   fi
   if [[ "$started_at_ms" =~ ^[0-9]+$ && "$ended_at_ms" =~ ^[0-9]+$ ]]; then
     elapsed_ms=$(( ended_at_ms - started_at_ms ))
-    if [[ "$elapsed_ms" -gt "$launcher_deadline_ms" ]]; then
+    if [[ "$elapsed_ms" -gt $(( launcher_deadline_ms + launcher_finalization_reserve_ms )) ]]; then
       record_finalize_failure "launcher exceeded profile deadline"
     fi
   else
@@ -2835,7 +2873,7 @@ finalize() {
   if capture_before_deadline ended_at_ms now_ms && \
     [[ "$started_at_ms" =~ ^[0-9]+$ ]]; then
     elapsed_ms=$(( ended_at_ms - started_at_ms ))
-    if [[ "$elapsed_ms" -gt "$launcher_deadline_ms" ]]; then
+    if [[ "$elapsed_ms" -gt $(( launcher_deadline_ms + launcher_finalization_reserve_ms )) ]]; then
       record_finalize_failure "finalization exceeded profile deadline"
     fi
   else
@@ -2853,7 +2891,8 @@ finalize() {
     fi
   fi
 
-  if [[ "$mode" == live && "$final_status" -eq 0 ]]; then
+  if [[ "$mode" == live && "$final_status" -eq 0 && \
+    "$terminal_delivery_state" == "completed" ]]; then
     if ! prepare_terminal_ledger_evidence; then
       record_finalize_failure "prepare terminal issue ledger"
     fi
@@ -2975,8 +3014,9 @@ main() {
     return 64
   fi
   launcher_absolute_deadline_at_ms=$(( started_at_ms + launcher_deadline_ms ))
-  launcher_work_deadline_at_ms=$((
-    launcher_absolute_deadline_at_ms - launcher_finalization_reserve_ms
+  launcher_work_deadline_at_ms="$launcher_absolute_deadline_at_ms"
+  launcher_finalization_deadline_at_ms=$((
+    launcher_absolute_deadline_at_ms + launcher_finalization_reserve_ms
   ))
   launcher_deadline_at_ms="$launcher_work_deadline_at_ms"
 

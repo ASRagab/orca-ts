@@ -1230,6 +1230,22 @@ await flow(flowArgs())(async () => {
           [pair],
         ),
       );
+      const validateScopedCandidate = (
+        value: ScopedScoutResult,
+        scopeIndex: number,
+      ): readonly string[] => {
+        const pair = scopedPairs[scopeIndex];
+        const packet = scopedPackets[scopeIndex];
+        if (value.status !== "candidate") return [];
+        if (pair === undefined || packet === undefined) {
+          return [`scout scope ${String(scopeIndex + 1)} is incomplete`];
+        }
+        return [
+          ...validateScopedScoutResult(value, pair, packet, profile),
+          ...validateCandidateForProfile(value.candidate, profile),
+          ...validateCandidateEvidence(value.candidate, packet),
+        ];
+      };
       const fanout = await runScopedScoutFanout<ScopedScoutResult>({
         conversations: scopedPackets.map((packet, scopeIndex) => {
           const pair = scopedPairs[scopeIndex];
@@ -1286,22 +1302,12 @@ await flow(flowArgs())(async () => {
         settlementReserveMs: CONVERSATION_SETTLEMENT_RESERVE_MS,
         quorum: 3,
         accept: (value) => value.status === "candidate",
+        validateAccepted: validateScopedCandidate,
       });
       const scopedResult = await finalizeScopedScoutRecords({
         records: fanout.records,
-        validate: (value, record) => {
-          const pair = scopedPairs[record.scopeIndex];
-          const packet = scopedPackets[record.scopeIndex];
-          if (value.status !== "candidate") return [];
-          if (pair === undefined || packet === undefined) {
-            return [`scout scope ${String(record.scopeIndex + 1)} is incomplete`];
-          }
-          return [
-            ...validateScopedScoutResult(value, pair, packet, profile),
-            ...validateCandidateForProfile(value.candidate, profile),
-            ...validateCandidateEvidence(value.candidate, packet),
-          ];
-        },
+        validate: (value, record) =>
+          validateScopedCandidate(value, record.scopeIndex),
         persistScopeRecord: async (record) => {
           await writeJson(
             `${REPORT_DIR}/${runId}/scout-scope-${String(record.scopeIndex + 1)}.json`,

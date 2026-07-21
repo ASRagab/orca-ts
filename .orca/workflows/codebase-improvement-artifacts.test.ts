@@ -1472,8 +1472,8 @@ function boundedCaptureContractIssues(source: string): string[] {
   const captureCalls = source.match(
     /\bcapture_before_deadline\s+[A-Za-z_][A-Za-z0-9_]*\s+/g,
   );
-  if ((captureCalls ?? []).length !== 31) {
-    issues.push("all 31 bounded output captures must use the main-shell helper");
+  if ((captureCalls ?? []).length !== 32) {
+    issues.push("all 32 bounded output captures must use the main-shell helper");
   }
   return issues;
 }
@@ -1952,6 +1952,10 @@ function canonicalPublicationContractIssues(source: string): string[] {
   ) {
     issues.push("failure tombstone write must execute inside supervised worker");
   }
+  const ledgerSnapshotCleanupCalls =
+    compactCommit?.match(
+      /discard_private_path_before_deadline "\$ledger_base_snapshot"/g,
+    ) ?? [];
   if (
     fileCleanup === undefined ||
     !fileCleanup.includes("remaining_launcher_ms remaining_ms || return 0") ||
@@ -1970,9 +1974,7 @@ function canonicalPublicationContractIssues(source: string): string[] {
     !signalHandler?.includes(
       'discard_private_path_before_deadline "$signal_latest_fallback"',
     ) ||
-    !compactCommit?.includes(
-      'discard_private_path_before_deadline "$ledger_base_snapshot"',
-    )
+    ledgerSnapshotCleanupCalls.length !== 2
   ) {
     issues.push("finalizer private cleanup must be deadline-supervised");
   }
@@ -4836,6 +4838,7 @@ async function runFinalizerHarness(
     completeLiveEvidence?: boolean;
     reportContents?: (validReport: Record<string, unknown>) => string;
     launcherWorkDeadlineAtMs?: number;
+    launcherFinalizationDeadlineAtMs?: number;
     monitorFiles?: readonly {
       name: string;
       contents: string;
@@ -4904,6 +4907,9 @@ async function runFinalizerHarness(
     options.launcherWorkDeadlineAtMs ??
     options.launcherDeadlineAtMs ??
     600000;
+  const launcherFinalizationDeadlineAtMs =
+    options.launcherFinalizationDeadlineAtMs ??
+    launcherWorkDeadlineAtMs + 60000;
   await mkdir(join(worktree, ".orca", "monitoring"), { recursive: true });
   await mkdir(state, { recursive: true });
   const preflightPath = join(state, "preflight.json");
@@ -5242,7 +5248,8 @@ async function runFinalizerHarness(
   }
   if (finalizer !== undefined && options.afterTerminalStage !== undefined) {
     const boundary = [
-      '  if [[ "$mode" == live && "$final_status" -eq 0 ]]; then',
+      '  if [[ "$mode" == live && "$final_status" -eq 0 && \\',
+      '    "$terminal_delivery_state" == "completed" ]]; then',
       "    if ! prepare_terminal_ledger_evidence; then",
       '      record_finalize_failure "prepare terminal issue ledger"',
       "    fi",
@@ -5437,9 +5444,11 @@ async function runFinalizerHarness(
       `claimed_preflight_path=${value(claimedPreflightPath)}`,
       'started_at_ms="1"',
       "canonical_recovery_reserve_ms=1000",
+      "launcher_finalization_reserve_ms=60000",
       ...launcherDeadlineLines(600000),
       `launcher_absolute_deadline_at_ms=${String(options.launcherDeadlineAtMs ?? 600000)}`,
       `launcher_work_deadline_at_ms=${String(launcherWorkDeadlineAtMs)}`,
+      `launcher_finalization_deadline_at_ms=${String(launcherFinalizationDeadlineAtMs)}`,
       'launcher_deadline_at_ms="$launcher_work_deadline_at_ms"',
       'monitor_path=""',
       'report_path=""',
@@ -5721,6 +5730,7 @@ function terminalReportFixture(
     elapsedMs: 1,
     backend: "codex",
     stage: "merge",
+    stopReason: "completed",
     baseSha: "base",
     worktree,
     branch: "branch",
@@ -6005,9 +6015,9 @@ test("finalizer harness tests declare explicit bounded timeouts", async () => {
     ".orca/workflows/codebase-improvement-artifacts.test.ts",
   ).text();
   const inspection = inspectFinalizerHarnessTimeouts(source);
-  expect(inspection.testCount).toBe(42);
-  expect(inspection.callCount).toBe(78);
-  expect(inspection.expandedRunCount).toBe(95);
+  expect(inspection.testCount).toBe(43);
+  expect(inspection.callCount).toBe(79);
+  expect(inspection.expandedRunCount).toBe(96);
   expect(inspection.longTimeoutTestCount).toBe(1);
   expect(inspection.longTimeoutScenarioCount).toBe(6);
   expect(inspection.extendedInnerTimeoutTestCount).toBe(1);
@@ -9570,7 +9580,7 @@ test("launcher proves primary package-lock bytes and final simple SLA", async ()
     "packageLockSha256Before",
     "packageLockSha256After",
     "launcher_deadline_ms=600000",
-    'elapsed_ms" -gt "$launcher_deadline_ms"',
+    'elapsed_ms" -gt $(( launcher_deadline_ms + launcher_finalization_reserve_ms ))',
   ]) {
     expect(launcher).toContain(required);
   }
@@ -10993,7 +11003,7 @@ test("expired absolute launcher deadline cannot publish live success", async () 
     mode: "live",
     failCopies: false,
     completeLiveEvidence: true,
-    launcherDeadlineAtMs: 99,
+    launcherFinalizationDeadlineAtMs: 99,
     ledger: {
       base: `${seed}\n`,
       source: `${seed}\n`,
@@ -11032,12 +11042,12 @@ test("work cutoff expiry still publishes truthful failure evidence", async () =>
   const main = extractShellFunction(launcher, "main");
   expect(main).toBeDefined();
   expect(main?.replace(/\s+/g, " ")).toContain(
-    "launcher_work_deadline_at_ms=$(( launcher_absolute_deadline_at_ms - launcher_finalization_reserve_ms ))",
+    "launcher_work_deadline_at_ms=\"$launcher_absolute_deadline_at_ms\"",
   );
   const finalizer = extractShellFunction(launcher, "finalize");
   expect(finalizer).toBeDefined();
   expect(finalizer?.indexOf(
-    'launcher_deadline_at_ms="$launcher_absolute_deadline_at_ms"',
+    'launcher_deadline_at_ms="$launcher_finalization_deadline_at_ms"',
   )).toBeLessThan(finalizer?.indexOf("run_before_deadline") ?? -1);
 }, 15_000);
 
@@ -11208,6 +11218,7 @@ test("expired terminal ledger commit leaves retained latest unauthoritative", as
     completeLiveEvidence: true,
     expireAtTerminalLedgerCommit: true,
     launcherDeadlineAtMs: 10_100,
+    launcherFinalizationDeadlineAtMs: 9_000,
     ledger: {
       base: `${seed}\n`,
       source: `${seed}\n`,
@@ -11329,7 +11340,7 @@ test("expired absolute launcher deadline cannot publish preflight success", asyn
     failCopies: false,
     workerExitCode: 0,
     workerCompletedAtMs: 50,
-    launcherDeadlineAtMs: 99,
+    launcherFinalizationDeadlineAtMs: 99,
   });
 
   expect(result.exitCode).toBe(74);
@@ -11379,7 +11390,7 @@ test("terminal ledger cleanup cutoff recovers under owned outer deadline", async
     "cleanup-cutoff",
   );
 
-  expect(result.exitCode).toBe(0);
+  expect(result.exitCode, result.stderr).toBe(0);
   expect(result.recoveryOwner).toBe("owned");
   expect(result.ledger).toBe(result.expectedLedger);
   expect(
@@ -15032,8 +15043,8 @@ test("proof documents record Correction 47 finalizer harness timeout policy", as
     ".orca/workflows/codebase-improvement-artifacts.test.ts",
   ).text();
   const inspection = inspectFinalizerHarnessTimeouts(artifactSource);
-  expect(inspection.testCount).toBe(42);
-  expect(inspection.callCount).toBe(78);
+  expect(inspection.testCount).toBe(43);
+  expect(inspection.callCount).toBe(79);
   expect(inspection.issues).toEqual([]);
 
   const ledger = await Bun.file(".orca/improvement-loop/issues.jsonl").text();
@@ -15125,9 +15136,9 @@ test("proof documents record Correction 48 unconditional scenario policy", async
     ".orca/workflows/codebase-improvement-artifacts.test.ts",
   ).text();
   const inspection = inspectFinalizerHarnessTimeouts(artifactSource);
-  expect(inspection.testCount).toBe(42);
-  expect(inspection.callCount).toBe(78);
-  expect(inspection.expandedRunCount).toBe(95);
+  expect(inspection.testCount).toBe(43);
+  expect(inspection.callCount).toBe(79);
+  expect(inspection.expandedRunCount).toBe(96);
   expect(inspection.longTimeoutScenarioCount).toBe(6);
   expect(inspection.issues).toEqual([]);
 
@@ -15229,9 +15240,9 @@ test("proof documents record Correction 49 exact harness scenario policy", async
     ".orca/workflows/codebase-improvement-artifacts.test.ts",
   ).text();
   const inspection = inspectFinalizerHarnessTimeouts(artifactSource);
-  expect(inspection.testCount).toBe(42);
-  expect(inspection.callCount).toBe(78);
-  expect(inspection.expandedRunCount).toBe(95);
+  expect(inspection.testCount).toBe(43);
+  expect(inspection.callCount).toBe(79);
+  expect(inspection.expandedRunCount).toBe(96);
   expect(inspection.longTimeoutScenarioCount).toBe(6);
   expect(inspection.issues).toEqual([]);
 
@@ -19134,7 +19145,7 @@ function continuationDeliveryRecord(runId: string): string {
       startedAtMs: 1,
       readyAtMs: 2,
       elapsedMs: 1,
-      activeDeadlineAtMs: 600_000,
+      activeDeadlineAtMs: new Date().getTime() + 600_000,
       verification: [],
     },
     delivery: { status: "pending", attempts: [] },
@@ -19223,7 +19234,7 @@ test("delivery continuation reserves shell cleanup after its exact 30-minute dea
   );
 });
 
-test("actual launcher gives each profile's capped window less its final reserve to the runtime", async () => {
+test("actual launcher gives the runtime each profile's full active cap and a distinct finalizer allocation", async () => {
   const launcher = await Bun.file(".orca/workflows/codebase-improvement.sh").text();
   const root = await mkdtemp(join(tmpdir(), "orcats-active-cutoff-"));
   const fakeBin = join(root, "bin");
@@ -19290,12 +19301,56 @@ test("actual launcher gives each profile's capped window less its final reserve 
       expect(startedAtMs, profile).toBeNumber();
       expect(startedAtMs, profile).toBeGreaterThan(0);
       expect(workerDeadlineAtMs, profile).toBeGreaterThan(startedAtMs);
-      expect(workerDeadlineAtMs, profile).toBe(startedAtMs + capMs - 60_000);
+      expect(workerDeadlineAtMs, profile).toBe(startedAtMs + capMs);
     }
+    expect(launcher).toContain("launcher_finalization_deadline_at_ms");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("successful active-ready evidence finalizes without a merge", async () => {
+  const launcher = await Bun.file(
+    ".orca/workflows/codebase-improvement.sh",
+  ).text();
+  const seed = (await Bun.file(".orca/improvement-loop/issues.jsonl").text())
+    .split("\n")[0]!;
+  const result = await runFinalizerHarness(launcher, 0, {
+    mode: "live",
+    failCopies: false,
+    completeLiveEvidence: true,
+    monitorFiles: [
+      {
+        name: "monitor-run.json",
+        contents: terminalMonitorFixture("monitor-run").replace(
+          '"reason":"completed"',
+          '"reason":"active-ready"',
+        ),
+      },
+    ],
+    reportContents: (report) => {
+      const { remoteChecks: _remoteChecks, mergeProof: _mergeProof, ...activeReady } = report;
+      return terminalReportContents(activeReady, {
+        stage: "ready-pr",
+        activeStatus: "ready",
+        deliveryStatus: "pending",
+        deliveryRecordPath: ".orca/improvement-loop/runs/run/delivery.json",
+        merged: false,
+        stopReason: "active-ready",
+      });
+    },
+    ledger: {
+      base: `${seed}\n`,
+      source: `${seed}\n`,
+      candidate: `${seed}\n`,
+    },
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stderr).not.toContain("validate terminal report");
+  expect(result.latest?.exitCode).toBe(0);
+  expect(result.ledger).toBe(`${seed}\n`);
+}, 15_000);
 
 test("active-delivery rebaseline documentation retains the approved contract and dirty baseline", async () => {
   const specificationPath =

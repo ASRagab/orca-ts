@@ -5841,6 +5841,10 @@ interface ScopedScoutTestRuntime {
     readonly settlementReserveMs: number;
     readonly quorum: number;
     readonly accept: (value: T) => boolean;
+    readonly validateAccepted?: (
+      value: T,
+      scopeIndex: number,
+    ) => readonly string[];
     readonly now?: () => number;
   }) => Promise<{
     readonly modelStartedAtMs: number;
@@ -6062,6 +6066,59 @@ test("scoped fanout retains a valid sibling beside invalid timeout and failure r
     "failed",
     "timed_out",
   ]);
+});
+
+test("scoped fanout counts only fully validated candidates toward quorum", async () => {
+  const runtime = await scopedScoutRuntime();
+  if (runtime === undefined) return;
+  const fourth = Promise.withResolvers<string>();
+  const cancellations: string[] = [];
+  const resultPromise = runtime.runScopedScoutFanout({
+    conversations: [
+      ...[0, 1, 2].map((scopeIndex) => ({
+        label: `invalid candidate ${String(scopeIndex)}`,
+        async run(): Promise<string> {
+          return `candidate ${String(scopeIndex)}`;
+        },
+        cancel(reason): void {
+          cancellations.push(`invalid ${String(scopeIndex)}: ${reason}`);
+        },
+      })),
+      {
+        label: "fourth valid candidate",
+        async run(): Promise<string> {
+          return await fourth.promise;
+        },
+        cancel(reason): void {
+          cancellations.push(`fourth: ${reason}`);
+        },
+      },
+    ],
+    modelAllocationMs: 120_000,
+    settlementReserveMs: 5_000,
+    quorum: 3,
+    accept: (value) => value.startsWith("candidate"),
+    validateAccepted: (_value, scopeIndex) =>
+      scopeIndex < 3 ? ["source/test/profile/evidence validation failed"] : [],
+  });
+
+  await flushScopedScoutTurns();
+  fourth.resolve("candidate 3");
+  const result = await settleWithin(resultPromise, 100);
+
+  expect(cancellations).toEqual([]);
+  expect(result.accepted.map((record) => record.scopeIndex)).toEqual([3]);
+  expect(result.records.map((record) => record.status)).toEqual([
+    "invalid",
+    "invalid",
+    "invalid",
+    "accepted",
+  ]);
+  for (const record of result.records.slice(0, 3)) {
+    expect(record.validationIssues).toEqual([
+      "source/test/profile/evidence validation failed",
+    ]);
+  }
 });
 
 test("scoped fanout quorum cancels each pending scope once and drains cancellation rejection", async () => {
