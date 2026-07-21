@@ -43,6 +43,7 @@ import {
   mergeUsage,
   namedTestArgs,
   normalizeFailure,
+  parseScopedScoutTransport,
   parseRemoteChecksCommandResult,
   profileLimits,
   pullRequestCreateArgs,
@@ -53,6 +54,7 @@ import {
   remoteCheckState,
   runRankedCandidateFallback,
   ScopedScoutResultSchema,
+  ScopedScoutTransportSchema,
   selectScoutEvidence,
   stageBudgetMs,
   stageConfig,
@@ -1502,7 +1504,7 @@ await flow(flowArgs())(async () => {
               return await monitor.stage(label, async () => {
                 const activeConversation = llm().autonomous(selectedStageBackend, {
                   prompt: scopedScoutPrompt(profile, profileLimits[profile], packet.text, pair),
-                  schema: ScopedScoutResultSchema,
+                  schema: ScopedScoutTransportSchema,
                   config: selectedStageConfig(scoutConfig),
                 });
                 conversation = activeConversation;
@@ -1518,15 +1520,13 @@ await flow(flowArgs())(async () => {
                   throw new Error(`${label} failed: ${describeOutcome(outcome)}`);
                 }
                 scopedUsage.set(scopeIndex, outcome.result.usage);
-                const structured = ScopedScoutResultSchema.safeParse(
-                  outcome.result.structured,
-                );
-                if (!structured.success) {
+                try {
+                  return parseScopedScoutTransport(outcome.result.structured);
+                } catch (error) {
                   throw new Error(
-                    `${label} structured output invalid: ${structured.error.message}`,
+                    `${label} structured output invalid: ${normalizeFailure(error)}`,
                   );
                 }
-                return structured.data;
               });
             },
             async cancel(reason) {

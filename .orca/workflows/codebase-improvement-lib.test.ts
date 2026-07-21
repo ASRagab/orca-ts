@@ -259,6 +259,75 @@ test("scoped scout schema accepts a strict candidate and cited no_candidate", ()
   }
 });
 
+test("scoped scout transport schema avoids a top-level union while strict parsing remains mandatory", () => {
+  const transport = (improvementLib as Record<string, unknown>)
+    .ScopedScoutTransportSchema as
+    | {
+        parse(value: unknown): unknown;
+        safeParse(value: unknown): { readonly success: boolean };
+        toJSONSchema(): unknown;
+      }
+    | undefined;
+  const parseTransport = (improvementLib as Record<string, unknown>)
+    .parseScopedScoutTransport as
+    | ((value: unknown) => unknown)
+    | undefined;
+  expect(transport).toBeDefined();
+  expect(parseTransport).toBeDefined();
+  if (transport === undefined || parseTransport === undefined) return;
+
+  const candidateWire = {
+    ...scopedScoutCandidateResult,
+    candidate: {
+      ...scopedScoutCandidateResult.candidate,
+      estimatedActiveMs: 30_000,
+    },
+    reason: null,
+  };
+  const noCandidateResult = {
+    status: "no_candidate",
+    reason:
+      "src/tools/process.ts:1 has no safe small repair; tests/tools.test.ts:1 covers the behavior.",
+  } as const;
+  const noCandidateWire = {
+    ...noCandidateResult,
+    candidate: null,
+    selectedControl: null,
+  };
+  expect(transport.parse(candidateWire)).toEqual(candidateWire);
+  expect(transport.parse(noCandidateWire)).toEqual(noCandidateWire);
+  expect(parseTransport(candidateWire)).toEqual({
+    ...scopedScoutCandidateResult,
+    candidate: {
+      ...scopedScoutCandidateResult.candidate,
+      estimatedActiveMs: 30_000,
+    },
+  });
+  expect(parseTransport(noCandidateWire)).toEqual(noCandidateResult);
+  expect(
+    transport.safeParse({
+      ...candidateWire,
+      candidate: scopedScoutCandidateResult.candidate,
+    }).success,
+  ).toBe(false);
+  expect(transport.safeParse(scopedScoutCandidateResult).success).toBe(false);
+  expect(
+    ScopedScoutResultSchema.safeParse({ status: "candidate" }).success,
+  ).toBe(false);
+  const wireSchema = transport.toJSONSchema();
+  expect(wireSchema).toMatchObject({
+    type: "object",
+    required: ["status", "candidate", "selectedControl", "reason"],
+  });
+  expect(JSON.stringify(wireSchema)).not.toContain('"oneOf"');
+  expect(() =>
+    parseTransport({ ...candidateWire, selectedControl: null }),
+  ).toThrow("candidate response requires candidate and selectedControl");
+  expect(() =>
+    parseTransport({ ...noCandidateWire, candidate: candidateWire.candidate }),
+  ).toThrow("no_candidate response requires null candidate and selectedControl");
+});
+
 test("scoped validation binds a candidate to its reserved pair and profile", () => {
   expect(
     validateScopedScoutResult(

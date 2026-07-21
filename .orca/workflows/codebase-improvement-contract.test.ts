@@ -7286,7 +7286,10 @@ test("scout synthesis is one watched tool-free ranked callsite", async () => {
   const runtimeSource = await Bun.file(runtimePath).text();
   expect(source).toContain("runScopedScoutFanout<ScopedScoutResult>({");
   expect(source).toContain("finalizeScopedScoutRecords({");
-  expect(source).toContain("schema: ScopedScoutResultSchema,");
+  expect(source).toContain("schema: ScopedScoutTransportSchema,");
+  expect(source).toContain(
+    "return parseScopedScoutTransport(outcome.result.structured);",
+  );
   expect(source).toContain("awaitToolFreeOutcome(activeConversation");
   expect(source).not.toContain("awaitOneTimeoutRetry(");
   expect(runtimeSource).toContain("export async function runScopedScoutFanout");

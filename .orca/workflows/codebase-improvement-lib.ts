@@ -592,6 +592,18 @@ const StrictScoutCandidateSchema = ScoutCandidateBaseSchema.strict().superRefine
     }
   },
 );
+const CodexScopedScoutCandidateTransportSchema = ScoutCandidateBaseSchema.extend({
+  estimatedActiveMs: z.number().int().positive(),
+})
+  .strict()
+  .superRefine((value, context) => {
+    for (const message of candidateContractIssues(value)) {
+      context.addIssue({
+        code: "custom",
+        message,
+      });
+    }
+  });
 const StrictCandidateControlSchema = CandidateControlSchema.strict();
 const ScopedScoutCandidateResultSchema = z
   .object({
@@ -622,6 +634,20 @@ export const ScopedScoutResultSchema = z
       });
     }
   });
+
+/**
+ * Codex requires every object property in `--output-schema` to be required and
+ * rejects a top-level JSON Schema `oneOf`. Keep a required nullable envelope
+ * on the wire, then validate with {@link ScopedScoutResultSchema} locally.
+ */
+export const ScopedScoutTransportSchema = z
+  .object({
+    status: z.enum(["candidate", "no_candidate"]),
+    candidate: CodexScopedScoutCandidateTransportSchema.nullable(),
+    selectedControl: StrictCandidateControlSchema.nullable(),
+    reason: z.string().trim().min(1).nullable(),
+  })
+  .strict();
 
 export const ScoutResultSchema = z
   .object({
@@ -721,6 +747,40 @@ export type ScoutResult = z.infer<typeof ScoutResultSchema>;
 export type Candidate = z.infer<typeof CandidateSchema>;
 export type CandidateControl = z.infer<typeof CandidateControlSchema>;
 export type ScopedScoutResult = z.infer<typeof ScopedScoutResultSchema>;
+export type ScopedScoutTransport = z.infer<typeof ScopedScoutTransportSchema>;
+
+export function parseScopedScoutTransport(value: unknown): ScopedScoutResult {
+  const parsed = ScopedScoutTransportSchema.parse(value);
+  if (parsed.status === "candidate") {
+    if (
+      parsed.candidate === null ||
+      parsed.selectedControl === null ||
+      parsed.reason !== null
+    ) {
+      throw new Error(
+        "candidate response requires candidate and selectedControl with null reason",
+      );
+    }
+    return ScopedScoutResultSchema.parse({
+      status: "candidate",
+      candidate: parsed.candidate,
+      selectedControl: parsed.selectedControl,
+    });
+  }
+  if (
+    parsed.candidate !== null ||
+    parsed.selectedControl !== null ||
+    parsed.reason === null
+  ) {
+    throw new Error(
+      "no_candidate response requires null candidate and selectedControl with reason",
+    );
+  }
+  return ScopedScoutResultSchema.parse({
+    status: "no_candidate",
+    reason: parsed.reason,
+  });
+}
 
 export class NoSuitableScoutCandidateError extends Error {
   constructor() {
