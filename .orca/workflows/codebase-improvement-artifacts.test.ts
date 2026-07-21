@@ -19222,3 +19222,72 @@ test("delivery continuation reserves shell cleanup after its exact 30-minute dea
     '\"ORCA_IMPROVEMENT_DELIVERY_DEADLINE_AT_MS=$delivery_deadline_at_ms\"',
   );
 });
+
+test("active-delivery rebaseline documentation retains the approved contract and dirty baseline", async () => {
+  const specificationPath =
+    "docs/superpowers/specs/2026-07-20-codebase-improvement-active-delivery-rebaseline.md";
+  const specification = await Bun.file(specificationPath).text();
+  for (const required of [
+    "`active-ready` exits zero even though the candidate is not merged.",
+    "simple 10-20 minutes\n  within 30, medium 30-60 within 60, challenging 60-120 within 120.",
+    "Simple scout limits are exactly `15_000`, `120_000`, and `20_000` milliseconds.",
+    "One to three independently valid scout siblings are sufficient.",
+    "distinct 1,800,000-ms external deadline",
+    "write `pending`, retain the\n  last authoritative PR/check observation, exit `75`, and leave active success\n  unchanged.",
+    "--match-head-commit <lockedHeadSha>",
+    "re-read\n  merge protection, required checks, and PR identity in that order.",
+    "NUL-list dirty-baseline comparator",
+    "The following are the only acknowledged Task 6 read-only documents in the\ncaptured NUL-list dirty baseline:",
+    ".orca/workflows/codebase-improvement.run.md",
+    "docs/superpowers/specs/2026-07-10-codebase-improvement-loop-design.md",
+    "docs/superpowers/plans/2026-07-10-codebase-improvement-scout-correction.md",
+  ]) {
+    expect(specification).toContain(required);
+  }
+
+  const progress = await Bun.file(".superpowers/sdd/progress.md").text();
+  for (const required of [
+    "Correction 64: active/delivery rebaseline documented",
+    "baseline `26939dd93ccb4c3c64017ce1403818f2833a5d59`",
+    "reviewed task ranges: Task 1 `c90c583..0ed2534`; Task 2 `0ed2534..7f36f92`; Task 3 `7f36f92..51e3d3e`; Task 4 `51e3d3e..357ed2f`; Task 5 `357ed2f..26939dd`",
+    "Task 5 final evidence: contract 115/115 with 766 assertions; artifacts 213/213 with 3227 assertions; Bash syntax, flow typecheck, scoped ESLint, diff, and retained dirty baseline green",
+  ]) {
+    expect(progress).toContain(required);
+  }
+
+  const baselineRoot = await Bun.file("/tmp/orcats-execution-baseline.root").text();
+  const capturedRoot = baselineRoot.trim();
+  const capturedPaths = new TextDecoder().decode(
+    await Bun.file(join(capturedRoot, "tracked-dirty.z")).arrayBuffer(),
+  ).split("\0").filter(Boolean);
+  const acknowledgedPaths = [
+    ".orca/workflows/codebase-improvement.run.md",
+    "docs/superpowers/specs/2026-07-10-codebase-improvement-loop-design.md",
+    "docs/superpowers/plans/2026-07-10-codebase-improvement-scout-correction.md",
+  ] as const;
+  for (const path of acknowledgedPaths) expect(capturedPaths).toContain(path);
+
+  const comparisonRoot = await mkdtemp(
+    join(tmpdir(), "orcats-task6-dirty-baseline-"),
+  );
+  try {
+    expect(
+      await Bun.spawn(["tar", "-xf", join(capturedRoot, "tracked-dirty.tar"), "-C", comparisonRoot]).exited,
+    ).toBe(0);
+    for (const path of acknowledgedPaths) {
+      const expectedPath = join(comparisonRoot, path);
+      const [expectedStat, actualStat, expectedBytes, actualBytes] = await Promise.all([
+        lstat(expectedPath),
+        lstat(path),
+        Bun.file(expectedPath).arrayBuffer(),
+        Bun.file(path).arrayBuffer(),
+      ]);
+      expect(expectedStat.isFile()).toBe(true);
+      expect(actualStat.isFile()).toBe(true);
+      expect(actualStat.mode & 0o777).toBe(expectedStat.mode & 0o777);
+      expect(new Uint8Array(actualBytes)).toEqual(new Uint8Array(expectedBytes));
+    }
+  } finally {
+    await rm(comparisonRoot, { recursive: true, force: true });
+  }
+});

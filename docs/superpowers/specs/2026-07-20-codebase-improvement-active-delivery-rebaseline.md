@@ -229,6 +229,20 @@ in place of the named observation.
 | Documentation review | The Task 6 commit is reviewed from the fixed Review-5 head through its current head. | Review 6 must literally end `ZERO FINDINGS`. |
 | Final lint | Scoped ESLint covers the lib, runtime, and flow sources after Tasks 4-5. | The final deterministic freeze fails on an unsuppressed diagnostic. |
 
+## Task 6 documentation freeze
+
+The following are the only acknowledged Task 6 read-only documents in the
+captured NUL-list dirty baseline:
+
+- `.orca/workflows/codebase-improvement.run.md`
+- `docs/superpowers/specs/2026-07-10-codebase-improvement-loop-design.md`
+- `docs/superpowers/plans/2026-07-10-codebase-improvement-scout-correction.md`
+
+The documentation artifact check compares each retained file's captured bytes,
+file type, and permission mode from the NUL list and tar copy. Task 6 neither
+modifies nor stages those documents; their historical supersession text remains
+captured until separate authorization permits a change.
+
 ## Acceptance evidence
 
 The final deterministic freeze must prove:
