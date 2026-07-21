@@ -19,7 +19,9 @@ import * as ts from "typescript";
 import {
   assertMergedPullRequestState,
   assertReadyPullRequestHead,
+  assertRequiredMergeProtection,
   DeliveryRecordSchema,
+  parseRemoteChecksCommandResult,
   remoteCheckState,
   type PullRequestIdentity,
 } from "./codebase-improvement-lib.ts";
@@ -9450,21 +9452,25 @@ type DeliveryContinuation = (
   dependencies: {
     readonly deadlineAtMs?: number;
     readonly now: () => number;
-    readonly readProtection: (remainingMs: number) => Promise<{
-      readonly valid: boolean;
-      readonly log: Record<string, unknown>;
-    }>;
-    readonly readChecks: (remainingMs: number) => Promise<{
-      readonly state: "pending" | "passed" | "failed";
-      readonly log: Record<string, unknown>;
-    }>;
+    readonly readProtection: (remainingMs: number) => Promise<
+      | { readonly unavailable: true; readonly log: Record<string, unknown> }
+      | { readonly valid: boolean; readonly log: Record<string, unknown> }
+    >;
+    readonly readChecks: (remainingMs: number) => Promise<
+      | { readonly unavailable: true; readonly log: Record<string, unknown> }
+      | {
+          readonly state: "pending" | "passed" | "failed";
+          readonly log: Record<string, unknown>;
+        }
+    >;
     readonly readPullRequest: (
       phase: "ready" | "merged",
       remainingMs: number,
-    ) => Promise<{
-      readonly pr: Record<string, unknown>;
-      readonly log: Record<string, unknown>;
-    }>;
+    ) => Promise<
+      | { readonly unavailable: true; readonly log: Record<string, unknown> }
+      | { readonly blocked: true; readonly log: Record<string, unknown> }
+      | { readonly pr: Record<string, unknown>; readonly log: Record<string, unknown> }
+    >;
     readonly merge: (
       lockedHeadSha: string,
       remainingMs: number,
@@ -9482,6 +9488,40 @@ type DeliveryContinuation = (
   readonly exitCode: 0 | 1 | 75;
   readonly record: Record<string, unknown>;
 }>;
+
+type DeliveryChecksReader = (
+  remainingMs: number,
+) => Promise<
+  | { readonly unavailable: true; readonly log: Record<string, unknown> }
+  | {
+      readonly state: "pending" | "passed" | "failed";
+      readonly log: Record<string, unknown>;
+    }
+>;
+
+type DeliveryProtectionReader = (
+  remainingMs: number,
+) => Promise<
+  | { readonly unavailable: true; readonly log: Record<string, unknown> }
+  | { readonly valid: boolean; readonly log: Record<string, unknown> }
+>;
+
+type DeliveryPullRequestReader = (
+  phase: "ready" | "merged",
+  remainingMs: number,
+) => Promise<
+  | { readonly unavailable: true; readonly log: Record<string, unknown> }
+  | { readonly blocked: true; readonly log: Record<string, unknown> }
+  | { readonly pr: Record<string, unknown>; readonly log: Record<string, unknown> }
+>;
+
+interface DeliveryCommandResult {
+  readonly type: string;
+  readonly exitCode: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly durationMs: number;
+}
 
 function loadDeliveryContinuation(source: string): DeliveryContinuation | undefined {
   const sourceFile = ts.createSourceFile(
@@ -9513,6 +9553,91 @@ function loadDeliveryContinuation(source: string): DeliveryContinuation | undefi
     },
   );
   return typeof loaded === "function" ? (loaded as DeliveryContinuation) : undefined;
+}
+
+function loadDeliveryCommandReader(
+  source: string,
+  readerName: "readChecks" | "readProtection" | "readPullRequest",
+  result: DeliveryCommandResult,
+): unknown | undefined {
+  const sourceFile = ts.createSourceFile(
+    path,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  let commandLog: ts.VariableDeclaration | undefined;
+  let reader: ts.ArrowFunction | undefined;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "commandLog" &&
+      node.initializer !== undefined
+    ) {
+      commandLog = node;
+    }
+    if (
+      ts.isPropertyAssignment(node) &&
+      node.name.getText(sourceFile) === readerName &&
+      ts.isArrowFunction(node.initializer)
+    ) {
+      reader = node.initializer;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  if (commandLog?.initializer === undefined || reader === undefined) return undefined;
+  const emitted = ts.transpileModule(
+    [
+      `const commandLog = ${commandLog.initializer.getText(sourceFile)};`,
+      `const ${readerName} = ${reader.getText(sourceFile)};`,
+      `${readerName};`,
+    ].join("\n"),
+    {
+      compilerOptions: {
+        module: ts.ModuleKind.None,
+        target: ts.ScriptTarget.ES2022,
+      },
+    },
+  ).outputText;
+  const loaded: unknown = runInNewContext(emitted, {
+    command: () => ({ run: async () => result }),
+    launcherValidatedRecord: {
+      repository: "example/project",
+      prUrl: "https://github.com/example/project/pull/42",
+    },
+    assertRequiredMergeProtection,
+    parseRemoteChecksCommandResult,
+    remainingTimeout: (_limit: number, remainingMs: number) => remainingMs,
+    remoteCheckState,
+  });
+  return typeof loaded === "function" ? loaded : undefined;
+}
+
+function loadDeliveryChecksReader(
+  source: string,
+  result: DeliveryCommandResult,
+): DeliveryChecksReader | undefined {
+  const reader = loadDeliveryCommandReader(source, "readChecks", result);
+  return typeof reader === "function" ? (reader as DeliveryChecksReader) : undefined;
+}
+
+function loadDeliveryProtectionReader(
+  source: string,
+  result: DeliveryCommandResult,
+): DeliveryProtectionReader | undefined {
+  const reader = loadDeliveryCommandReader(source, "readProtection", result);
+  return typeof reader === "function" ? (reader as DeliveryProtectionReader) : undefined;
+}
+
+function loadDeliveryPullRequestReader(
+  source: string,
+  result: DeliveryCommandResult,
+): DeliveryPullRequestReader | undefined {
+  const reader = loadDeliveryCommandReader(source, "readPullRequest", result);
+  return typeof reader === "function" ? (reader as DeliveryPullRequestReader) : undefined;
 }
 
 function deliveryRecordFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -9920,6 +10045,273 @@ test("delivery continuation writes blocked and exits nonzero for failed checks a
   }
 });
 
+test("delivery blocks structured failed nonzero check output before merge", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  const readChecks = loadDeliveryChecksReader(source, {
+    type: "failure",
+    exitCode: 8,
+    stdout: JSON.stringify([
+      { name: "Verify", workflow: "CI", bucket: "pass" },
+      { name: "GitGuardian", workflow: "", bucket: "fail" },
+    ]),
+    stderr: "",
+    durationMs: 1,
+  });
+  expect(continuation).toBeFunction();
+  expect(readChecks).toBeFunction();
+  if (continuation === undefined || readChecks === undefined) return;
+
+  let mergeCalls = 0;
+  const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+    now: () => 10,
+    requireActiveReadyReport: async () => {},
+    readPullRequest: async () => ({ pr: readyDeliveryPr(), log: deliveryCommand("pr") }),
+    readChecks,
+    readProtection: async () => {
+      throw new Error("failed checks must stop before protection");
+    },
+    merge: async () => {
+      mergeCalls += 1;
+      return deliveryCommand("merge");
+    },
+    persist: async () => {},
+  });
+
+  expect(result).toMatchObject({ status: "blocked", exitCode: 1 });
+  expect(mergeCalls).toBe(0);
+});
+
+test("delivery blocks an authoritative failed protection read before merge", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  const readProtection = loadDeliveryProtectionReader(source, {
+    type: "failed",
+    exitCode: 1,
+    stdout: "",
+    stderr: "HTTP 404: Not Found",
+    durationMs: 1,
+  });
+  expect(continuation).toBeFunction();
+  expect(readProtection).toBeFunction();
+  if (continuation === undefined || readProtection === undefined) return;
+
+  let mergeCalls = 0;
+  const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+    now: () => 10,
+    requireActiveReadyReport: async () => {},
+    readPullRequest: async () => ({ pr: readyDeliveryPr(), log: deliveryCommand("pr") }),
+    readChecks: async () => ({ state: "passed", log: deliveryCommand("checks") }),
+    readProtection,
+    merge: async () => {
+      mergeCalls += 1;
+      return deliveryCommand("merge");
+    },
+    persist: async () => {},
+  });
+
+  expect(result).toMatchObject({ status: "blocked", exitCode: 1 });
+  expect(mergeCalls).toBe(0);
+});
+
+test("delivery blocks an authoritative failed pull-request read before merge", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  const readPullRequest = loadDeliveryPullRequestReader(source, {
+    type: "failed",
+    exitCode: 1,
+    stdout: "",
+    stderr: "HTTP 404: Not Found",
+    durationMs: 1,
+  });
+  expect(continuation).toBeFunction();
+  expect(readPullRequest).toBeFunction();
+  if (continuation === undefined || readPullRequest === undefined) return;
+
+  let mergeCalls = 0;
+  const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+    now: () => 10,
+    requireActiveReadyReport: async () => {},
+    readPullRequest,
+    readChecks: async () => {
+      throw new Error("failed pull-request read must stop before checks");
+    },
+    readProtection: async () => {
+      throw new Error("failed pull-request read must stop before protection");
+    },
+    merge: async () => {
+      mergeCalls += 1;
+      return deliveryCommand("merge");
+    },
+    persist: async () => {},
+  });
+
+  expect(result).toMatchObject({ status: "blocked", exitCode: 1 });
+  expect(mergeCalls).toBe(0);
+});
+
+test("delivery keeps timed-out protection and pull-request reads retryable", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  const timeout = {
+    type: "failed",
+    exitCode: null,
+    stdout: "",
+    stderr: "Command timed out after 30000ms",
+    durationMs: 30_000,
+  } as const;
+  const readProtection = loadDeliveryProtectionReader(source, timeout);
+  const readPullRequest = loadDeliveryPullRequestReader(source, timeout);
+  expect(continuation).toBeFunction();
+  expect(readProtection).toBeFunction();
+  expect(readPullRequest).toBeFunction();
+  if (
+    continuation === undefined ||
+    readProtection === undefined ||
+    readPullRequest === undefined
+  ) {
+    return;
+  }
+
+  let mergeCalls = 0;
+  const protectionResult = await continuation(JSON.stringify(deliveryRecordFixture()), {
+    now: () => 10,
+    requireActiveReadyReport: async () => {},
+    readPullRequest: async () => ({ pr: readyDeliveryPr(), log: deliveryCommand("pr") }),
+    readChecks: async () => ({ state: "passed", log: deliveryCommand("checks") }),
+    readProtection,
+    merge: async () => {
+      mergeCalls += 1;
+      return deliveryCommand("merge");
+    },
+    persist: async () => {},
+  });
+  const pullRequestResult = await continuation(JSON.stringify(deliveryRecordFixture()), {
+    now: () => 10,
+    requireActiveReadyReport: async () => {},
+    readPullRequest,
+    readChecks: async () => {
+      throw new Error("timed-out pull-request read must stop before checks");
+    },
+    readProtection: async () => {
+      throw new Error("timed-out pull-request read must stop before protection");
+    },
+    merge: async () => {
+      mergeCalls += 1;
+      return deliveryCommand("merge");
+    },
+    persist: async () => {},
+  });
+
+  expect(protectionResult).toMatchObject({ status: "pending", exitCode: 75 });
+  expect(pullRequestResult).toMatchObject({ status: "pending", exitCode: 75 });
+  expect(mergeCalls).toBe(0);
+});
+
+test("delivery keeps retryable GitHub client failures pending", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  for (const [status, description] of [
+    [401, "Bad credentials"],
+    [403, "Resource not accessible by integration"],
+    [429, "Too Many Requests"],
+  ] as const) {
+    const failure = {
+      type: "failed",
+      exitCode: 1,
+      stdout: "",
+      stderr: `HTTP ${String(status)}: ${description}`,
+      durationMs: 1,
+    } as const;
+    const readProtection = loadDeliveryProtectionReader(source, failure);
+    const readPullRequest = loadDeliveryPullRequestReader(source, failure);
+    expect(readProtection, String(status)).toBeFunction();
+    expect(readPullRequest, String(status)).toBeFunction();
+    if (readProtection === undefined || readPullRequest === undefined) return;
+
+    let mergeCalls = 0;
+    const protectionResult = await continuation(JSON.stringify(deliveryRecordFixture()), {
+      now: () => 10,
+      requireActiveReadyReport: async () => {},
+      readPullRequest: async () => ({ pr: readyDeliveryPr(), log: deliveryCommand("pr") }),
+      readChecks: async () => ({ state: "passed", log: deliveryCommand("checks") }),
+      readProtection,
+      merge: async () => {
+        mergeCalls += 1;
+        return deliveryCommand("merge");
+      },
+      persist: async () => {},
+    });
+    const pullRequestResult = await continuation(JSON.stringify(deliveryRecordFixture()), {
+      now: () => 10,
+      requireActiveReadyReport: async () => {},
+      readPullRequest,
+      readChecks: async () => {
+        throw new Error("retryable pull-request read must stop before checks");
+      },
+      readProtection: async () => {
+        throw new Error("retryable pull-request read must stop before protection");
+      },
+      merge: async () => {
+        mergeCalls += 1;
+        return deliveryCommand("merge");
+      },
+      persist: async () => {},
+    });
+
+    expect(protectionResult, String(status)).toMatchObject({ status: "pending", exitCode: 75 });
+    expect(pullRequestResult, String(status)).toMatchObject({ status: "pending", exitCode: 75 });
+    expect(mergeCalls, String(status)).toBe(0);
+  }
+});
+
+test("delivery records blocked merged-confirmation command evidence", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  const failedMergedRead = loadDeliveryPullRequestReader(source, {
+    type: "failed",
+    exitCode: 1,
+    stdout: "",
+    stderr: "HTTP 404: Not Found",
+    durationMs: 1,
+  });
+  expect(continuation).toBeFunction();
+  expect(failedMergedRead).toBeFunction();
+  if (continuation === undefined || failedMergedRead === undefined) return;
+
+  const persisted: Record<string, unknown>[] = [];
+  const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+    now: () => 10,
+    requireActiveReadyReport: async () => {},
+    readPullRequest: async (phase, remainingMs) =>
+      phase === "merged"
+        ? await failedMergedRead(phase, remainingMs)
+        : { pr: readyDeliveryPr(), log: deliveryCommand("pr") },
+    readChecks: async () => ({ state: "passed", log: deliveryCommand("checks") }),
+    readProtection: async () => ({ valid: true, log: deliveryCommand("protection") }),
+    merge: async () => deliveryCommand("merge"),
+    persist: async (record) => {
+      persisted.push(record);
+    },
+  });
+
+  expect(result).toMatchObject({ status: "blocked", exitCode: 1 });
+  expect(persisted[0]?.delivery).toMatchObject({
+    status: "blocked",
+    attempts: [
+      {
+        status: "blocked",
+        checks: expect.arrayContaining([
+          expect.objectContaining({ status: "failed", exitCode: 1 }),
+        ]),
+      },
+    ],
+  });
+});
+
 test("delivery continuation persists one blocked base-mismatch attempt without a merge", async () => {
   const source = await Bun.file(path).text();
   const continuation = loadDeliveryContinuation(source);
@@ -9990,6 +10382,97 @@ test("delivery continuation preserves retryable pending evidence at its deadline
     status: "pending",
     attempts: [{ status: "pending" }],
   });
+});
+
+test("delivery continuation preserves retryable pending for unavailable prerequisite reads", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  for (const unavailable of ["pull-request", "checks", "protection"] as const) {
+    const events: string[] = [];
+    const persisted: Record<string, unknown>[] = [];
+    const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+      now: () => 10,
+      requireActiveReadyReport: async () => {},
+      readPullRequest: async () => {
+        events.push("pr");
+        if (unavailable === "pull-request") throw new Error("temporary GitHub outage");
+        return { pr: readyDeliveryPr(), log: deliveryCommand("pr") };
+      },
+      readChecks: async () => {
+        events.push("checks");
+        if (unavailable === "checks") throw new Error("temporary GitHub outage");
+        return { state: "passed" as const, log: deliveryCommand("checks") };
+      },
+      readProtection: async () => {
+        events.push("protection");
+        if (unavailable === "protection") throw new Error("temporary GitHub outage");
+        return { valid: true, log: deliveryCommand("protection") };
+      },
+      merge: async () => {
+        events.push("merge");
+        return deliveryCommand("merge");
+      },
+      persist: async (record) => {
+        events.push("persist");
+        persisted.push(record);
+      },
+    });
+
+    expect(result, unavailable).toMatchObject({ status: "pending", exitCode: 75 });
+    expect(events, unavailable).toContain("persist");
+    expect(events, unavailable).not.toContain("merge");
+    expect(persisted[0]?.delivery, unavailable).toMatchObject({
+      status: "pending",
+      attempts: [{ status: "pending" }],
+    });
+  }
+});
+
+test("delivery continuation preserves retryable pending command evidence", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  for (const unavailable of ["pull-request", "checks", "protection"] as const) {
+    const events: string[] = [];
+    const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+      now: () => 10,
+      requireActiveReadyReport: async () => {},
+      readPullRequest: async () => {
+        events.push("pr");
+        return unavailable === "pull-request"
+          ? { unavailable: true as const, log: deliveryCommand("pr") }
+          : { pr: readyDeliveryPr(), log: deliveryCommand("pr") };
+      },
+      readChecks: async () => {
+        events.push("checks");
+        return unavailable === "checks"
+          ? { unavailable: true as const, log: deliveryCommand("checks") }
+          : { state: "passed" as const, log: deliveryCommand("checks") };
+      },
+      readProtection: async () => {
+        events.push("protection");
+        return unavailable === "protection"
+          ? { unavailable: true as const, log: deliveryCommand("protection") }
+          : { valid: true, log: deliveryCommand("protection") };
+      },
+      merge: async () => {
+        events.push("merge");
+        return deliveryCommand("merge");
+      },
+      persist: async () => {
+        events.push("persist");
+      },
+    });
+
+    expect(result, unavailable).toMatchObject({ status: "pending", exitCode: 75 });
+    expect(events, unavailable).toContain("persist");
+    expect(events, unavailable).not.toContain("merge");
+  }
 });
 
 test("delivery continuation blocks every initial ready-identity mismatch before merge", async () => {

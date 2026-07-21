@@ -53,7 +53,6 @@ import {
   requireRecordedUsage,
   remoteCheckState,
   runRankedCandidateFallback,
-  ScopedScoutResultSchema,
   ScopedScoutTransportSchema,
   selectScoutEvidence,
   stageBudgetMs,
@@ -400,24 +399,39 @@ async function awaitConversationWithinBudget<T>(
   }
 }
 
+interface DeliveryCommandUnavailable {
+  readonly unavailable: true;
+  readonly log: CommandLog;
+}
+
+interface DeliveryCommandBlocked {
+  readonly blocked: true;
+  readonly log: CommandLog;
+}
+
+type DeliveryProtectionRead =
+  | DeliveryCommandUnavailable
+  | { readonly valid: boolean; readonly log: CommandLog };
+type DeliveryChecksRead =
+  | DeliveryCommandUnavailable
+  | { readonly state: "pending" | "passed" | "failed"; readonly log: CommandLog };
+type DeliveryPullRequestRead =
+  | DeliveryCommandUnavailable
+  | DeliveryCommandBlocked
+  | {
+      readonly pr: DeliveryReadyPullRequest | DeliveryMergedPullRequest;
+      readonly log: CommandLog;
+    };
+
 interface DeliveryContinuationDependencies {
   readonly deadlineAtMs?: number;
   readonly now: () => number;
-  readonly readProtection: (remainingMs: number) => Promise<{
-    readonly valid: boolean;
-    readonly log: CommandLog;
-  }>;
-  readonly readChecks: (remainingMs: number) => Promise<{
-    readonly state: "pending" | "passed" | "failed";
-    readonly log: CommandLog;
-  }>;
+  readonly readProtection: (remainingMs: number) => Promise<DeliveryProtectionRead>;
+  readonly readChecks: (remainingMs: number) => Promise<DeliveryChecksRead>;
   readonly readPullRequest: (
     phase: "ready" | "merged",
     remainingMs: number,
-  ) => Promise<{
-    readonly pr: DeliveryReadyPullRequest | DeliveryMergedPullRequest;
-    readonly log: CommandLog;
-  }>;
+  ) => Promise<DeliveryPullRequestRead>;
   readonly merge: (
     lockedHeadSha: string,
     remainingMs: number,
@@ -569,14 +583,21 @@ async function runDeliveryContinuation(
   };
   const readReady = async (): Promise<"ok" | "pending" | "blocked"> => {
     if (expired()) return "pending";
+    let read: DeliveryPullRequestRead;
     try {
-      const read = await dependencies.readPullRequest("ready", remaining("PR identity"));
-      checks.push(read.log);
+      read = await dependencies.readPullRequest("ready", remaining("PR identity"));
+    } catch {
+      return "pending";
+    }
+    checks.push(read.log);
+    if ("unavailable" in read) return "pending";
+    if ("blocked" in read) return "blocked";
+    try {
       assertReadyPullRequestHead(read.pr, identity);
       latestPr = read.pr;
       return "ok";
     } catch {
-      return expired() ? "pending" : "blocked";
+      return "blocked";
     }
   };
 
@@ -599,9 +620,10 @@ async function runDeliveryContinuation(
   try {
     initialChecks = await dependencies.readChecks(remaining("initial checks"));
   } catch {
-    return await finish(expired() ? "pending" : "blocked");
+    return await finish("pending");
   }
   checks.push(initialChecks.log);
+  if ("unavailable" in initialChecks) return await finish("pending");
   if (initialChecks.state === "failed") return await finish("blocked");
   if (initialChecks.state === "pending" || expired()) {
     return await finish("pending");
@@ -612,9 +634,10 @@ async function runDeliveryContinuation(
   try {
     protection = await dependencies.readProtection(remaining("merge protection"));
   } catch {
-    return await finish(expired() ? "pending" : "blocked");
+    return await finish("pending");
   }
   checks.push(protection.log);
+  if ("unavailable" in protection) return await finish("pending");
   if (!protection.valid) return await finish("blocked");
 
   if (expired()) return await finish("pending");
@@ -622,9 +645,10 @@ async function runDeliveryContinuation(
   try {
     freshChecks = await dependencies.readChecks(remaining("fresh checks"));
   } catch {
-    return await finish(expired() ? "pending" : "blocked");
+    return await finish("pending");
   }
   checks.push(freshChecks.log);
+  if ("unavailable" in freshChecks) return await finish("pending");
   if (freshChecks.state === "failed") return await finish("blocked");
   if (freshChecks.state === "pending" || expired()) return await finish("pending");
   const freshReady = await readReady();
@@ -634,7 +658,7 @@ async function runDeliveryContinuation(
   let merge: CommandLog | undefined;
   const confirmMerged = async (): Promise<DeliveryContinuationResult | undefined> => {
     if (expired()) return await finish("pending", merge);
-    let confirmation: { readonly pr: DeliveryReadyPullRequest; readonly log: CommandLog };
+    let confirmation: DeliveryPullRequestRead;
     try {
       confirmation = await dependencies.readPullRequest(
         "merged",
@@ -644,6 +668,14 @@ async function runDeliveryContinuation(
       // A post-merge read can fail after GitHub accepted the merge. The
       // terminal state is unknown, so preserve the record for a retry.
       return await finish("pending", merge);
+    }
+    if ("unavailable" in confirmation) {
+      checks.push(confirmation.log);
+      return await finish("pending", merge);
+    }
+    if ("blocked" in confirmation) {
+      checks.push(confirmation.log);
+      return await finish("blocked", merge);
     }
     try {
       const mergedPr = confirmation.pr as DeliveryMergedPullRequest;
@@ -949,14 +981,22 @@ await flow(flowArgs())(async () => {
             remainingMs,
           );
           if (commandResult.result.type !== "success") {
-            return { valid: false, log: commandResult.log };
+            const isAuthoritativeFailure = /\bHTTP (?:404|410)\b/ui.test(
+              `${commandResult.result.stderr}\n${commandResult.result.stdout}`,
+            );
+            if (isAuthoritativeFailure) {
+              return { valid: false, log: commandResult.log };
+            }
+            return { unavailable: true as const, log: commandResult.log };
+          }
+          let response: unknown;
+          try {
+            response = JSON.parse(commandResult.result.stdout);
+          } catch {
+            return { unavailable: true as const, log: commandResult.log };
           }
           try {
-            assertRequiredMergeProtection(
-              JSON.parse(commandResult.result.stdout),
-              "Verify",
-              15368,
-            );
+            assertRequiredMergeProtection(response, "Verify", 15368);
             return { valid: true, log: commandResult.log };
           } catch {
             return { valid: false, log: commandResult.log };
@@ -985,7 +1025,7 @@ await flow(flowArgs())(async () => {
               log: commandResult.log,
             };
           } catch {
-            return { state: "failed" as const, log: commandResult.log };
+            return { unavailable: true as const, log: commandResult.log };
           }
         },
         readPullRequest: async (phase, remainingMs) => {
@@ -999,12 +1039,22 @@ await flow(flowArgs())(async () => {
             remainingMs,
           );
           if (commandResult.result.type !== "success") {
-            throw new Error(`${commandResult.log.command} failed`);
+            const isAuthoritativeFailure = /\bHTTP (?:404|410)\b/ui.test(
+              `${commandResult.result.stderr}\n${commandResult.result.stdout}`,
+            );
+            if (isAuthoritativeFailure) {
+              return { blocked: true as const, log: commandResult.log };
+            }
+            return { unavailable: true as const, log: commandResult.log };
           }
-          return {
-            pr: JSON.parse(commandResult.result.stdout) as DeliveryReadyPullRequest,
-            log: commandResult.log,
-          };
+          try {
+            return {
+              pr: JSON.parse(commandResult.result.stdout) as DeliveryReadyPullRequest,
+              log: commandResult.log,
+            };
+          } catch {
+            return { unavailable: true as const, log: commandResult.log };
+          }
         },
         merge: async (lockedHeadSha, remainingMs) =>
           (
