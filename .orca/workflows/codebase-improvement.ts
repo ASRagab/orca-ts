@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import * as ts from "typescript";
 import {
   codex,
@@ -493,8 +493,8 @@ async function runDeliveryContinuation(
   const readReady = async (): Promise<"ok" | "blocked"> => {
     try {
       const read = await dependencies.readPullRequest("ready", remaining("PR identity"));
-      latestPr = read.pr;
       assertReadyPullRequestHead(read.pr, identity);
+      latestPr = read.pr;
       return "ok";
     } catch {
       return "blocked";
@@ -566,13 +566,69 @@ async function runDeliveryContinuation(
   return await finish("delivered", merge);
 }
 
+function isErrnoCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === code
+  );
+}
+
+async function acquireDeliveryRecordLock(destination: string): Promise<string> {
+  const lock = `${destination}.lock`;
+  while (true) {
+    try {
+      await mkdir(lock, { mode: 0o700 });
+      return lock;
+    } catch (error) {
+      if (!isErrnoCode(error, "EEXIST")) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    }
+  }
+}
+
+function mergeDeliveryAttempt(
+  current: DeliveryRecordV1,
+  next: DeliveryRecordV1,
+): DeliveryRecordV1 {
+  if (current.runId !== next.runId) {
+    throw new Error("delivery record run ID changed during continuation");
+  }
+  if (next.delivery.attempts.length === 0) {
+    throw new Error("delivery continuation did not produce an attempt");
+  }
+  const attempt = next.delivery.attempts[next.delivery.attempts.length - 1];
+  return DeliveryRecordSchema.parse({
+    ...current,
+    delivery: {
+      status:
+        current.delivery.status === "pending"
+          ? next.delivery.status
+          : current.delivery.status,
+      attempts: [...current.delivery.attempts, attempt],
+    },
+  });
+}
+
 async function persistDeliveryRecordAtomically(
   destination: string,
   record: DeliveryRecordV1,
 ): Promise<void> {
-  const temporary = `${destination}.delivery-${String(process.pid)}-${String(Date.now())}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
-  await rename(temporary, destination);
+  const lock = await acquireDeliveryRecordLock(destination);
+  try {
+    const current = DeliveryRecordSchema.parse(
+      JSON.parse(await readFile(destination, "utf8")),
+    );
+    const merged = mergeDeliveryAttempt(current, record);
+    const temporary = `${destination}.delivery-${String(process.pid)}-${String(Date.now())}.tmp`;
+    await writeFile(temporary, `${JSON.stringify(merged, null, 2)}\n`, {
+      mode: 0o600,
+    });
+    await rename(temporary, destination);
+  } finally {
+    await rm(lock, { recursive: true, force: true });
+  }
 }
 
 await flow(flowArgs())(async () => {

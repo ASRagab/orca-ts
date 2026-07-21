@@ -2122,7 +2122,7 @@ async function runConcurrentCanonicalPublicationHarness(
   await Bun.write(
     script,
     [
-      "#!/bin/sh",
+      "#!/usr/bin/env bash",
       "set -euo pipefail",
       sha256,
       action,
@@ -19031,6 +19031,24 @@ test("scout timing reserves one exact active-ready allocation", async () => {
   expect(source).toContain("const SCOUT_VALIDATION_LIMIT_MS = 20_000;");
   expect(source).not.toContain("SCOUT_ATTEMPT_LIMIT_MS");
   expect(source).toContain("runScopedScoutFanout");
+});
+
+test("concurrent publication harness retains a Bash shebang for pipefail", async () => {
+  const source = await Bun.file(".orca/workflows/codebase-improvement-artifacts.test.ts").text();
+  const scriptDeclaration = ['const script = join(root, "publish', '.sh");'].join("");
+  const start = source.indexOf(scriptDeclaration);
+  const end = source.indexOf("  type HarnessProcess = {", start);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  expect(source.slice(start, end)).toContain(
+    [
+      "  await Bun.write(",
+      "    script,",
+      "    [",
+      '      "#!/usr/bin/env bash",',
+      '      "set -euo pipefail",',
+    ].join("\n"),
+  );
 });
 
 async function runDeliveryContinuationLauncher(

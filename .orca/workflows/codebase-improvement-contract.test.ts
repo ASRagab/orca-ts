@@ -9484,6 +9484,53 @@ function readyDeliveryPr(headSha = "a".repeat(40)): Record<string, unknown> {
   };
 }
 
+type DeliveryRecordPersistence = (
+  destination: string,
+  record: Record<string, unknown>,
+) => Promise<void>;
+
+function loadDeliveryRecordPersistence(
+  source: string,
+  bindings: Record<string, unknown>,
+): DeliveryRecordPersistence | undefined {
+  const sourceFile = ts.createSourceFile(
+    path,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const declarations = [
+    "isErrnoCode",
+    "acquireDeliveryRecordLock",
+    "mergeDeliveryAttempt",
+    "persistDeliveryRecordAtomically",
+  ].map((name) => functionDeclarationsNamed(sourceFile, name)[0]);
+  if (declarations.some((declaration) => declaration === undefined)) return undefined;
+  const emitted = ts.transpileModule(
+    declarations.map((declaration) => declaration!.getText(sourceFile)).join("\n"),
+    {
+      compilerOptions: {
+        module: ts.ModuleKind.None,
+        target: ts.ScriptTarget.ES2022,
+      },
+    },
+  ).outputText;
+  const loaded: unknown = runInNewContext(
+    `${emitted}\npersistDeliveryRecordAtomically;`,
+    {
+      DeliveryRecordSchema,
+      Date,
+      Error,
+      JSON,
+      process: { pid: 42 },
+      setTimeout,
+      ...bindings,
+    },
+  );
+  return typeof loaded === "function" ? (loaded as DeliveryRecordPersistence) : undefined;
+}
+
 test("delivery continuation only merges a freshly locked ready PR", async () => {
   const source = await Bun.file(path).text();
   const continuation = loadDeliveryContinuation(source);
@@ -9617,6 +9664,204 @@ test("delivery continuation blocks failed checks and identity drift without merg
     expect(events).toContain("persist");
     expect(events).not.toContain("merge");
   }
+});
+
+test("delivery continuation persists one blocked base-mismatch attempt without a merge", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  const persisted: Record<string, unknown>[] = [];
+  const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+    now: () => 10,
+    readProtection: async () => ({ valid: true, log: deliveryCommand("protection") }),
+    readChecks: async () => ({ state: "passed", log: deliveryCommand("checks") }),
+    readPullRequest: async () => ({
+      pr: { ...readyDeliveryPr(), baseRefName: "release" },
+      log: deliveryCommand("pr"),
+    }),
+    merge: async () => {
+      throw new Error("merge must not run");
+    },
+    persist: async (record) => {
+      persisted.push(record);
+    },
+  });
+
+  expect(result).toMatchObject({ status: "blocked", exitCode: 0 });
+  expect(persisted).toHaveLength(1);
+  expect(persisted[0]?.delivery).toMatchObject({
+    status: "blocked",
+    attempts: [{ status: "blocked" }],
+  });
+  expect(persisted[0]?.delivery.attempts[0]?.pr).toBeUndefined();
+});
+
+test("delivery continuation blocks every initial ready-identity mismatch before merge", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  const mismatches = [
+    { name: "draft", pr: { ...readyDeliveryPr(), isDraft: true } },
+    { name: "branch", pr: { ...readyDeliveryPr(), headRefName: "other-branch" } },
+    { name: "repository", pr: { ...readyDeliveryPr(), url: "https://github.com/other/project/pull/42" } },
+    { name: "head", pr: readyDeliveryPr("b".repeat(40)) },
+  ];
+  for (const mismatch of mismatches) {
+    const persisted: Record<string, unknown>[] = [];
+    let mergeCalls = 0;
+    const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+      now: () => 10,
+      readProtection: async () => ({ valid: true, log: deliveryCommand("protection") }),
+      readChecks: async () => ({ state: "passed", log: deliveryCommand("checks") }),
+      readPullRequest: async () => ({ pr: mismatch.pr, log: deliveryCommand("pr") }),
+      merge: async () => {
+        mergeCalls += 1;
+        return deliveryCommand("merge");
+      },
+      persist: async (record) => {
+        persisted.push(record);
+      },
+    });
+    expect(result.status, mismatch.name).toBe("blocked");
+    expect(persisted, mismatch.name).toHaveLength(1);
+    expect(mergeCalls, mismatch.name).toBe(0);
+  }
+});
+
+test("delivery continuation blocks every post-green reread drift before merge", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  for (const scenario of ["protection", "fresh-checks", "fresh-identity"] as const) {
+    const events: string[] = [];
+    let checkReads = 0;
+    let readyReads = 0;
+    const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+      now: () => 10,
+      readProtection: async () => {
+        events.push("protection");
+        return {
+          valid: scenario !== "protection",
+          log: deliveryCommand("protection"),
+        };
+      },
+      readChecks: async () => {
+        checkReads += 1;
+        events.push("checks");
+        return {
+          state: scenario === "fresh-checks" && checkReads === 2 ? "failed" : "passed",
+          log: deliveryCommand("checks"),
+        };
+      },
+      readPullRequest: async () => {
+        readyReads += 1;
+        events.push("pr-identity");
+        return {
+          pr:
+            scenario === "fresh-identity" && readyReads === 2
+              ? readyDeliveryPr("b".repeat(40))
+              : readyDeliveryPr(),
+          log: deliveryCommand("pr"),
+        };
+      },
+      merge: async () => {
+        events.push("merge");
+        return deliveryCommand("merge");
+      },
+      persist: async () => {
+        events.push("persist");
+      },
+    });
+    expect(result.status, scenario).toBe("blocked");
+    expect(events, scenario).toContain("persist");
+    expect(events, scenario).not.toContain("merge");
+  }
+});
+
+test("delivery record persistence serializes concurrent attempts without loss", async () => {
+  const source = await Bun.file(path).text();
+  const destination = "/tmp/delivery.json";
+  const files = new Map<string, string>([
+    [destination, JSON.stringify(deliveryRecordFixture())],
+  ]);
+  let lockHeld = false;
+  let firstWriteStarted: (() => void) | undefined;
+  let releaseFirstWrite: (() => void) | undefined;
+  const firstWrite = new Promise<void>((resolve) => {
+    firstWriteStarted = resolve;
+  });
+  const release = new Promise<void>((resolve) => {
+    releaseFirstWrite = resolve;
+  });
+  let writes = 0;
+  const persistence = loadDeliveryRecordPersistence(source, {
+    mkdir: async () => {
+      if (!lockHeld) {
+        lockHeld = true;
+        return;
+      }
+      const error = Object.assign(new Error("lock exists"), { code: "EEXIST" });
+      throw error;
+    },
+    readFile: async (file: string) => files.get(file) ?? "",
+    rename: async (from: string, to: string) => {
+      const value = files.get(from);
+      if (value === undefined) throw new Error(`missing temporary record ${from}`);
+      files.set(to, value);
+    },
+    rm: async () => {
+      lockHeld = false;
+    },
+    writeFile: async (file: string, value: string) => {
+      writes += 1;
+      if (writes === 1) {
+        firstWriteStarted?.();
+        await release;
+      }
+      files.set(file, value);
+    },
+  });
+  expect(persistence).toBeFunction();
+  if (persistence === undefined) return;
+
+  const blocked = DeliveryRecordSchema.parse({
+    ...deliveryRecordFixture(),
+    delivery: {
+      status: "blocked",
+      attempts: [{ startedAtMs: 10, finishedAtMs: 11, status: "blocked" }],
+    },
+  });
+  const pending = DeliveryRecordSchema.parse({
+    ...deliveryRecordFixture(),
+    delivery: {
+      status: "pending",
+      attempts: [{ startedAtMs: 20, finishedAtMs: 21, status: "pending" }],
+    },
+  });
+  const first = persistence(destination, blocked);
+  await firstWrite;
+  const second = persistence(destination, pending);
+  if (releaseFirstWrite === undefined) throw new Error("first writer did not block");
+  releaseFirstWrite();
+  await Promise.all([first, second]);
+
+  const persisted = files.get(destination);
+  expect(persisted).toBeDefined();
+  if (persisted === undefined) return;
+  const attempts = DeliveryRecordSchema.parse(JSON.parse(persisted)).delivery.attempts;
+  expect(attempts.map((attempt) => attempt.startedAtMs).sort((left, right) => left - right)).toEqual([
+    10,
+    20,
+  ]);
+  expect(DeliveryRecordSchema.parse(JSON.parse(persisted)).delivery.status).toBe(
+    "blocked",
+  );
 });
 
 test("delivery continuation defensively rejects an unknown delivery record field", async () => {
