@@ -7295,6 +7295,17 @@ test("scout synthesis is one watched tool-free ranked callsite", async () => {
   expect(runtimeSource).toContain("export async function runScopedScoutFanout");
 });
 
+test("scoped scout prompt requires exact candidate fields and single-line citations", async () => {
+  const source = await Bun.file(path).text();
+  for (const required of [
+    "Candidate expectedFailurePattern must be exactly ORCA_RED:<candidate-id> using that candidate's id.",
+    '`Candidate targetedTestArgs must be exactly ["test", "${pair.testPath}"].`',
+    "Each source and test citation must be one exact rendered path:line marker; never use a range such as path:start-end.",
+  ]) {
+    expect(source).toContain(required);
+  }
+});
+
 test("scout validation starts before shared fanout finalization", async () => {
   const source = await Bun.file(path).text();
   const deadline =
