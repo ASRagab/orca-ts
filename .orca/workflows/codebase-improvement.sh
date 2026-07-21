@@ -601,7 +601,7 @@ preflight_quarantine=""
 protected_package_lock=""
 started_at_ms=""
 launcher_deadline_ms=600000
-launcher_finalization_reserve_ms=10000
+launcher_finalization_reserve_ms=60000
 canonical_recovery_reserve_ms=1000
 launcher_absolute_deadline_at_ms=0
 launcher_work_deadline_at_ms=0
@@ -2965,9 +2965,9 @@ main() {
   fi
   export ORCA_BACKEND=codex
   case "$complexity" in
-    simple) launcher_deadline_ms=600000 ;;
-    medium) launcher_deadline_ms=1800000 ;;
-    challenging) launcher_deadline_ms=2700000 ;;
+    simple) launcher_deadline_ms=1800000 ;;
+    medium) launcher_deadline_ms=3600000 ;;
+    challenging) launcher_deadline_ms=7200000 ;;
   esac
 
   controller_capture_before_deadline started_at_ms now_ms || return $?

@@ -423,7 +423,7 @@ interface DeliveryContinuationDependencies {
 
 interface DeliveryContinuationResult {
   readonly status: "pending" | "blocked" | "delivered";
-  readonly exitCode: 0 | 75;
+  readonly exitCode: 0 | 1 | 75;
   readonly record: DeliveryRecordV1;
 }
 
@@ -492,7 +492,7 @@ async function runDeliveryContinuation(
     await dependencies.persist(next, deadlineAtMs);
     return {
       status,
-      exitCode: status === "pending" ? 75 : 0,
+      exitCode: status === "delivered" ? 0 : status === "pending" ? 75 : 1,
       record: next,
     };
   };

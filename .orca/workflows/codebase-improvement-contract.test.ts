@@ -9408,7 +9408,7 @@ type DeliveryContinuation = (
   },
 ) => Promise<{
   readonly status: "pending" | "blocked" | "delivered";
-  readonly exitCode: 0 | 75;
+  readonly exitCode: 0 | 1 | 75;
   readonly record: Record<string, unknown>;
 }>;
 
@@ -9659,7 +9659,7 @@ test("delivery pending at its exact deadline records pending without a merge", a
   expect(events).toEqual(["pr-identity", "checks", "persist"]);
 });
 
-test("delivery continuation blocks failed checks and identity drift without merge", async () => {
+test("delivery continuation writes blocked and exits nonzero for failed checks and identity drift", async () => {
   const source = await Bun.file(path).text();
   const continuation = loadDeliveryContinuation(source);
   expect(continuation).toBeFunction();
@@ -9695,7 +9695,7 @@ test("delivery continuation blocks failed checks and identity drift without merg
         events.push("persist");
       },
     });
-    expect(result).toMatchObject({ status: "blocked", exitCode: 0 });
+    expect(result).toMatchObject({ status: "blocked", exitCode: 1 });
     expect(events).toContain("persist");
     expect(events).not.toContain("merge");
   }
@@ -9724,7 +9724,7 @@ test("delivery continuation persists one blocked base-mismatch attempt without a
     },
   });
 
-  expect(result).toMatchObject({ status: "blocked", exitCode: 0 });
+  expect(result).toMatchObject({ status: "blocked", exitCode: 1 });
   expect(persisted).toHaveLength(1);
   expect(persisted[0]?.delivery).toMatchObject({
     status: "blocked",
@@ -9800,6 +9800,7 @@ test("delivery continuation blocks every initial ready-identity mismatch before 
       },
     });
     expect(result.status, mismatch.name).toBe("blocked");
+    expect(result.exitCode, mismatch.name).toBe(1);
     expect(persisted, mismatch.name).toHaveLength(1);
     expect(mergeCalls, mismatch.name).toBe(0);
   }
@@ -9852,6 +9853,7 @@ test("delivery continuation blocks every post-green reread drift before merge", 
       },
     });
     expect(result.status, scenario).toBe("blocked");
+    expect(result.exitCode, scenario).toBe(1);
     expect(events, scenario).toContain("persist");
     expect(events, scenario).not.toContain("merge");
   }

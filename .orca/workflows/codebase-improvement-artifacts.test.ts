@@ -11028,7 +11028,7 @@ test("work cutoff expiry still publishes truthful failure evidence", async () =>
   expect(result.latest).toMatchObject({ runId: "run", exitCode: 124 });
   expect(result.ledger).toBe(`${seed}\n`);
   expect(result.stderr).not.toContain("finalize failed");
-  expect(launcher).toContain("launcher_finalization_reserve_ms=10000");
+  expect(launcher).toContain("launcher_finalization_reserve_ms=60000");
   const main = extractShellFunction(launcher, "main");
   expect(main).toBeDefined();
   expect(main?.replace(/\s+/g, " ")).toContain(
@@ -12055,7 +12055,7 @@ test("actual launcher startup bounds now_ms before exact time exists", async () 
       stalledClock,
     )
     .replace(
-      "    simple) launcher_deadline_ms=600000 ;;",
+      "    simple) launcher_deadline_ms=1800000 ;;",
       "    simple) launcher_deadline_ms=2000 ;;",
     );
   expect(source).not.toBe(launcher);
@@ -19221,6 +19221,80 @@ test("delivery continuation reserves shell cleanup after its exact 30-minute dea
   expect(launcher).toContain(
     '\"ORCA_IMPROVEMENT_DELIVERY_DEADLINE_AT_MS=$delivery_deadline_at_ms\"',
   );
+});
+
+test("actual launcher gives each profile's capped window less its final reserve to the runtime", async () => {
+  const launcher = await Bun.file(".orca/workflows/codebase-improvement.sh").text();
+  const root = await mkdtemp(join(tmpdir(), "orcats-active-cutoff-"));
+  const fakeBin = join(root, "bin");
+  const script = join(root, "launcher.sh");
+  const fakeBash = join(fakeBin, "bash");
+  const cutoffProbe = [
+    '  runtime_path="$ORCA_CUTOFF_FAKE_BIN/orcats"',
+    '  run_id="cutoff"',
+    '  branch="orca/improve-cutoff"',
+    '  artifact_digest="cutoff"',
+    '  preflight_path="cutoff"',
+    '  origin_fetch_url="https://github.com/example/project.git"',
+    '  origin_push_url="https://github.com/example/project.git"',
+    '  repository="example/project"',
+    "  run_live_workflow",
+    "  return $?",
+  ].join("\n");
+  const source = launcher
+    .replace(
+      '  launcher_deadline_at_ms="$launcher_work_deadline_at_ms"',
+      ['  launcher_deadline_at_ms="$launcher_work_deadline_at_ms"', cutoffProbe].join("\n"),
+    )
+    .replace("trap finalize EXIT\n", "");
+  expect(source).not.toBe(launcher);
+  await mkdir(fakeBin, { recursive: true });
+  await Bun.write(
+    fakeBash,
+    [
+      "#!/bin/sh",
+      'printf "%s %s\\n" "$ORCA_IMPROVEMENT_STARTED_AT_MS" "$ORCA_IMPROVEMENT_WORKER_DEADLINE_AT_MS" > "$ORCA_CUTOFF_CAPTURE_PATH"',
+    ].join("\n"),
+  );
+  await chmod(fakeBash, 0o755);
+  await Bun.write(script, source);
+
+  try {
+    for (const [profile, capMs] of [
+      ["simple", 1_800_000],
+      ["medium", 3_600_000],
+      ["challenging", 7_200_000],
+    ] as const) {
+      const capturePath = join(root, `${profile}.txt`);
+      const child = Bun.spawn(["/bin/bash", script, `--complexity=${profile}`], {
+        env: {
+          ...globalThis.process.env,
+          ORCA_BACKEND: "codex",
+          ORCA_CUTOFF_CAPTURE_PATH: capturePath,
+          ORCA_CUTOFF_FAKE_BIN: fakeBin,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [exitCode, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stderr).text(),
+      ]);
+      expect(exitCode, profile).toBe(0);
+      expect(stderr, profile).toBe("");
+      const [startedAtMsText, workerDeadlineAtMsText] = (await Bun.file(capturePath).text())
+        .trim()
+        .split(" ");
+      const startedAtMs = Number(startedAtMsText);
+      const workerDeadlineAtMs = Number(workerDeadlineAtMsText);
+      expect(startedAtMs, profile).toBeNumber();
+      expect(startedAtMs, profile).toBeGreaterThan(0);
+      expect(workerDeadlineAtMs, profile).toBeGreaterThan(startedAtMs);
+      expect(workerDeadlineAtMs, profile).toBe(startedAtMs + capMs - 60_000);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("active-delivery rebaseline documentation retains the approved contract and dirty baseline", async () => {
