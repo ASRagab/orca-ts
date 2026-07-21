@@ -266,14 +266,14 @@ function compareScoutTestAssignments(
   const assignedCount = (assignment: ScoutTestAssignment): number =>
     assignment.filter((path) => path !== undefined).length;
   const totalRelatedness = (assignment: ScoutTestAssignment): number =>
-    assignment.reduce(
-      (total, testPath, sourceIndex) =>
-        total +
-        (testPath === undefined
-          ? 0
-          : scoutPathRelatedness(testPath, sourcePaths[sourceIndex]!)),
-      0,
-    );
+    assignment.reduce((total, testPath, sourceIndex) => {
+      if (testPath === undefined) return total;
+      const sourcePath = sourcePaths[sourceIndex];
+      if (sourcePath === undefined) {
+        throw new Error("Scout test assignment has no source path");
+      }
+      return total + scoutPathRelatedness(testPath, sourcePath);
+    }, 0);
   const countDifference = assignedCount(left) - assignedCount(right);
   if (countDifference !== 0) return countDifference;
   const scoreDifference = totalRelatedness(left) - totalRelatedness(right);
