@@ -45,13 +45,83 @@ describe("Codex JSONL Tier 1 fixtures", () => {
     ]);
   });
 
-  test("builds Codex reasoning-effort config override", () => {
-    expect(codexExecJsonlArgs({ reasoningEffort: "low" })).toEqual([
-      "exec",
-      "--json",
-      "-c",
-      "model_reasoning_effort=\"low\""
-    ]);
+  test.each(["low", "medium", "high", "xhigh", "max", "ultra"] as const)(
+    "forwards Codex reasoning effort %s without a local model catalog",
+    (reasoningEffort) => {
+      expect(codexExecJsonlArgs({ reasoningEffort })).toEqual([
+        "exec",
+        "--json",
+        "-c",
+        `model_reasoning_effort="${reasoningEffort}"`
+      ]);
+    }
+  );
+
+  test("documents the Codex reasoning-effort compatibility contract on both surfaces", async () => {
+    const contract =
+      "Orcats forwards all six declared values to Codex without a local model catalog. Actual acceptance depends on the selected model and Codex CLI version. Unsupported combinations return a backend failure.";
+
+    for (const path of [
+      "docs/backends.md",
+      "website/src/content/docs/reference/backends.md"
+    ]) {
+      expect(await readFile(join(import.meta.dir, "..", path), "utf8")).toContain(contract);
+    }
+  });
+
+  test("documents backend timeout outcomes without claiming signal abortion", async () => {
+    const contract =
+      "A backend timeout stops the transport and resolves `awaitResult()` to `{ type: \"failed\", error }`; it does not abort the conversation's `signal`. The signal aborts only when `cancel()` is requested.";
+    const paths = [
+      "docs/backends.md",
+      "website/src/content/docs/reference/backends.md",
+      "website/src/content/docs/reference/errors-and-results.md"
+    ];
+
+    for (const path of paths) {
+      const contents = await readFile(join(import.meta.dir, "..", path), "utf8");
+      expect(contents).toContain(contract);
+      expect(contents).not.toContain("A timeout aborts the conversation's `signal`");
+      expect(contents).not.toContain("Aborts when the run is cancelled or times out");
+    }
+  });
+
+  test("documents successful and failed cancellation cleanup on both surfaces", async () => {
+    const contract =
+      "Successful cancellation resolves `cancel()` after the backend stops, then `awaitResult()` resolves to `{ type: \"cancelled\", reason }`. If cancellation cleanup fails, the shared `cancel()` promise rejects with the cleanup error and `awaitResult()` resolves to a typed `BackendFailed` outcome only after final cleanup and settlement release.";
+    const incompleteClaim =
+      "`cancel()` is cooperative: it signals the run and resolves once the backend has stopped. `awaitResult()` will subsequently resolve to `{ type: \"cancelled\", reason }`.";
+
+    for (const path of [
+      "docs/backends.md",
+      "website/src/content/docs/reference/errors-and-results.md"
+    ]) {
+      const contents = await readFile(join(import.meta.dir, "..", path), "utf8");
+      expect(contents).toContain(contract);
+      expect(contents).not.toContain(incompleteClaim);
+    }
+
+    const website = await readFile(
+      join(import.meta.dir, "..", "website/src/content/docs/reference/errors-and-results.md"),
+      "utf8"
+    );
+    expect(website).toContain(
+      "| `cancel(reason?)` | `(reason?: string) => Promise<void>` | Requests cancellation; resolves when cleanup succeeds and rejects if cleanup fails. |"
+    );
+    expect(website).not.toContain(
+      "| `cancel(reason?)` | `(reason?: string) => Promise<void>` | Requests cancellation; resolves when the run has stopped. |"
+    );
+  });
+
+  test("distinguishes Result operations from lifecycle promise rejections", async () => {
+    const website = await readFile(
+      join(import.meta.dir, "..", "website/src/content/docs/reference/errors-and-results.md"),
+      "utf8"
+    );
+    expect(website).toContain(
+      "Orca's result-returning operations represent expected failures as `Result` values rather than thrown exceptions. Asynchronous lifecycle methods keep promise semantics: public `cancel()` resolves after successful cleanup and rejects when cleanup fails."
+    );
+    expect(website).not.toContain("Every operation that can fail returns a `Result`");
   });
 
   test("builds read-only, schema, and resume args", () => {

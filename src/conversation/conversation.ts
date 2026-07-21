@@ -4,10 +4,15 @@ import {
   type BackendTag,
   type ConversationEvent,
   type RuntimeError,
+  backendFailed,
   unsupportedFeature
 } from "../model/index.ts";
 import { BoundedAsyncQueue } from "./queue.ts";
-import { isConversationSettlementReserved } from "./settlement-reservation.ts";
+import {
+  deferConversationSettlement,
+  markConversationCancellationComplete,
+  registerConversationCancellationFailureHandler
+} from "./settlement-reservation.ts";
 
 export type Outcome<B extends BackendTag = BackendTag> =
   | { readonly type: "success"; readonly result: BackendResult<B> }
@@ -82,17 +87,37 @@ export class StreamConversation<B extends BackendTag> implements Conversation<B>
   }
 
   succeed(result: BackendResult<B>): void {
-    if (this.cancellation !== undefined || isConversationSettlementReserved(this)) {
+    if (this.cancellation !== undefined) {
       return;
     }
-    this.complete({ type: "success", result });
+    const outcome: Outcome<B> = { type: "success", result };
+    if (
+      deferConversationSettlement(this, "success", () => {
+        if (this.cancellation === undefined) {
+          this.complete(outcome);
+        }
+      })
+    ) {
+      return;
+    }
+    this.complete(outcome);
   }
 
   fail(error: RuntimeError): void {
-    if (this.cancellation !== undefined || isConversationSettlementReserved(this)) {
+    if (this.cancellation !== undefined) {
       return;
     }
-    this.complete({ type: "failed", error });
+    const outcome: Outcome<B> = { type: "failed", error };
+    if (
+      deferConversationSettlement(this, "failure", () => {
+        if (this.cancellation === undefined) {
+          this.complete(outcome);
+        }
+      })
+    ) {
+      return;
+    }
+    this.complete(outcome);
   }
 
   cancel(reason?: string): Promise<void> {
@@ -105,23 +130,34 @@ export class StreamConversation<B extends BackendTag> implements Conversation<B>
 
     const cancellation = Promise.withResolvers<undefined>();
     this.cancellation = cancellation.promise;
+    registerConversationCancellationFailureHandler(this, (error: unknown) => {
+      this.completeCancellationFailure(error, cancellation.reject);
+    });
 
     let cleanup: Promise<void>;
     try {
       this.abortController.abort(reason);
       cleanup = Promise.resolve(this.options.onCancel?.(reason));
     } catch (error) {
-      cancellation.reject(error);
+      this.completeCancellationFailure(error, cancellation.reject);
       return cancellation.promise;
     }
 
     void cleanup.then(
       () => {
-        this.complete(reason === undefined ? { type: "cancelled" } : { type: "cancelled", reason });
-        cancellation.resolve(undefined);
+        const outcome: Outcome<B> =
+          reason === undefined ? { type: "cancelled" } : { type: "cancelled", reason };
+        const publish = (): void => {
+          this.complete(outcome);
+          cancellation.resolve(undefined);
+        };
+        if (!deferConversationSettlement(this, "cancellation", publish)) {
+          publish();
+        }
+        markConversationCancellationComplete(this);
       },
       (error: unknown) => {
-        cancellation.reject(error);
+        this.completeCancellationFailure(error, cancellation.reject);
       }
     );
     return cancellation.promise;
@@ -135,5 +171,24 @@ export class StreamConversation<B extends BackendTag> implements Conversation<B>
     this.settled = true;
     this.queue.close();
     this.settle(outcome);
+  }
+
+  private completeCancellationFailure(
+    error: unknown,
+    rejectCancellation: (reason?: unknown) => void
+  ): void {
+    const message = error instanceof Error ? error.message : String(error);
+    const outcome: Outcome<B> = {
+      type: "failed",
+      error: backendFailed(this.backend, `${this.backend} cancellation cleanup failed: ${message}`)
+    };
+    const publish = (): void => {
+      this.complete(outcome);
+      rejectCancellation(error);
+    };
+    if (!deferConversationSettlement(this, "cancellation_failure", publish)) {
+      publish();
+    }
+    markConversationCancellationComplete(this);
   }
 }

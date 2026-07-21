@@ -4,8 +4,15 @@ import {
   type BackendTag
 } from "../model/index.ts";
 import type { StreamConversation } from "../conversation/index.ts";
-import { reserveConversationSettlement } from "../conversation/settlement-reservation.ts";
-import { terminateSubprocess } from "./subprocess-termination.ts";
+import {
+  observeConversationCancellationCompletion,
+  reportConversationCancellationFailure,
+  reserveConversationSettlement
+} from "../conversation/settlement-reservation.ts";
+import {
+  registerSubprocessExitWaitCancellation,
+  terminateSubprocess
+} from "./subprocess-termination.ts";
 
 const DefaultSubprocessInactivityTimeoutMs = 120_000;
 
@@ -88,6 +95,18 @@ interface SubprocessTerminationFailed {
 
 type SubprocessTimeoutSettlement = SubprocessTimeout | SubprocessTerminationFailed;
 
+type SubprocessTerminal =
+  | { readonly type: "cancelled" }
+  | { readonly type: "consumer" }
+  | { readonly type: "timeout"; readonly settlement: SubprocessTimeoutSettlement }
+  | {
+      readonly type: "exited";
+      readonly consumer: SubprocessConsumer;
+      readonly exit: number | null;
+      readonly stderr: string;
+    }
+  | { readonly type: "error"; readonly error: unknown };
+
 /** Shared spawn → stdout-line-stream → consumer → outcome plumbing for
  * subprocess-stream backends (codex, claude, pi). Owns process spawn, line
  * splitting, stderr capture, non-zero-exit failure, cancellation checks, and
@@ -115,15 +134,12 @@ export async function runSubprocessConversation<B extends BackendTag>(
   }
 
   const process = spawnProcess(options.command, options.args, spawnOptions);
-  options.setProcess?.(process);
-
-  const stderr = collectText(process.stderr);
-  await options.onStart?.(process);
 
   const timeout: Deferred<SubprocessTimeoutSettlement> =
     Promise.withResolvers<SubprocessTimeoutSettlement>();
   const inactivityMs = options.inactivityTimeoutMs ?? DefaultSubprocessInactivityTimeoutMs;
   const wallClockMs = options.wallClockTimeoutMs ?? DefaultSubprocessWallClockTimeoutMs;
+  let streamTeardownDeadline: number | undefined;
   let timeoutStarted = false;
   let releaseTimeoutSettlement: (() => void) | undefined;
   let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
@@ -144,13 +160,47 @@ export async function runSubprocessConversation<B extends BackendTag>(
     );
   };
   const hasTimeoutStarted = (): boolean => timeoutStarted;
-  const settleSubprocessTimeout = (settlement: SubprocessTimeoutSettlement): void => {
-    releaseTimeoutSettlement?.();
-    if (settlement.type === "termination_failed") {
-      conversation.fail(backendFailed(backend, errorMessage(settlement.error)));
+  const isConversationAborted = (): boolean => conversation.signal.aborted;
+  const awaitStreamTeardown = async <T>(operation: PromiseLike<T> | T): Promise<T> => {
+    streamTeardownDeadline ??= Date.now() + Math.max(wallClockMs, 0);
+    const remainingMs = streamTeardownDeadline - Date.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      const fail = (): void => {
+        reject(
+          new Error(
+            `subprocess stream teardown exceeded ${String(wallClockMs)}ms wall-clock limit`
+          )
+        );
+      };
+      if (remainingMs <= 0) {
+        fail();
+        return;
+      }
+      timer = setTimeout(fail, remainingMs);
+    });
+    try {
+      return await Promise.race([Promise.resolve(operation), deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const failStreamCleanup = (error: unknown): void => {
+    if (
+      isConversationAborted() &&
+      reportConversationCancellationFailure(conversation, error)
+    ) {
       return;
     }
-    failSubprocessTimeout(conversation, backend, settlement.kind, inactivityMs, wallClockMs);
+    conversation.fail(backendFailed(backend, errorMessage(error)));
+  };
+  const settleSubprocessTimeout = (settlement: SubprocessTimeoutSettlement): void => {
+    if (settlement.type === "termination_failed") {
+      conversation.fail(backendFailed(backend, errorMessage(settlement.error)));
+    } else {
+      failSubprocessTimeout(conversation, backend, settlement.kind, inactivityMs, wallClockMs);
+    }
+    releaseTimeoutSettlement?.();
   };
   const resetInactivityTimer = (): void => {
     clearTimeout(inactivityTimer);
@@ -164,88 +214,265 @@ export async function runSubprocessConversation<B extends BackendTag>(
   }, Math.max(wallClockMs, 0));
   resetInactivityTimer();
 
-  try {
-    const consumer = options.createConsumer();
-    const lines = splitLines(process.stdout)[Symbol.asyncIterator]();
+  const releaseRunSettlement = reserveConversationSettlement(conversation);
+  const conversationAborted = Symbol("conversation aborted during subprocess work");
+  const observedConversationAbort = Promise.withResolvers<typeof conversationAborted>();
+  const onConversationAbort = (): void => {
+    observedConversationAbort.resolve(conversationAborted);
+  };
+  if (conversation.signal.aborted) {
+    onConversationAbort();
+  } else {
+    conversation.signal.addEventListener("abort", onConversationAbort, { once: true });
+  }
+  const conversationSettled = Symbol("conversation settled during subprocess read");
+  const observedConversationSettlement: Promise<typeof conversationSettled> =
+    conversation.awaitResult().then(() => conversationSettled);
+  const observedCancellationCompletion =
+    observeConversationCancellationCompletion(conversation);
+  let stderr: TextCollector | undefined;
+  let stdoutIterator: AsyncIterator<string | Uint8Array> | undefined;
+  let lines: AsyncIterator<string> | undefined;
+
+  const cancelStdout = async (): Promise<void> => {
+    const cleanupErrors: unknown[] = [];
+    try {
+      if (isDestroyable(process.stdout)) {
+        process.stdout.destroy();
+      }
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      await awaitStreamTeardown(stdoutIterator?.return?.());
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      await awaitStreamTeardown(lines?.return?.());
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    if (cleanupErrors.length > 0) {
+      throw cleanupErrors[0];
+    }
+  };
+  const cancelStderr = async (): Promise<void> => {
+    if (stderr) {
+      await awaitStreamTeardown(stderr.cancel());
+      return;
+    }
+    if (process.stderr && isDestroyable(process.stderr)) {
+      process.stderr.destroy();
+    }
+  };
+  const cleanupStreams = async (): Promise<readonly unknown[]> => {
+    const cleanupErrors: unknown[] = [];
+    await Promise.all([
+      cancelStdout().catch((error: unknown) => {
+        cleanupErrors.push(error);
+      }),
+      cancelStderr().catch((error: unknown) => {
+        cleanupErrors.push(error);
+      })
+    ]);
+    return cleanupErrors;
+  };
+  const awaitConversationStop = async (): Promise<void> => {
+    if (isConversationAborted()) {
+      await observedCancellationCompletion;
+      return;
+    }
+    await Promise.race([
+      process.exit.catch(() => null),
+      observedConversationSettlement
+    ]);
+  };
+  const terminateAndCleanup = async (
+    completeStderr: boolean
+  ): Promise<readonly unknown[]> => {
+    const cleanupErrors: unknown[] = [];
+    let terminationSucceeded = false;
+    try {
+      await terminateSubprocess(process);
+      terminationSucceeded = true;
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      await cancelStdout();
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    if (completeStderr && terminationSucceeded && stderr) {
+      try {
+        await awaitStreamTeardown(stderr.result);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    } else {
+      try {
+        await cancelStderr();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    return cleanupErrors;
+  };
+  const observeSubprocess = async (
+    consumer: SubprocessConsumer,
+    lineIterator: AsyncIterator<string>,
+    stderrCollector: TextCollector
+  ): Promise<SubprocessTerminal> => {
     for (;;) {
-      const next: IteratorResult<string> | SubprocessTimeoutSettlement = await Promise.race([
-        lines.next(),
-        timeout.promise
+      const next:
+        | IteratorResult<string>
+        | SubprocessTimeoutSettlement
+        | typeof conversationAborted
+        | typeof conversationSettled = await Promise.race([
+        lineIterator.next(),
+        timeout.promise,
+        observedConversationAbort.promise,
+        observedConversationSettlement
       ]);
+      if (next === conversationAborted || next === conversationSettled) {
+        return { type: "cancelled" };
+      }
       if (isSubprocessTimeoutSettlement(next)) {
-        settleSubprocessTimeout(next);
-        return;
+        return { type: "timeout", settlement: next };
       }
       if (hasTimeoutStarted()) {
-        const completedTimeout = await timeout.promise;
-        settleSubprocessTimeout(completedTimeout);
-        return;
+        return { type: "timeout", settlement: await timeout.promise };
       }
       if (next.done) {
         break;
       }
       resetInactivityTimer();
-      if (conversation.signal.aborted) {
-        return;
+      if (isConversationAborted()) {
+        return { type: "cancelled" };
       }
-      const consumed: undefined | SubprocessTimeoutSettlement = await Promise.race([
-        consumer.consume(next.value).then(() => undefined),
-        timeout.promise
-      ]);
+      const consumed: undefined | SubprocessTimeoutSettlement | typeof conversationAborted =
+        await Promise.race([
+          consumer.consume(next.value).then(() => undefined),
+          timeout.promise,
+          observedConversationAbort.promise
+        ]);
+      if (consumed === conversationAborted) {
+        return { type: "cancelled" };
+      }
       if (consumed !== undefined) {
-        settleSubprocessTimeout(consumed);
-        return;
+        return { type: "timeout", settlement: consumed };
       }
       if (hasTimeoutStarted()) {
-        const completedTimeout = await timeout.promise;
-        settleSubprocessTimeout(completedTimeout);
-        return;
+        return { type: "timeout", settlement: await timeout.promise };
+      }
+      if (isConversationAborted()) {
+        return { type: "cancelled" };
       }
       if (consumer.signal.aborted) {
-        // Kill the child once the consumer has settled the conversation on a
-        // terminal event (success, modeled failure, or early parse/tool error).
-        // Safe because we only reach here after consuming that event — the agent's
-        // session rollout is already flushed — and it stops a persistent process
-        // (pi rpc) or a stalled CLI from lingering after Orca has the outcome.
-        process.kill();
-        break;
+        return { type: "consumer" };
       }
     }
 
-    // The consumer already settled the conversation (success/failure); the
-    // exit-code path below is only for a stream that ended without one.
     if (consumer.signal.aborted) {
-      return;
+      return { type: "consumer" };
     }
 
-    const exit: number | null | SubprocessTimeoutSettlement = await Promise.race([
+    const exit:
+      | number
+      | null
+      | SubprocessTimeoutSettlement
+      | typeof conversationAborted
+      | typeof conversationSettled = await Promise.race([
       process.exit,
-      timeout.promise
+      timeout.promise,
+      observedConversationAbort.promise,
+      observedConversationSettlement
     ]);
-    if (isSubprocessTimeoutSettlement(exit)) {
-      settleSubprocessTimeout(exit);
-      return;
+    if (exit === conversationAborted || exit === conversationSettled) {
+      return { type: "cancelled" };
     }
-    const stderrResult: string | SubprocessTimeoutSettlement = await Promise.race([
-      stderr,
-      timeout.promise
+    if (isSubprocessTimeoutSettlement(exit)) {
+      return { type: "timeout", settlement: exit };
+    }
+
+    const stderrResult:
+      | string
+      | SubprocessTimeoutSettlement
+      | typeof conversationAborted
+      | typeof conversationSettled = await Promise.race([
+      stderrCollector.result,
+      timeout.promise,
+      observedConversationAbort.promise,
+      observedConversationSettlement
     ]);
+    if (stderrResult === conversationAborted || stderrResult === conversationSettled) {
+      return { type: "cancelled" };
+    }
     if (isSubprocessTimeoutSettlement(stderrResult)) {
-      settleSubprocessTimeout(stderrResult);
-      return;
+      return { type: "timeout", settlement: stderrResult };
     }
     if (hasTimeoutStarted()) {
-      const completedTimeout = await timeout.promise;
-      settleSubprocessTimeout(completedTimeout);
+      return { type: "timeout", settlement: await timeout.promise };
+    }
+    if (isConversationAborted()) {
+      return { type: "cancelled" };
+    }
+    return { type: "exited", consumer, exit, stderr: stderrResult };
+  };
+  const finalizeSubprocess = async (terminal: SubprocessTerminal): Promise<void> => {
+    clearTimeout(inactivityTimer);
+    clearTimeout(wallClockTimer);
+    streamTeardownDeadline = Date.now() + Math.max(wallClockMs, 0);
+
+    if (terminal.type === "consumer") {
+      const cleanupErrors = await terminateAndCleanup(true);
+      if (cleanupErrors.length > 0) {
+        failStreamCleanup(cleanupErrors[0]);
+      }
       return;
     }
-    const stderrText = stderrResult.trim();
-    if (conversation.signal.aborted) {
+    if (terminal.type === "timeout") {
+      const cleanupErrors = await cleanupStreams();
+      if (cleanupErrors.length > 0) {
+        failStreamCleanup(cleanupErrors[0]);
+      }
+      settleSubprocessTimeout(terminal.settlement);
+      return;
+    }
+    if (terminal.type === "cancelled") {
+      await awaitConversationStop();
+      const cleanupErrors = await cleanupStreams();
+      if (cleanupErrors.length > 0) {
+        reportConversationCancellationFailure(conversation, cleanupErrors[0]);
+      }
+      if (hasTimeoutStarted()) {
+        settleSubprocessTimeout(await timeout.promise);
+      }
+      return;
+    }
+    if (terminal.type === "error") {
+      const cleanupErrors = await terminateAndCleanup(false);
+      if (isConversationAborted() && cleanupErrors.length > 0) {
+        reportConversationCancellationFailure(conversation, cleanupErrors[0]);
+      }
+      throw terminal.error;
+    }
+    if (isConversationAborted()) {
+      await awaitConversationStop();
+      const cleanupErrors = await cleanupStreams();
+      if (cleanupErrors.length > 0) {
+        reportConversationCancellationFailure(conversation, cleanupErrors[0]);
+      }
+      if (hasTimeoutStarted()) {
+        settleSubprocessTimeout(await timeout.promise);
+      }
       return;
     }
 
-    if (exit !== 0) {
-      const exitCodeText = exit === null ? "unknown" : String(exit);
+    const stderrText = terminal.stderr.trim();
+    if (terminal.exit !== 0) {
+      const exitCodeText = terminal.exit === null ? "unknown" : String(terminal.exit);
       conversation.fail(
         backendFailed(
           backend,
@@ -254,17 +481,56 @@ export async function runSubprocessConversation<B extends BackendTag>(
       );
       return;
     }
-    consumer.finish();
-  } catch (error) {
-    if (hasTimeoutStarted()) {
-      const completedTimeout = await timeout.promise;
-      settleSubprocessTimeout(completedTimeout);
-      return;
+    terminal.consumer.finish();
+  };
+
+  try {
+    let terminal: SubprocessTerminal;
+    try {
+      options.setProcess?.(process);
+      stderr = startTextCollector(process.stderr);
+      stdoutIterator = process.stdout[Symbol.asyncIterator]();
+      const stdoutChunks: AsyncIterable<string | Uint8Array> = {
+        [Symbol.asyncIterator]: () => stdoutIterator as AsyncIterator<string | Uint8Array>
+      };
+      lines = splitLines(stdoutChunks)[Symbol.asyncIterator]();
+      const startup:
+        | undefined
+        | SubprocessTimeoutSettlement
+        | typeof conversationAborted
+        | typeof conversationSettled =
+        options.onStart === undefined
+          ? undefined
+          : await Promise.race([
+              Promise.resolve(options.onStart(process)).then(() => undefined),
+              timeout.promise,
+              observedConversationAbort.promise,
+              observedConversationSettlement
+            ]);
+      if (
+        startup === conversationAborted ||
+        startup === conversationSettled ||
+        isConversationAborted()
+      ) {
+        terminal = { type: "cancelled" };
+      } else if (isSubprocessTimeoutSettlement(startup)) {
+        terminal = { type: "timeout", settlement: startup };
+      } else if (hasTimeoutStarted()) {
+        terminal = { type: "timeout", settlement: await timeout.promise };
+      } else {
+        terminal = await observeSubprocess(options.createConsumer(), lines, stderr);
+      }
+    } catch (error) {
+      terminal = hasTimeoutStarted()
+        ? { type: "timeout", settlement: await timeout.promise }
+        : { type: "error", error };
     }
-    throw error;
+    await finalizeSubprocess(terminal);
   } finally {
     clearTimeout(inactivityTimer);
     clearTimeout(wallClockTimer);
+    conversation.signal.removeEventListener("abort", onConversationAbort);
+    releaseRunSettlement();
   }
 }
 
@@ -274,9 +540,11 @@ export function spawnSubprocess(
   options: SubprocessSpawnOptions
 ): SubprocessProcess {
   const stdinMode = options.stdin ?? "ignore";
+  const useProcessGroup = process.platform !== "win32";
   const child = spawn(command, [...args], {
     cwd: options.cwd,
     env: options.env,
+    detached: useProcessGroup,
     stdio: [stdinMode === "pipe" ? "pipe" : "ignore", "pipe", "pipe"]
   });
 
@@ -284,16 +552,29 @@ export function spawnSubprocess(
     throw new Error(`failed to capture stdout for ${command}`);
   }
 
-  const exit = Promise.withResolvers<number | null>();
-  child.on("error", exit.reject);
-  child.on("close", exit.resolve);
-
-  return {
+  const leaderExit = Promise.withResolvers<number | null>();
+  child.on("error", leaderExit.reject);
+  child.on("close", leaderExit.resolve);
+  const processGroupExit =
+    useProcessGroup && child.pid !== undefined
+      ? waitForProcessGroupExit(child.pid, leaderExit.promise)
+      : undefined;
+  const subprocess: SubprocessProcess = {
     stdout: child.stdout,
     ...(child.stderr ? { stderr: child.stderr } : {}),
-    exit: exit.promise,
+    exit: processGroupExit?.promise ?? leaderExit.promise,
     kill(signal?: NodeJS.Signals) {
-      child.kill(signal);
+      if (!useProcessGroup || child.pid === undefined) {
+        child.kill(signal);
+        return;
+      }
+      try {
+        process.kill(-child.pid, signal ?? "SIGTERM");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+          throw error;
+        }
+      }
     },
     write(data: string) {
       child.stdin?.write(data);
@@ -302,6 +583,72 @@ export function spawnSubprocess(
       child.stdin?.end();
     }
   };
+  if (processGroupExit !== undefined) {
+    registerSubprocessExitWaitCancellation(subprocess, (error: unknown) => {
+      processGroupExit.cancel(error);
+    });
+  }
+  return subprocess;
+}
+
+interface ProcessGroupExitWait {
+  readonly promise: Promise<number | null>;
+  cancel(error: unknown): void;
+}
+
+function waitForProcessGroupExit(
+  processGroupId: number,
+  leaderExit: Promise<number | null>
+): ProcessGroupExitWait {
+  const completion = Promise.withResolvers<number | null>();
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const reject = (error: unknown): void => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    clearTimeout(timer);
+    timer = undefined;
+    completion.reject(error);
+  };
+  const poll = (exitCode: number | null): void => {
+    if (settled) {
+      return;
+    }
+    try {
+      if (!isProcessGroupAlive(processGroupId)) {
+        settled = true;
+        completion.resolve(exitCode);
+        return;
+      }
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    timer = setTimeout(() => {
+      timer = undefined;
+      poll(exitCode);
+    }, 10);
+  };
+  void leaderExit.then(poll, reject);
+  void completion.promise.catch(() => undefined);
+  return {
+    promise: completion.promise,
+    cancel: reject
+  };
+}
+
+function isProcessGroupAlive(processGroupId: number): boolean {
+  try {
+    process.kill(-processGroupId, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+      return false;
+    }
+    throw error;
+  }
 }
 
 export async function* splitLines(
@@ -330,17 +677,74 @@ export async function* splitLines(
 export async function collectText(
   chunks: AsyncIterable<string | Uint8Array> | undefined
 ): Promise<string> {
+  return await startTextCollector(chunks).result;
+}
+
+interface TextCollector {
+  readonly result: Promise<string>;
+  cancel(): Promise<void>;
+}
+
+function startTextCollector(
+  chunks: AsyncIterable<string | Uint8Array> | undefined
+): TextCollector {
   if (!chunks) {
-    return "";
+    return {
+      result: Promise.resolve(""),
+      cancel: () => Promise.resolve()
+    };
   }
 
   const decoder = new TextDecoder();
   const text: string[] = [];
-  for await (const chunk of chunks) {
-    text.push(decodeChunk(decoder, chunk));
-  }
-  text.push(decoder.decode());
-  return text.join("");
+  const iterator = chunks[Symbol.asyncIterator]();
+  const result = (async (): Promise<string> => {
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) {
+        break;
+      }
+      text.push(decodeChunk(decoder, next.value));
+    }
+    text.push(decoder.decode());
+    return text.join("");
+  })();
+  void result.catch(() => undefined);
+  let cancellation: Promise<void> | undefined;
+
+  return {
+    result,
+    cancel() {
+      cancellation ??= (async (): Promise<void> => {
+        const cleanupErrors: unknown[] = [];
+        try {
+          if (isDestroyable(chunks)) {
+            chunks.destroy();
+          }
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        try {
+          await iterator.return?.();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        if (cleanupErrors.length > 0) {
+          throw cleanupErrors[0];
+        }
+      })();
+      return cancellation;
+    }
+  };
+}
+
+function isDestroyable(value: unknown): value is { destroy(): unknown } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "destroy" in value &&
+    typeof value.destroy === "function"
+  );
 }
 
 function decodeChunk(decoder: TextDecoder, chunk: string | Uint8Array): string {

@@ -1850,3 +1850,364 @@ wait, unchanged-head proof, and SHA-locked squash merge remain pending. No
 preflight, live backend, push, PR, CI wait, merge, or GitHub mutation ran in
 Correction 57 Task 1 or Task 2. Fresh authorization remains required for the one
 live simple proving run and every GitHub write.
+## Correction 60
+
+Five deadline and atomic-publication audit findings remained after Correction 59:
+
+- `audit-terminal-ledger-stage-no-follow`: Terminal-ledger publication now creates
+  one private `0600` six-X stage beside the canonical ledger after managed
+  children stop. Repeated regular-file, non-symlink, and same-parent checks fail
+  closed before copy, hashing, deadline authorization, and rename.
+- `audit-detached-descendant-trust-boundary`: Containment explicitly covers
+  process-group members and descendants retaining the inherited owner token.
+  Bounded inspection must prove that cooperative set empty. Arbitrary same-UID
+  hostile processes remain outside the proof, and no kernel isolation is claimed.
+- `audit-controller-wide-deadline-coverage`: Safe controller state and traps now
+  precede external work. A Bash-3.2-compatible low-level controller bounds startup,
+  command execution, owner scans, finalization, and cleanup with fixed descriptors,
+  builtin timing, TERM/KILL cutoffs, and fail-closed status. Captured stdout stays
+  inside the owned process group: an in-group broker isolates raw bytes from fd 7,
+  latches signals, publishes one length-checked typed frame, and leaves no capture
+  temporary file even when both owned groups receive SIGKILL.
+- `audit-terminal-ledger-same-filesystem-rename`: The terminal stage and canonical
+  ledger share one parent. Fresh hashes and boundary checks precede the positive
+  exact-deadline decision, followed immediately by same-directory `mv` with no
+  fallible operation inserted between authorization and rename.
+- `audit-ci-probe-delivery-reserve`: Head checks, CI reads, and pending poll sleep
+  use only the allowance remaining after the exact merge-confirmation and issue-
+  closure reserves. Non-positive allowance rejects before invocation.
+
+The unchanged first 170 ledger rows retain SHA-256
+`223969995ddcfdef812fe919e3f5a706e059278cfba592e3d8eec00286aae1de`.
+Five append-only open rows bring the ledger to 175 rows and 175 unique IDs with
+SHA-256 `cfa3814b36f66ffe8d8028e4c332ccb9cdb9a356f368248f3231128635283b67`.
+The primary package lock remains SHA-256
+`a9f2f75a69a2f247a00536a04d4b5be1cc36330c850c7fd31fdd388f7fd1f8f9`.
+
+The exact Correction 57 section remains 2,800 UTF-8 bytes with SHA-256
+`c5ef679021a6fdf2275764ea3ca3b94f9b760a9fc8b24f78cea364d9a4198955`.
+The Correction 59 successor digest
+`d6bbe87f4859eed4511017ae3fb465db4aa70f8a4b09a6b525bd2ef1e65a350f`
+is invalidated historical evidence and cannot authorize preflight or live
+execution.
+
+Task 1 through Task 4 used focused RED/GREEN, adversarial mutations, syntax or
+type checks, and independent review before Task 5 synchronization. Final triage
+also binds source probes to the current low-level controller and finalizer
+structure, gives detached-child readiness a disjoint margin before active TERM,
+uses a block-bodied CI sleep callback, and removes the guarded non-null assertion.
+
+Task 5a requires focused and adversarial gates, both Bash syntax checks, the
+stock-Bash artifact suite, four-suite aggregate, exact flow typecheck, docs gates,
+diff check, and repository verification on final bytes before freezing the new
+fourteen-file manifest and digest. Static prose and hashes are not execution
+evidence; the final Task 5 report records actual command outputs.
+
+Three sequential successor audits, no-write preflight, live backend proof, push,
+ready PR, CI wait, unchanged-head proof, and SHA-locked squash merge remain
+outside Task 5a and did not run in this phase. No commit or GitHub mutation ran.
+## Correction 61
+
+One residual-ownership contract mismatch remained after Correction 60:
+
+- `audit-observed-once-residual-ownership`: Prior TERM or KILL discovery now
+  triggers cleanup without replacing a successful command status. Final bounded
+  `NONE` inspection is authoritative: a proven-empty cooperative owner set
+  preserves status `0`; inspection failure or residual ownership returns `125`.
+  Timeout `124` and signal `143`, `130`, and `129` behavior remains unchanged.
+
+The launcher, workflow contract, runbook, both plans, design, regression
+contracts, ledger, and progress now use final residual ownership rather than
+observed-once ownership. The detached-helper proof requires the helper dead,
+forbids its late write, and expects a successful leader to return `0`. A durable
+source mutation restores the old observed-once `125` branch and must fail that
+behavior proof.
+
+The unchanged first 175 ledger rows retain SHA-256
+`cfa3814b36f66ffe8d8028e4c332ccb9cdb9a356f368248f3231128635283b67`.
+One append-only open row brings the ledger to 176 rows and 176 unique IDs with
+SHA-256 `c1722959c52ce941b8cea542bec7d1f7171baab17387a18226c98baa39a9e2d2`.
+The primary package lock remains SHA-256
+`a9f2f75a69a2f247a00536a04d4b5be1cc36330c850c7fd31fdd388f7fd1f8f9`.
+
+The exact Correction 60 section remains 3,554 UTF-8 bytes with SHA-256
+`7e0b1ceae71372a74841cf7280dbc9c6eb95bf3a9baca3ecc8b263690886511a`.
+The Correction 60 successor digest
+`800f96b4aea138a9c26bc0d0d2ef306c4363ae91b4897ec48157197b557ac7b2`
+is invalidated historical evidence and cannot authorize successor audits,
+preflight, or live execution.
+
+Task 1 requires witnessed RED and GREEN, explicit old-rule mutation failure,
+both Bash syntax checks, exact flow typecheck, stock-Bash artifact gate,
+four-suite aggregate, docs gates, diff check, and repository verification on
+one final byte set. Static prose and hashes are not execution evidence; the
+Task 1 report and raw final-gate transcript record actual command outputs.
+
+Three sequential successor audits, no-write preflight, live backend proof,
+commit, push, ready PR, CI wait, unchanged-head proof, and SHA-locked squash
+merge remain outside Correction 61 Task 1 and did not run.
+## Correction 62 — controller capture and cleanup status precedence
+
+Correction 61 successor Audit 1 exposed two controller-precedence defects:
+
+- `audit-controller-capture-signal-deferral`: Controller-side captures now
+  compute deadline cutoffs and invoke `controller_run_until --capture` directly
+  in the current shell, then assign through `printf -v`. Startup capture no
+  longer wraps the deadline controller in command substitution.
+- `audit-owner-cleanup-status-precedence`: Every bounded TERM, KILL, and final
+  NONE owner scan propagates timeout `124` and signals `143`, `130`, and `129`
+  unchanged. Unknown inspection failure or residual cooperative ownership still
+  returns `125`; the caller also latches a propagated signal status.
+
+Cleanup partition is exact: TERM `0` ends cleanup and `42` advances to KILL;
+KILL `0` or `42` advances to final NONE; final NONE `0` proves empty and `42`
+returns `125`. Each scan propagates `124`, `143`, `130`, or `129` and maps any
+other status to `125`.
+
+Capture protocol framing is fail-closed. Every successful NUL-delimited record
+must match typed PID, payload, or status syntax. A successful empty record has
+read status `0` but is untyped and returns `125`. The separate Bash 3.2 empty
+timed-poll case has read status `1` and continues only while the wrapper lives;
+dead-wrapper EOF and nonempty partial records return `125`.
+
+The real startup harness blocks both `now_ms` and startup Git capture, delivers
+TERM only after entry, and requires status `143` within 1,500 ms with no live
+controller or process-group residue. The cleanup matrix blocks TERM, KILL, or
+NONE inspection after leader exit and requires exact `124`, `143`, `130`, and
+`129` results with no controller residue. Executed historical command-substitution
+and cleanup-flattening mutations each failed their behavior proof; final restored
+bytes passed the focused family 4/4 with 63 assertions.
+
+The combined review regression injected an empty NUL record before valid frames
+and recorded its first read as status:length `0:0`; the old parser returned `0`
+instead of `125`. The one-line unconditional fallback passed 1/1 with 6
+assertions. Restoring the nonempty-only guard failed the durable contract with
+`captured broker must reject every untyped successful record`; restored
+behavior plus contract passed 2/2 with 13 assertions. The 11-case controller
+neighborhood passed 11/11 with 96 assertions.
+
+The unchanged first 176 ledger rows retain SHA-256
+`c1722959c52ce941b8cea542bec7d1f7171baab17387a18226c98baa39a9e2d2`.
+Two append-only open rows bring the ledger to 178 rows and 178 unique IDs with
+SHA-256 `c196e0aa2c91f87540d1c2187d8b318f58fcacc7d6e319aeac5d9292fb2d338a`.
+The primary package lock remains SHA-256
+`a9f2f75a69a2f247a00536a04d4b5be1cc36330c850c7fd31fdd388f7fd1f8f9`.
+
+The current Correction 62 fourteen-file manifest digest is externalized in
+`.superpowers/sdd/correction62-successor-digest.txt`. These proof documents are
+themselves manifest payloads, so embedding the numeric digest here would make
+the digest recursively depend on itself; the Task 1 report and frozen package
+bind the exact value.
+
+The exact Correction 61 section remains 2,206 UTF-8 bytes with SHA-256
+`25cb9a47b3d40585c7a6ed8b758e25b694981426b2bb340112f519f0e3bfb754`.
+The Correction 61 fourteen-file successor manifest digest
+`6d063971281ca6e6bf505bdc60120833fb52e559872e681fff51380c722aa6ac`
+is invalidated historical evidence and cannot authorize successor audits,
+preflight, or live execution.
+
+Final ordered verification passed paired 14/14 manifest checks with one unchanged
+digest, the focused Correction 62 family, the stock-Bash artifact suite, the
+four-suite aggregate, both Bash syntax checks, exact flow typecheck, docs gates,
+diff check, and repository verification. The raw transcript and Task 1 report
+record commands, outputs, statuses, durations, hashes, and residue checks.
+
+Containment remains cooperative: it covers process-group members and descendants
+retaining the inherited owner token. Arbitrary same-UID hostile processes remain
+outside the proof, and this is not kernel isolation. Successor audits, no-write
+preflight, live backend proof, commit, push, PR, CI wait, and merge remain outside
+Correction 62 Task 1 and did not run.
+## Correction 63
+
+Five final broad-review findings remained after Correction 62:
+
+- `audit-finalization-temp-symlink-overwrite`: Finalization text publication now
+  delegates to one runtime publisher. It creates a cryptographically random
+  same-directory regular file with `O_CREAT | O_EXCL | O_WRONLY` and mode
+  `0600`; write, durability, close, byte-count, and identity checks finish
+  before `commitPublication()`, with rename immediately next. Cleanup unlinks
+  only the exact created device/inode and never follows the old predictable
+  symlink.
+- `audit-delivery-identity-deadline-bypass`: Repository parsing assigns through
+  a validated output name and `printf -v` in the current shell. Both external
+  lowercase operations run through `capture_before_deadline`; timeout `124`,
+  fetch/push identity checks, and case-insensitive comparison remain intact.
+- `audit-cancellation-failure-settlement`: Failed cancellation cleanup now
+  stores one typed `BackendFailed` outcome plus the shared `cancel()` rejection
+  under the active outer settlement reservation. An internal completion channel
+  lets the run finalizer finish held stdout/stderr iterator teardown without
+  awaiting the public cancellation promise; outcome and rejection publish once
+  at final release.
+- `audit-terminal-subprocess-quiescence`: One terminal finalizer owns timeout,
+  cancellation, consumer failure, stream cleanup, bounded TERM-to-KILL, exit,
+  and reservation release. POSIX children use process groups and await leader
+  close plus group disappearance. The disappearance wait owns one cancellable
+  timer; any termination failure rejects the exit wait with the same error and
+  clears polling. Windows retains its gated leader fallback.
+- `audit-reasoning-effort-model-compatibility`: Both backend references state
+  that all six declared values forward to Codex without a local model catalog.
+  Acceptance depends on selected model and Codex CLI version; rejected
+  combinations return a backend failure.
+
+Final whole-change review found that cancellation failure still published before
+outer release, process-group disappearance polling could continue after bounded
+cleanup gave up, and timeout documentation incorrectly said `Conversation.signal`
+aborted. All three were repaired without changing runtime timeout signal
+semantics.
+
+A later whole-re-review found that canonical cancellation docs described only
+successful cleanup: they promised that `cancel()` resolves and
+`awaitResult()` becomes cancelled, but omitted the cleanup-failure path. Both
+documentation surfaces now preserve normal successful cancellation and state
+that cleanup failure rejects the shared cancellation promise and publishes a
+typed `BackendFailed` only after final cleanup and settlement release.
+
+Strict RED/GREEN and mutation proof preceded synchronization. The finalization
+RED changed an external file through the planted predictable symlink; GREEN
+passed 2/2 with 62 assertions, and restoring the old publisher failed the
+external-byte assertion. The delivery RED entered a PATH-shadowed hanging `tr`
+and returned `143` instead of required `124`; GREEN passed 2/2 with 23
+assertions, and restoring command substitution reproduced the failure.
+
+Cancellation, reservation, terminal-consumer, real POSIX group, terminal-family,
+and stderr-cleanup REDs all exposed premature or missing settlement. The first
+Slice C freeze passed 90/90 with 250 assertions; cancellation, reservation,
+immediate-kill, and leader-only historical mutations each failed.
+
+Final-review REDs then observed cancellation outcome and rejection before outer
+release and before held stdout/stderr teardown. A naive public-result deferral
+mutation stalled teardown. GREEN passed the reservation unit 1/1 with 5
+assertions and held-stream integration 1/1 with 6 assertions. The group-poll RED
+scheduled three additional 10 ms timers after termination failure; GREEN passed
+1/1 with 4 assertions, proving the exit wait rejected with the same error and
+left zero polling timers. Removing registered poll cancellation reproduced a
+pending exit. The timeout-doc lock RED missed the actual-signal contract; GREEN
+passed 1/1 with 9 assertions, and restoring the false signal-abort claim failed.
+
+The cancellation-doc lock RED missed the success/failure contract and failed
+0/1 after one assertion. GREEN passed 1/1 with 6 assertions. Restoring the
+resolve-only claim failed 0/1 with 3 assertions, then exact GREEN bytes were
+restored. No runtime semantic changed.
+
+A later successful-cancel cleanup audit found that subprocess finalization
+discarded stdout/stderr cleanup errors after termination had succeeded. The
+pending cancellation outcome therefore published as `cancelled` and the shared
+`cancel()` promise resolved even though owned stream teardown failed.
+
+The qualifying RED held both cleanup paths, rejected stdout cleanup, completed
+stderr cleanup, and received `{ type: "cancelled", reason: "stop" }` instead of
+a typed `BackendFailed`; the shared cancellation promise resolved. GREEN
+registers one internal late-failure handler with the shared promise.
+Cancellation cleanup failure has higher settlement priority than successful
+cancellation and reports a cleanup error before final release. Outcome remains
+pending until both streams finish, then typed failure publishes before the exact
+cleanup error rejects the shared promise. Timeout stream cleanup errors likewise
+win before timeout settlement. The focused GREEN passed 1/1 with 8 assertions;
+restoring discarded `await cleanupStreams()` in both cancellation paths failed
+0/1 with the same cancelled outcome. Exact source bytes were restored and GREEN
+passed again. A final lifecycle re-review then found that consumer and timeout
+cleanup errors still called `conversation.fail` after cancellation had started.
+Active cancellation made those calls no-ops, so `cancel()` resolved and a
+`cancelled` outcome hid the teardown error. It also found no deadline around
+stdout iterator return, line-generator return, stderr cancellation/return, or an
+awaited stderr collector result after process exit; any one could retain run or
+timeout settlement reservations forever.
+
+Four real-behavior REDs received two `cancelled` outcomes and two pending
+sentinels. GREEN routes consumer and timeout cleanup errors through the registered
+cancellation-failure handler only while cancellation owns settlement, preserving
+ordinary timeout failure ordering. Finalization starts one absolute
+stream-teardown deadline from the configured wall-clock budget. Every awaited
+stdout and stderr teardown shares its remaining time; expiry becomes a typed
+cleanup failure and every reservation releases.
+
+The final focused GREEN passed 4/4 with 7 assertions. Disabling cancellation-
+failure routing failed 0/2 and again published `cancelled`; disabling deadline
+rejection failed 0/2 with both paths still pending. Exact bytes were restored.
+
+A subsequent whole-review-4 race found that the terminal-error finalizer discarded
+cleanup errors returned by `terminateAndCleanup(false)`. When a consumer error
+started termination, cancellation began while exit was pending, and stdout
+iterator return rejected, the run preserved its primary rejection but `cancel()`
+resolved and `awaitResult()` returned `cancelled`.
+
+The one-test RED recorded exactly those three outcomes. GREEN captures returned
+cleanup errors; while cancellation is active it reports the first through the
+registered cancellation-failure handler before rethrowing the exact primary
+error. Without cancellation, the primary error keeps precedence. Removing only
+that routing reproduced the same RED. Exact bytes passed the focused race 1/1
+with 4 assertions, the full Codex file 45/45 with 135 assertions, and 20/20
+repeated race runs.
+
+A successor-audit-2 docs review found that the website introduction still
+claimed every fallible operation returns a `Result`, contradicting the same
+page's typed asynchronous cancellation-cleanup contract. Result-returning
+operations now represent expected failures as values, while asynchronous
+lifecycle methods retain promise semantics: public `cancel()` resolves after
+successful cleanup and rejects when cleanup fails.
+
+The deterministic wording lock RED passed 20 existing tests and failed the new
+claim with 56 assertions. GREEN passed 21/21 with 57 assertions. Restoring the
+old absolute wording reproduced the same RED; restoring exact bytes passed the
+targeted test, documentation links, and documentation symbols. No runtime
+semantic changed.
+
+The four affected backend/conversation suites passed 98/98 with 280 assertions,
+and the regression passed 20/20 repeated runs. Typecheck, lint,
+declarations/signatures, facade, and diff checks passed. Independent scoped
+review returned Spec PASS, Quality PASS, and zero findings.
+
+Final Slice C, backend, and reasoning coverage passed 106/106 with 301 assertions.
+Reasoning-effort RED passed all six forwarding cases but failed the missing
+two-surface contract; its original GREEN passed 7/7 with 8 assertions, and
+suppressing `ultra` failed its table row.
+
+The ledger RED expected 183 rows and received 178. Exact append, prefix, field
+order, evidence, uniqueness, and one-LF EOF locks passed 3/3 with 25 assertions;
+order, field, semantic, duplicate-ID, and EOF mutations were all rejected. Four
+proof documents now carry this byte-identical section once at EOF, with heading,
+row-order, count, status, semantics, hash, and post-EOF mutations locked.
+
+The unchanged first 178 ledger rows retain SHA-256
+`c196e0aa2c91f87540d1c2187d8b318f58fcacc7d6e319aeac5d9292fb2d338a`.
+Five append-only open rows bring the ledger to 183 rows and 183 unique IDs,
+110,097 bytes, and SHA-256
+`6544bd11a635893b1f2890b3306fc27d4aac3fbe3724eac0d44bd66fddb63a03`.
+The five-row suffix SHA-256 is
+`f7bef2e8a82622fe84b2639b32747ac0f977fa53a210d219fd2fb5637da93d5b`.
+The primary package lock remains SHA-256
+`a9f2f75a69a2f247a00536a04d4b5be1cc36330c850c7fd31fdd388f7fd1f8f9`.
+The exact Correction 62 section remains 4,272 UTF-8 bytes with SHA-256
+`c30027f085ba22283e3a8816bf06567a441e70eb725d7b56f516b8012b530834`.
+
+The Correction 62 successor digest is invalidated historical evidence. The
+Correction 63 fourteen-file successor digest, separate correction-runtime
+manifest, gate-log hash, and package hash are externalized in the Task 1 report
+and frozen review package. Protected proof documents are manifest inputs, and
+the gate log contains manifest checks, so embedding those values here would
+create recursive hash dependencies.
+
+Final ordered verification on frozen bytes passed affected workflow suites, all
+Slice C suites, backend and reasoning tests, cancellation, timeout, and
+Result/lifecycle documentation locks, system and Homebrew Bash syntax, exact
+flow typecheck, documentation
+links and symbols, lint, typecheck, diff check, and `bun run verify`. Paired
+pre/post manifest, package-lock, 178-row prefix, HEAD/branch, process, and
+temporary-residue checks remained unchanged.
+
+Correction 62's first ordered aggregate had one load-sensitive existing terminal-
+ledger recovery fixture fail once. It then passed unchanged 3/3 alone, the exact
+aggregate retry, and the restarted final sequence. That historical timing
+concern remains preserved rather than hidden.
+
+The protected launcher artifact set remains exactly fourteen files; a separate
+eleven-file manifest covers correction-only runtime, tests, and backend docs.
+Public `Conversation` and package-root exports remain unchanged. Stock Bash 3.2
+status
+mapping remains `124`, `143`/`130`/`129`, and `125` as documented. Real process-
+group behavior ran on macOS; the gated Windows fallback was not runtime-tested.
+Candidate worktrees still start from `origin/main`; no history rewrite occurred.
+
+Live acceptance, successor audit, no-write preflight, live backend, commit, push,
+PR, CI wait, merge, and GitHub mutation remain outside Correction 63 Task 1 and
+did not run.

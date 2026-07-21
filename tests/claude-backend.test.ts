@@ -391,7 +391,7 @@ describe("Claude live backend constructor", () => {
     expect(await conversation.awaitResult()).toEqual({ type: "cancelled", reason: "stop" });
   });
 
-  test("rejects Claude ACP cancellation failures without settling an outcome", async () => {
+  test("rejects Claude ACP cancellation failures after settling a typed outcome", async () => {
     let process: FakeAcpProcess | undefined;
     let promptId: AcpId | undefined;
     const backend = claude({
@@ -422,22 +422,28 @@ describe("Claude live backend constructor", () => {
 
     const conversation = backend.autonomous({ prompt: "run" });
     await waitFor(() => process !== undefined && promptId !== undefined);
+    let outcomeBeforeRejection: unknown;
+    void conversation.awaitResult().then((outcome) => {
+      outcomeBeforeRejection = outcome;
+    });
     const cancellationError = await conversation.cancel("stop").then(
       () => undefined,
       (error: unknown) => error
     );
 
-    let outcomeSettled = false;
-    void conversation.awaitResult().then(() => {
-      outcomeSettled = true;
-    });
-    await Promise.resolve();
-
     expect(cancellationError).toBeInstanceOf(Error);
     expect((cancellationError as Error).message).toBe(
       "Claude ACP cancellation failed: process refused cancellation"
     );
-    expect(outcomeSettled).toBe(false);
+    expect(outcomeBeforeRejection).toEqual({
+      type: "failed",
+      error: {
+        _tag: "BackendFailed",
+        backend: "claude",
+        message:
+          "claude cancellation cleanup failed: Claude ACP cancellation failed: process refused cancellation"
+      }
+    });
     process?.close(null);
   });
 

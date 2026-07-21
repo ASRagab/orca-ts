@@ -34,6 +34,8 @@ For subprocess JSONL turns, `BackendConfig<"codex">.reasoningEffort` accepts
 request and passed to `codex exec` as `model_reasoning_effort`. The experimental
 Codex ACP path does not expose this setting.
 
+Orcats forwards all six declared values to Codex without a local model catalog. Actual acceptance depends on the selected model and Codex CLI version. Unsupported combinations return a backend failure.
+
 `claude()` uses `claude-agent-acp` by default. Set `ORCA_CLAUDE_ACP_COMMAND` to point at a different ACP adapter command, or set `ORCA_CLAUDE_TRANSPORT=stream-json` / `claude({ transport: "stream-json" })` to use the previous `claude --print --input-format stream-json` subprocess path. Model-pinned and resumed Claude runs use the stream-json fallback automatically because the ACP adapter does not expose equivalent stable fields yet.
 
 ## The `LlmBackend<B>` contract
@@ -131,7 +133,7 @@ Each backend takes optional `inactivityTimeoutMs` and `wallClockTimeoutMs`; Open
 | Wall-clock | `600_000` ms (600s) | claude, codex, opencode, pi | Absolute per-turn cap, even if events keep flowing. |
 | Startup | `30_000` ms (30s) | opencode only | `opencode serve` did not print a listening URL → `BackendFailed`. |
 
-A timeout aborts the conversation's `signal`; `awaitResult()` then resolves to `{ type: "cancelled" }` or `{ type: "failed", error }` — it never rejects.
+A backend timeout stops the transport and resolves `awaitResult()` to `{ type: "failed", error }`; it does not abort the conversation's `signal`. The signal aborts only when `cancel()` is requested.
 
 ## Credentials and login
 
