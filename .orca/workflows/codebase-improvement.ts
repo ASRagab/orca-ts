@@ -595,19 +595,15 @@ async function acquireDeliveryRecordLock(
   deadlineAtMs?: number,
 ): Promise<string> {
   const lock = `${destination}.lock`;
-  const assertBeforeDeadline = (): void => {
-    if (deadlineAtMs !== undefined && Date.now() >= deadlineAtMs) {
-      throw new Error("delivery record lock wait exceeded continuation deadline");
-    }
-  };
-  assertBeforeDeadline();
   while (true) {
     try {
       await mkdir(lock, { mode: 0o700 });
       return lock;
     } catch (error) {
       if (!isErrnoCode(error, "EEXIST")) throw error;
-      assertBeforeDeadline();
+      if (deadlineAtMs !== undefined && Date.now() >= deadlineAtMs) {
+        throw new Error("delivery record lock wait exceeded continuation deadline");
+      }
       const delayMs =
         deadlineAtMs === undefined ? 10 : Math.min(10, deadlineAtMs - Date.now());
       if (delayMs <= 0) {
@@ -2911,11 +2907,11 @@ function parseDeliveryContinuationDeadlineAtMs(
   const parsed = Number(value);
   if (
     !Number.isSafeInteger(parsed) ||
-    parsed <= startedAtMs ||
+    parsed <= 0 ||
     parsed > startedAtMs + DELIVERY_CONTINUATION_DEADLINE_MS
   ) {
     throw new Error(
-      `ORCA_IMPROVEMENT_DELIVERY_DEADLINE_AT_MS must be a safe integer greater than ${String(startedAtMs)} and no later than ${String(startedAtMs + DELIVERY_CONTINUATION_DEADLINE_MS)}, got ${value}`,
+      `ORCA_IMPROVEMENT_DELIVERY_DEADLINE_AT_MS must be a positive safe integer no later than ${String(startedAtMs + DELIVERY_CONTINUATION_DEADLINE_MS)}, got ${value}`,
     );
   }
   return parsed;

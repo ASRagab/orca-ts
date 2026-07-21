@@ -9494,6 +9494,36 @@ type DeliveryRecordPersistence = (
   deadlineAtMs?: number,
 ) => Promise<void>;
 
+type DeliveryContinuationDeadlineParser = (value: string, startedAtMs: number) => number;
+
+function loadDeliveryContinuationDeadlineParser(
+  source: string,
+): DeliveryContinuationDeadlineParser | undefined {
+  const sourceFile = ts.createSourceFile(
+    path,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const declaration = functionDeclarationsNamed(
+    sourceFile,
+    "parseDeliveryContinuationDeadlineAtMs",
+  )[0];
+  if (declaration === undefined) return undefined;
+  const emitted = ts.transpileModule(declaration.getText(sourceFile), {
+    compilerOptions: {
+      module: ts.ModuleKind.None,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
+  const loaded: unknown = runInNewContext(
+    `${emitted}\nparseDeliveryContinuationDeadlineAtMs;`,
+    { DELIVERY_CONTINUATION_DEADLINE_MS: 1_800_000 },
+  );
+  return typeof loaded === "function" ? (loaded as DeliveryContinuationDeadlineParser) : undefined;
+}
+
 function loadDeliveryRecordPersistence(
   source: string,
   bindings: Record<string, unknown>,
@@ -9905,6 +9935,54 @@ test("delivery record persistence serializes concurrent attempts without loss", 
   expect(DeliveryRecordSchema.parse(JSON.parse(persisted)).delivery.status).toBe(
     "blocked",
   );
+});
+
+test("delivery continuation accepts an already elapsed positive absolute deadline", async () => {
+  const source = await Bun.file(path).text();
+  const parseDeadline = loadDeliveryContinuationDeadlineParser(source);
+  expect(parseDeadline).toBeFunction();
+  if (parseDeadline === undefined) return;
+
+  expect(parseDeadline("100", 101)).toBe(100);
+});
+
+test("delivery record persistence acquires a fresh lock at its continuation deadline", async () => {
+  const source = await Bun.file(path).text();
+  const destination = "/tmp/delivery.json";
+  const files = new Map<string, string>([[destination, JSON.stringify(deliveryRecordFixture())]]);
+  let mkdirCalls = 0;
+  const persistence = loadDeliveryRecordPersistence(source, {
+    Date: { now: () => 1 },
+    mkdir: async () => {
+      mkdirCalls += 1;
+    },
+    readFile: async (file: string) => files.get(file) ?? "",
+    rename: async (from: string, to: string) => {
+      files.set(to, files.get(from) ?? "");
+      files.delete(from);
+    },
+    rm: async () => undefined,
+    writeFile: async (file: string, value: string) => {
+      files.set(file, value);
+    },
+  });
+  expect(persistence).toBeFunction();
+  if (persistence === undefined) return;
+
+  const pending = DeliveryRecordSchema.parse({
+    ...deliveryRecordFixture(),
+    delivery: {
+      status: "pending",
+      attempts: [{ startedAtMs: 1, finishedAtMs: 1, status: "pending" }],
+    },
+  });
+  await persistence(destination, pending, 1);
+
+  expect(mkdirCalls).toBe(1);
+  expect(DeliveryRecordSchema.parse(JSON.parse(files.get(destination) ?? "")).delivery).toMatchObject({
+    status: "pending",
+    attempts: [{ status: "pending" }],
+  });
 });
 
 test("delivery record persistence bounds a stale lock by the continuation deadline", async () => {
