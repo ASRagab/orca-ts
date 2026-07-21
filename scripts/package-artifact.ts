@@ -111,12 +111,20 @@ export function runCommand(command: string, args: readonly string[], cwd = proce
 
 export function npmPackJson(args: readonly string[] = [], cwd = process.cwd()): PackManifest {
   const result = runCommand("npm", ["pack", "--json", ...args], cwd);
-  const parsed = JSON.parse(result.stdout) as readonly PackManifest[];
-  const manifest = parsed[0];
+  return parseNpmPackJson(result.stdout);
+}
+
+export function parseNpmPackJson(stdout: string): PackManifest {
+  const parsed = JSON.parse(stdout) as unknown;
+  const manifest: unknown = Array.isArray(parsed)
+    ? parsed[0]
+    : isRecord(parsed)
+      ? Object.values(parsed)[0]
+      : undefined;
   if (manifest === undefined) {
     throw new Error("npm pack --json returned no package manifest");
   }
-  return manifest;
+  return manifest as PackManifest;
 }
 
 export function collectMetadataFailures(packageJson: PackageJson): string[] {

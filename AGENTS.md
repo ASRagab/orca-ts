@@ -6,7 +6,7 @@ Use `CONTEXT.md` for project vocabulary. In particular, prefer `flow`, `flow con
 
 ## Current Scope
 
-- The package is version `0.2.3`.
+- The package is version `0.3.0`.
 - Local development, examples, CI verification, fixture validation, live backend adapter work, and distribution are in scope.
 - npm publishing targets scoped public `@twelvehart/orcats` via npm Trusted Publishing from GitHub Actions. Do not add `NPM_TOKEN`; configure npm trust for `ASRagab/orca-ts` and `.github/workflows/release.yml` before tagging.
 - Releases are tag-driven through `.github/workflows/release.yml` and publish both GitHub Release binaries and the npm package.

@@ -14,8 +14,8 @@ The installer downloads the matching GitHub Release tarball, verifies `SHA256SUM
 ## Pin a release
 
 ```bash
-ORCA_VERSION=0.2.3 ORCA_INSTALL_DIR="$HOME/.local/bin" \
-  bash <(curl -fsSL https://github.com/ASRagab/orca-ts/releases/download/v0.2.3/install.sh)
+ORCA_VERSION=0.3.0 ORCA_INSTALL_DIR="$HOME/.local/bin" \
+  bash <(curl -fsSL https://github.com/ASRagab/orca-ts/releases/download/v0.3.0/install.sh)
 ```
 
 ## How flow imports resolve
