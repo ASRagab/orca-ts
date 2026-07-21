@@ -5864,7 +5864,7 @@ function composedDeadlineOwnershipIssues(
     "function parseWorkerDeadlineAtMs(",
   );
   const parserEnd = compactRuntime.indexOf(
-    "function requiredEnvironment(",
+    "function parseDeliveryContinuationDeadlineAtMs(",
     parserStart,
   );
   const workerDeadlineParser = compactRuntime.slice(parserStart, parserEnd);
@@ -10905,20 +10905,20 @@ test("launcher and runtime own disjoint finalization windows", async () => {
     {
       name: "worker deadline parser returns the profile deadline",
       launcher,
-      runtime: runtime.replace(
-        [
-          "  return parsed;",
-          "}",
-          "",
-          "function requiredEnvironment",
-        ].join("\n"),
-        [
-          "  return startedAtMs + deadlineMs;",
-          "}",
-          "",
-          "function requiredEnvironment",
-        ].join("\n"),
-      ),
+      runtime: (() => {
+        const parserStart = runtime.indexOf("function parseWorkerDeadlineAtMs(");
+        const parserEnd = runtime.indexOf(
+          "function parseDeliveryContinuationDeadlineAtMs(",
+          parserStart,
+        );
+        if (parserStart < 0 || parserEnd < parserStart) return runtime;
+        const parser = runtime.slice(parserStart, parserEnd);
+        return (
+          runtime.slice(0, parserStart) +
+          parser.replace("return parsed;", "return startedAtMs + deadlineMs;") +
+          runtime.slice(parserEnd)
+        );
+      })(),
       issue: "runtime report must parse and bind the exact worker deadline",
     },
     {
@@ -19210,4 +19210,15 @@ test("active ready delivery reloads into its isolated continuation without backe
   } finally {
     Date.now = originalNow;
   }
+});
+
+test("delivery continuation reserves shell cleanup after its exact 30-minute deadline", async () => {
+  const launcher = await Bun.file(".orca/workflows/codebase-improvement.sh").text();
+  expect(launcher).toContain("launcher_deadline_ms=1803000");
+  expect(launcher).toContain(
+    "delivery_deadline_at_ms=$(( started_at_ms + 1800000 ))",
+  );
+  expect(launcher).toContain(
+    '\"ORCA_IMPROVEMENT_DELIVERY_DEADLINE_AT_MS=$delivery_deadline_at_ms\"',
+  );
 });

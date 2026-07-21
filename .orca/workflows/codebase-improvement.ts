@@ -394,6 +394,7 @@ async function awaitConversationWithinBudget<T>(
 }
 
 interface DeliveryContinuationDependencies {
+  readonly deadlineAtMs?: number;
   readonly now: () => number;
   readonly readProtection: (remainingMs: number) => Promise<{
     readonly valid: boolean;
@@ -414,7 +415,10 @@ interface DeliveryContinuationDependencies {
     lockedHeadSha: string,
     remainingMs: number,
   ) => Promise<CommandLog>;
-  readonly persist: (record: DeliveryRecordV1) => Promise<void>;
+  readonly persist: (
+    record: DeliveryRecordV1,
+    persistenceDeadlineAtMs?: number,
+  ) => Promise<void>;
 }
 
 interface DeliveryContinuationResult {
@@ -447,7 +451,8 @@ async function runDeliveryContinuation(
 ): Promise<DeliveryContinuationResult> {
   const record = DeliveryRecordSchema.parse(JSON.parse(rawRecord));
   const startedAtMs = dependencies.now();
-  const deadlineAtMs = startedAtMs + DELIVERY_CONTINUATION_DEADLINE_MS;
+  const deadlineAtMs =
+    dependencies.deadlineAtMs ?? startedAtMs + DELIVERY_CONTINUATION_DEADLINE_MS;
   const identity: PullRequestIdentity = {
     repository: record.repository,
     branch: record.branch,
@@ -461,6 +466,7 @@ async function runDeliveryContinuation(
     if (value <= 0) throw new Error(`delivery continuation exceeded deadline before ${operation}`);
     return value;
   };
+  const expired = (): boolean => dependencies.now() >= deadlineAtMs;
   const finish = async (
     status: "pending" | "blocked" | "delivered",
     merge?: CommandLog,
@@ -483,66 +489,75 @@ async function runDeliveryContinuation(
         ],
       },
     });
-    await dependencies.persist(next);
+    await dependencies.persist(next, deadlineAtMs);
     return {
       status,
       exitCode: status === "pending" ? 75 : 0,
       record: next,
     };
   };
-  const readReady = async (): Promise<"ok" | "blocked"> => {
+  const readReady = async (): Promise<"ok" | "pending" | "blocked"> => {
+    if (expired()) return "pending";
     try {
       const read = await dependencies.readPullRequest("ready", remaining("PR identity"));
+      checks.push(read.log);
       assertReadyPullRequestHead(read.pr, identity);
       latestPr = read.pr;
       return "ok";
     } catch {
-      return "blocked";
+      return expired() ? "pending" : "blocked";
     }
   };
 
   if (record.delivery.status !== "pending") return await finish("blocked");
-  if ((await readReady()) !== "ok") return await finish("blocked");
+  const initialReady = await readReady();
+  if (initialReady !== "ok") return await finish(initialReady);
 
   let initialChecks: Awaited<ReturnType<DeliveryContinuationDependencies["readChecks"]>>;
   try {
     initialChecks = await dependencies.readChecks(remaining("initial checks"));
   } catch {
-    return await finish("blocked");
+    return await finish(expired() ? "pending" : "blocked");
   }
   checks.push(initialChecks.log);
   if (initialChecks.state === "failed") return await finish("blocked");
-  if (initialChecks.state === "pending" || dependencies.now() >= deadlineAtMs) {
+  if (initialChecks.state === "pending" || expired()) {
     return await finish("pending");
   }
 
+  if (expired()) return await finish("pending");
   let protection: Awaited<ReturnType<DeliveryContinuationDependencies["readProtection"]>>;
   try {
     protection = await dependencies.readProtection(remaining("merge protection"));
   } catch {
-    return await finish("blocked");
+    return await finish(expired() ? "pending" : "blocked");
   }
+  checks.push(protection.log);
   if (!protection.valid) return await finish("blocked");
 
+  if (expired()) return await finish("pending");
   let freshChecks: Awaited<ReturnType<DeliveryContinuationDependencies["readChecks"]>>;
   try {
     freshChecks = await dependencies.readChecks(remaining("fresh checks"));
   } catch {
-    return await finish("blocked");
+    return await finish(expired() ? "pending" : "blocked");
   }
   checks.push(freshChecks.log);
   if (freshChecks.state === "failed") return await finish("blocked");
-  if (freshChecks.state === "pending") return await finish("pending");
-  if ((await readReady()) !== "ok") return await finish("blocked");
+  if (freshChecks.state === "pending" || expired()) return await finish("pending");
+  const freshReady = await readReady();
+  if (freshReady !== "ok") return await finish(freshReady);
 
+  if (expired()) return await finish("pending");
   let merge: CommandLog;
   try {
     merge = await dependencies.merge(record.lockedHeadSha, remaining("merge"));
   } catch {
-    return await finish("blocked");
+    return await finish(expired() ? "pending" : "blocked");
   }
   if (merge.status !== "passed") return await finish("blocked", merge);
 
+  if (expired()) return await finish("pending", merge);
   try {
     const confirmation = await dependencies.readPullRequest(
       "merged",
@@ -561,7 +576,7 @@ async function runDeliveryContinuation(
       isDraft: mergedPr.isDraft,
     };
   } catch {
-    return await finish("blocked", merge);
+    return await finish(expired() ? "pending" : "blocked", merge);
   }
   return await finish("delivered", merge);
 }
@@ -575,15 +590,30 @@ function isErrnoCode(error: unknown, code: string): boolean {
   );
 }
 
-async function acquireDeliveryRecordLock(destination: string): Promise<string> {
+async function acquireDeliveryRecordLock(
+  destination: string,
+  deadlineAtMs?: number,
+): Promise<string> {
   const lock = `${destination}.lock`;
+  const assertBeforeDeadline = (): void => {
+    if (deadlineAtMs !== undefined && Date.now() >= deadlineAtMs) {
+      throw new Error("delivery record lock wait exceeded continuation deadline");
+    }
+  };
+  assertBeforeDeadline();
   while (true) {
     try {
       await mkdir(lock, { mode: 0o700 });
       return lock;
     } catch (error) {
       if (!isErrnoCode(error, "EEXIST")) throw error;
-      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      assertBeforeDeadline();
+      const delayMs =
+        deadlineAtMs === undefined ? 10 : Math.min(10, deadlineAtMs - Date.now());
+      if (delayMs <= 0) {
+        throw new Error("delivery record lock wait exceeded continuation deadline");
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
     }
   }
 }
@@ -614,8 +644,9 @@ function mergeDeliveryAttempt(
 async function persistDeliveryRecordAtomically(
   destination: string,
   record: DeliveryRecordV1,
+  deadlineAtMs?: number,
 ): Promise<void> {
-  const lock = await acquireDeliveryRecordLock(destination);
+  const lock = await acquireDeliveryRecordLock(destination, deadlineAtMs);
   try {
     const current = DeliveryRecordSchema.parse(
       JSON.parse(await readFile(destination, "utf8")),
@@ -642,6 +673,10 @@ await flow(flowArgs())(async () => {
     if (launcherValidatedRecord.runId !== continuationRunId) {
       throw new Error("delivery record run ID does not match continuation");
     }
+    const deliveryDeadlineAtMs = parseDeliveryContinuationDeadlineAtMs(
+      requiredEnvironment("ORCA_IMPROVEMENT_DELIVERY_DEADLINE_AT_MS"),
+      Date.now(),
+    );
     const commandLog = async (
       commandName: string,
       args: readonly string[],
@@ -669,6 +704,7 @@ await flow(flowArgs())(async () => {
       };
     };
     const outcome = await runDeliveryContinuation(rawRecord, {
+      deadlineAtMs: deliveryDeadlineAtMs,
       now: Date.now,
       readProtection: async (remainingMs) => {
         const commandResult = await commandLog(
@@ -752,8 +788,12 @@ await flow(flowArgs())(async () => {
             remainingMs,
           )
         ).log,
-      persist: async (record) => {
-        await persistDeliveryRecordAtomically(deliveryRecordPath, record);
+      persist: async (record, persistenceDeadlineAtMs) => {
+        await persistDeliveryRecordAtomically(
+          deliveryRecordPath,
+          record,
+          persistenceDeadlineAtMs,
+        );
       },
     });
     process.exitCode = outcome.exitCode;
@@ -2859,6 +2899,23 @@ function parseWorkerDeadlineAtMs(
   ) {
     throw new Error(
       `ORCA_IMPROVEMENT_WORKER_DEADLINE_AT_MS must be a safe integer greater than ${String(startedAtMs)} and no later than ${String(startedAtMs + deadlineMs)}, got ${value}`,
+    );
+  }
+  return parsed;
+}
+
+function parseDeliveryContinuationDeadlineAtMs(
+  value: string,
+  startedAtMs: number,
+): number {
+  const parsed = Number(value);
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed <= startedAtMs ||
+    parsed > startedAtMs + DELIVERY_CONTINUATION_DEADLINE_MS
+  ) {
+    throw new Error(
+      `ORCA_IMPROVEMENT_DELIVERY_DEADLINE_AT_MS must be a safe integer greater than ${String(startedAtMs)} and no later than ${String(startedAtMs + DELIVERY_CONTINUATION_DEADLINE_MS)}, got ${value}`,
     );
   }
   return parsed;

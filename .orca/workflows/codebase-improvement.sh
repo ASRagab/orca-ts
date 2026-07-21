@@ -2077,15 +2077,17 @@ run_delivery_continuation() {
   if [[ ! "$started_at_ms" =~ ^[0-9]+$ ]]; then
     return 64
   fi
-  launcher_deadline_ms=1800000
+  launcher_deadline_ms=1803000
   launcher_absolute_deadline_at_ms=$(( started_at_ms + launcher_deadline_ms ))
   launcher_deadline_at_ms="$launcher_absolute_deadline_at_ms"
+  delivery_deadline_at_ms=$(( started_at_ms + 1800000 ))
   phase=delivery-continuation
   cd "$source_root" || return $?
   hash -r
   set +e
   run_before_deadline env \
     "ORCA_IMPROVEMENT_DELIVERY_RECORD_PATH=$delivery_record_path" \
+    "ORCA_IMPROVEMENT_DELIVERY_DEADLINE_AT_MS=$delivery_deadline_at_ms" \
     bash skills/orcats-flow/scripts/orca-run.sh \
     .orca/workflows/codebase-improvement.ts -- \
     "--continue-delivery=$continuation_run_id"

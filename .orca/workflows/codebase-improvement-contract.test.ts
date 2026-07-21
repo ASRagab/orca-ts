@@ -9380,6 +9380,7 @@ test("active ready proof locks one non-draft PR head before record publication",
 type DeliveryContinuation = (
   rawRecord: string,
   dependencies: {
+    readonly deadlineAtMs?: number;
     readonly now: () => number;
     readonly readProtection: (remainingMs: number) => Promise<{
       readonly valid: boolean;
@@ -9400,7 +9401,10 @@ type DeliveryContinuation = (
       lockedHeadSha: string,
       remainingMs: number,
     ) => Promise<Record<string, unknown>>;
-    readonly persist: (record: Record<string, unknown>) => Promise<void>;
+    readonly persist: (
+      record: Record<string, unknown>,
+      persistenceDeadlineAtMs?: number,
+    ) => Promise<void>;
   },
 ) => Promise<{
   readonly status: "pending" | "blocked" | "delivered";
@@ -9487,6 +9491,7 @@ function readyDeliveryPr(headSha = "a".repeat(40)): Record<string, unknown> {
 type DeliveryRecordPersistence = (
   destination: string,
   record: Record<string, unknown>,
+  deadlineAtMs?: number,
 ) => Promise<void>;
 
 function loadDeliveryRecordPersistence(
@@ -9696,6 +9701,44 @@ test("delivery continuation persists one blocked base-mismatch attempt without a
     attempts: [{ status: "blocked" }],
   });
   expect(persisted[0]?.delivery.attempts[0]?.pr).toBeUndefined();
+  expect(persisted[0]?.delivery.attempts[0]?.checks).toEqual([
+    deliveryCommand("pr"),
+  ]);
+});
+
+test("delivery continuation preserves retryable pending evidence at its deadline", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  const persisted: Record<string, unknown>[] = [];
+  const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+    deadlineAtMs: 0,
+    now: () => 0,
+    readProtection: async () => {
+      throw new Error("deadline must stop before protection");
+    },
+    readChecks: async () => {
+      throw new Error("deadline must stop before checks");
+    },
+    readPullRequest: async () => {
+      throw new Error("deadline must stop before PR identity");
+    },
+    merge: async () => {
+      throw new Error("deadline must stop before merge");
+    },
+    persist: async (record) => {
+      persisted.push(record);
+    },
+  });
+
+  expect(result).toMatchObject({ status: "pending", exitCode: 75 });
+  expect(persisted).toHaveLength(1);
+  expect(persisted[0]?.delivery).toMatchObject({
+    status: "pending",
+    attempts: [{ status: "pending" }],
+  });
 });
 
 test("delivery continuation blocks every initial ready-identity mismatch before merge", async () => {
@@ -9862,6 +9905,26 @@ test("delivery record persistence serializes concurrent attempts without loss", 
   expect(DeliveryRecordSchema.parse(JSON.parse(persisted)).delivery.status).toBe(
     "blocked",
   );
+});
+
+test("delivery record persistence bounds a stale lock by the continuation deadline", async () => {
+  const source = await Bun.file(path).text();
+  let now = 0;
+  const persistence = loadDeliveryRecordPersistence(source, {
+    Date: { now: () => now++ },
+    mkdir: async () => {
+      throw Object.assign(new Error("lock exists"), { code: "EEXIST" });
+    },
+    setTimeout: () => {
+      throw new Error("unbounded lock retry");
+    },
+  });
+  expect(persistence).toBeFunction();
+  if (persistence === undefined) return;
+
+  await expect(
+    persistence("/tmp/delivery.json", deliveryRecordFixture(), 1),
+  ).rejects.toThrow("delivery record lock wait exceeded continuation deadline");
 });
 
 test("delivery continuation defensively rejects an unknown delivery record field", async () => {
