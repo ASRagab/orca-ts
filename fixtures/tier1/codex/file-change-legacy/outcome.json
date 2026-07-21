@@ -1,0 +1,12 @@
+{
+  "type": "success",
+  "result": {
+    "backend": "codex",
+    "sessionId": "thr-file-legacy",
+    "output": "changed",
+    "usage": {
+      "input": 2,
+      "output": 3
+    }
+  }
+}

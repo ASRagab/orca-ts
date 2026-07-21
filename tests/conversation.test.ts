@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { StreamConversation, sessionId } from "../src/index.ts";
+import { reserveConversationSettlement } from "../src/conversation/settlement-reservation.ts";
 
 describe("StreamConversation", () => {
   test("yields events in order and completes successfully", async () => {
@@ -76,6 +77,189 @@ describe("StreamConversation", () => {
     expect(await conversation.awaitResult()).toEqual({ type: "cancelled", reason: "stop" });
   });
 
+  test("first cancellation reserves the outcome and shares cleanup", async () => {
+    const cleanup = Promise.withResolvers<undefined>();
+    const cancellationReasons: Array<string | undefined> = [];
+    const conversation = new StreamConversation({
+      backend: "codex",
+      async onCancel(reason) {
+        cancellationReasons.push(reason);
+        await cleanup.promise;
+      }
+    });
+
+    const first = conversation.cancel("first");
+    const second = conversation.cancel("second");
+    conversation.succeed({
+      backend: "codex",
+      sessionId: sessionId("codex", "late-success"),
+      output: "late"
+    });
+    conversation.fail({ _tag: "BackendFailed", backend: "codex", message: "late failure" });
+
+    let outcomeSettled = false;
+    void conversation.awaitResult().then(() => {
+      outcomeSettled = true;
+    });
+    await Promise.resolve();
+
+    expect(first).toBe(second);
+    expect(cancellationReasons).toEqual(["first"]);
+    expect(conversation.signal.reason).toBe("first");
+    expect(outcomeSettled).toBe(false);
+
+    cleanup.resolve(undefined);
+    await first;
+
+    expect(await conversation.awaitResult()).toEqual({
+      type: "cancelled",
+      reason: "first"
+    });
+  });
+
+  test("failed cancellation waits for final reservation release before settling and rejecting", async () => {
+    const cancellationError = new Error("child still running");
+    const conversation = new StreamConversation({
+      backend: "codex",
+      onCancel() {
+        throw cancellationError;
+      }
+    });
+    const releaseSettlement = reserveConversationSettlement(conversation);
+
+    const settlementOrder: string[] = [];
+    const outcome = conversation.awaitResult().then((value) => {
+      settlementOrder.push("outcome");
+      return value;
+    });
+    const cancellation = conversation.cancel("stop");
+    const caught = cancellation.then(
+      () => undefined,
+      (error: unknown) => {
+        settlementOrder.push("rejection");
+        return error;
+      }
+    );
+    const expectedOutcome = {
+      type: "failed",
+      error: {
+        _tag: "BackendFailed",
+        backend: "codex",
+        message: "codex cancellation cleanup failed: child still running"
+      }
+    } as const;
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settlementOrder).toEqual([]);
+
+    releaseSettlement();
+    expect(await outcome).toEqual(expectedOutcome);
+    expect(await caught).toBe(cancellationError);
+    expect(settlementOrder).toEqual(["outcome", "rejection"]);
+
+    conversation.succeed({
+      backend: "codex",
+      sessionId: sessionId("codex", "late-success"),
+      output: "late"
+    });
+    conversation.fail({ _tag: "BackendFailed", backend: "codex", message: "late failure" });
+
+    expect(await conversation.awaitResult()).toEqual(expectedOutcome);
+  });
+
+  test("nested reservations publish the first success only after final release", async () => {
+    const conversation = new StreamConversation({ backend: "codex" });
+    const releaseOuter = reserveConversationSettlement(conversation);
+    const releaseInner = reserveConversationSettlement(conversation);
+    const outcome = conversation.awaitResult();
+
+    conversation.succeed({
+      backend: "codex",
+      sessionId: sessionId("codex", "first"),
+      output: "first"
+    });
+    conversation.succeed({
+      backend: "codex",
+      sessionId: sessionId("codex", "second"),
+      output: "second"
+    });
+
+    let settled = false;
+    void outcome.then(() => {
+      settled = true;
+    });
+    releaseInner();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    releaseOuter();
+    expect(await Promise.race([outcome, pendingAfter(25)])).toEqual({
+      type: "success",
+      result: {
+        backend: "codex",
+        sessionId: sessionId("codex", "first"),
+        output: "first"
+      }
+    });
+  });
+
+  test("reserved cleanup failure replaces success only after final release", async () => {
+    const conversation = new StreamConversation({ backend: "codex" });
+    const releaseOuter = reserveConversationSettlement(conversation);
+    const releaseInner = reserveConversationSettlement(conversation);
+    const outcome = conversation.awaitResult();
+    const cleanupFailure = {
+      _tag: "BackendFailed" as const,
+      backend: "codex" as const,
+      message: "subprocess cleanup failed"
+    };
+
+    conversation.succeed({
+      backend: "codex",
+      sessionId: sessionId("codex", "pending-success"),
+      output: "done"
+    });
+    releaseInner();
+    conversation.fail(cleanupFailure);
+
+    let settled = false;
+    void outcome.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    releaseOuter();
+    expect(await outcome).toEqual({ type: "failed", error: cleanupFailure });
+  });
+
+  test("reserved cancellation replaces a pending failure and cannot hang", async () => {
+    const conversation = new StreamConversation({ backend: "codex" });
+    const releaseSettlement = reserveConversationSettlement(conversation);
+    const pendingFailure = {
+      _tag: "BackendFailed" as const,
+      backend: "codex" as const,
+      message: "pending before cancellation"
+    };
+
+    conversation.fail(pendingFailure);
+    const cancellation = conversation.cancel("stop");
+    await Promise.resolve();
+    releaseSettlement();
+
+    expect(
+      await Promise.race([
+        cancellation.then(() => "cancelled" as const),
+        pendingAfter(25)
+      ])
+    ).toBe("cancelled");
+    expect(await Promise.race([conversation.awaitResult(), pendingAfter(25)])).toEqual({
+      type: "cancelled",
+      reason: "stop"
+    });
+  });
+
   test("fails reserved user interaction events", async () => {
     const conversation = new StreamConversation({ backend: "codex" });
     const emitted = await conversation.emit({ type: "user_question", question: "Need input?" });
@@ -133,4 +317,12 @@ async function drainEvents(events: AsyncIterable<unknown>): Promise<unknown[]> {
     collected.push(event);
   }
   return collected;
+}
+
+function pendingAfter(ms: number): Promise<"pending"> {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve("pending");
+    }, ms);
+  });
 }

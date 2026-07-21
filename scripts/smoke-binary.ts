@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { runQuiet, type QuietProcOptions, type QuietProcResult } from "../src/tools/process.ts";
+import { releaseTargetForHost } from "./release-build-options.ts";
 
 const packageJson = await Bun.file("package.json").json() as { version: string };
 
@@ -25,18 +26,50 @@ try {
     `import { flow } from "@twelvehart/orcats";
 import { manual } from "@twelvehart/orcats/loop";
 import { BackendTagSchema } from "@twelvehart/orcats/model";
+import * as ts from "typescript";
 
 void manual;
 void BackendTagSchema;
 
 await flow()(async () => {
-  console.log("orcats-binary-repo-self-smoke-ok");
+  console.log(\`orcats-binary-repo-self-smoke-ok typescript=\${ts.version}\`);
 });
 `
   );
 
   const repoFlow = await mustRun(binary, ["--no-typecheck", join(repoFlowDir, "flow.ts")]);
-  expectIncludes(repoFlow.stdout, "orcats-binary-repo-self-smoke-ok", "compiled binary repo workflow output");
+  expectIncludes(
+    repoFlow.stdout,
+    "orcats-binary-repo-self-smoke-ok typescript=",
+    "compiled binary repo workflow output with a project package import",
+  );
+
+  const releaseParent = await mkdtemp(
+    join(tmpdir(), "orcats-release-binary-smoke-"),
+  );
+  try {
+    const target = releaseTargetForHost();
+    const releaseDir = join(releaseParent, "release");
+    await mustRun("bun", [
+      "run",
+      "scripts/build-release-binaries.ts",
+      `--only-target=${target}`,
+      `--release-dir=${releaseDir}`,
+    ]);
+    const asset = target.replace(/^bun-/, "orcats-");
+    const releaseBinary = resolve(releaseDir, asset, "orcats");
+    const releaseFlow = await mustRun(releaseBinary, [
+      "--no-typecheck",
+      join(repoFlowDir, "flow.ts"),
+    ]);
+    expectIncludes(
+      releaseFlow.stdout,
+      "orcats-binary-repo-self-smoke-ok typescript=",
+      "release binary repository workflow output with a project package import",
+    );
+  } finally {
+    await rm(releaseParent, { recursive: true, force: true });
+  }
 } finally {
   await rm(repoFlowDir, { recursive: true, force: true });
 }

@@ -1,0 +1,22 @@
+{
+  "stages": {
+    "scout": {
+      "prompt": "Prefer a low-risk behavioral defect with a focused regression test and direct source evidence."
+    },
+    "reproduce": {
+      "skill": "tdd",
+      "prompt": "Add only the failing regression test. Do not change production code."
+    },
+    "implement": {
+      "skill": "tdd",
+      "prompt": "Fix the root cause without changing or weakening the captured regression test."
+    },
+    "repair": {
+      "skill": "debug-like-expert",
+      "prompt": "Diagnose the observed failure before editing and keep the regression test immutable."
+    },
+    "review": {
+      "prompt": "Report only concrete correctness, regression, safety, or test-quality blockers with direct diff evidence."
+    }
+  }
+}

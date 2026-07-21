@@ -3,7 +3,7 @@ title: Errors and Results
 description: The Result, Outcome, and Conversation types — how Orcats returns values, signals failure, and surfaces an autonomous run's terminal state.
 ---
 
-Orca does not throw across its public boundaries. Every operation that can fail returns a `Result`, every autonomous run resolves to an `Outcome`, and a live run is observed through a `Conversation`. These three types are the contract every flow and loop builds on. Signatures below are transcribed from `src/` and verified by `bun run docs:symbols`.
+Orca's result-returning operations represent expected failures as `Result` values rather than thrown exceptions. Asynchronous lifecycle methods keep promise semantics: public `cancel()` resolves after successful cleanup and rejects when cleanup fails. Every autonomous run resolves to an `Outcome`, and a live run is observed through a `Conversation`. These three types are the contract every flow and loop builds on. Signatures below are transcribed from `src/` and verified by `bun run docs:symbols`.
 
 ## `Result<T, E>`
 
@@ -101,16 +101,16 @@ interface Conversation<B extends BackendTag = BackendTag> {
 | --- | --- | --- |
 | `backend` | `readonly B` | The backend tag running this conversation (`claude`/`codex`/`opencode`/`pi`). |
 | `canAskUser` | `readonly boolean` | Whether the run may ask the user for input. `false` in autonomous/served contexts. |
-| `signal` | `readonly AbortSignal` | Aborts when the run is cancelled or times out. Pass to long operations. |
+| `signal` | `readonly AbortSignal` | Aborts when `cancel()` is requested. Backend timeouts fail without aborting this signal. |
 | `events()` | `() => AsyncIterable<ConversationEvent>` | Streams incremental events (token/tool/usage). `for await` to consume. |
 | `awaitResult()` | `() => Promise<Outcome<B>>` | Resolves to the terminal `Outcome`. **Never rejects.** |
-| `cancel(reason?)` | `(reason?: string) => Promise<void>` | Requests cancellation; resolves when the run has stopped. |
+| `cancel(reason?)` | `(reason?: string) => Promise<void>` | Requests cancellation; resolves when cleanup succeeds and rejects if cleanup fails. |
 
 ### Side effects and invariants
 
-- `cancel()` is cooperative: it signals the run and resolves once the backend has stopped. `awaitResult()` will subsequently resolve to `{ type: "cancelled", reason }`.
+- Successful cancellation resolves `cancel()` after the backend stops, then `awaitResult()` resolves to `{ type: "cancelled", reason }`. If cancellation cleanup fails, the shared `cancel()` promise rejects with the cleanup error and `awaitResult()` resolves to a typed `BackendFailed` outcome only after final cleanup and settlement release.
 - `events()` is a stream: consume it with `for await`, or ignore it and call `awaitResult()` directly. The stream ends when the run reaches its outcome.
-- `signal` is the same abort signal that drives inactivity/wall-clock timeouts (see [Backend Matrix](../backends/)); an aborted signal causes `awaitResult()` to resolve as `cancelled` or `failed`, never to reject.
+- A backend timeout stops the transport and resolves `awaitResult()` to `{ type: "failed", error }`; it does not abort the conversation's `signal`. The signal aborts only when `cancel()` is requested.
 
 ## Where these appear elsewhere
 

@@ -11,6 +11,7 @@ import {
   type CodexProcess
 } from "./codex-run.ts";
 import { StreamConversation } from "../conversation/index.ts";
+import { terminateSubprocess } from "./subprocess-termination.ts";
 
 export type {
   CodexBackendOptions,
@@ -34,7 +35,9 @@ export function codex(options: CodexBackendOptions = {}): LlmBackend<"codex"> {
             await cancelAcp();
             return;
           }
-          child?.kill("SIGTERM");
+          if (child) {
+            await terminateSubprocess(child);
+          }
         }
       });
 

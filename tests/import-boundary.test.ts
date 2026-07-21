@@ -9,6 +9,11 @@ const TestHelperExports = [
   "assertTier2Golden",
   "readJsonFixture"
 ] as const;
+const InternalBackendExports = [
+  "isConversationSettlementReserved",
+  "reserveConversationSettlement",
+  "terminateSubprocess"
+] as const;
 
 const PackageRootSpecifier: string = "@twelvehart/orcats";
 const PackageTestingSpecifier: string = "@twelvehart/orcats/testing";
@@ -17,6 +22,14 @@ describe("public import boundary", () => {
   test("root runtime entry does not export test helpers", async () => {
     const packageRoot = await import(PackageRootSpecifier) as Record<string, unknown>;
     for (const helper of TestHelperExports) {
+      expect(helper in sourceRoot).toBe(false);
+      expect(helper in packageRoot).toBe(false);
+    }
+  });
+
+  test("root runtime entry does not export internal backend helpers", async () => {
+    const packageRoot = await import(PackageRootSpecifier) as Record<string, unknown>;
+    for (const helper of InternalBackendExports) {
       expect(helper in sourceRoot).toBe(false);
       expect(helper in packageRoot).toBe(false);
     }

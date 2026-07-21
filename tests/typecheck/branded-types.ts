@@ -1,4 +1,9 @@
-import { sessionId, type BackendConfig, type SessionId } from "../../src/index.ts";
+import {
+  sessionId,
+  type BackendConfig,
+  type PortableBackendConfig,
+  type SessionId,
+} from "../../src/index.ts";
 
 const claudeSession = sessionId("claude", "c1");
 const codexSession = sessionId("codex", "x1");
@@ -19,6 +24,23 @@ acceptsClaude(codexSession);
 
 const codexConfig: BackendConfig<"codex"> = { resumeSessionId: codexSession };
 void codexConfig;
+
+const codexReasoningConfig: BackendConfig<"codex"> = {
+  reasoningEffort: "low",
+};
+void codexReasoningConfig;
+
+const claudeReasoningConfig: BackendConfig<"claude"> = {
+  // @ts-expect-error reasoning effort is Codex-only
+  reasoningEffort: "low",
+};
+void claudeReasoningConfig;
+
+const portableReasoningConfig: PortableBackendConfig = {
+  // @ts-expect-error portable selector config contains only cross-backend fields
+  reasoningEffort: "low",
+};
+void portableReasoningConfig;
 
 // @ts-expect-error backend config resume handles must match the backend brand
 const claudeConfig: BackendConfig<"claude"> = { resumeSessionId: codexSession };

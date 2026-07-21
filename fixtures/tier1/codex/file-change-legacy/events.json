@@ -1,21 +1,22 @@
 [
   {
     "type": "assistant_tool_call",
-    "id": "edit_1",
+    "id": "edit_legacy",
     "name": "file_change",
     "input": {
+      "path": "src/example.ts",
       "changes": [
         {
-          "path": "src/example.ts",
-          "kind": "update"
+          "op": "replace",
+          "line": 1
         }
       ]
     }
   },
   {
     "type": "tool_result",
-    "toolCallId": "edit_1",
-    "output": ""
+    "toolCallId": "edit_legacy",
+    "output": "1 file changed"
   },
   {
     "type": "assistant_text_delta",

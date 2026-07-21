@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"thr-file-legacy"}
+{"type":"item.started","item":{"id":"edit_legacy","type":"file_change","path":"src/example.ts","changes":[{"op":"replace","line":1}],"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"edit_legacy","type":"file_change","path":"src/example.ts","output":"1 file changed","status":"completed"}}
+{"type":"item.completed","item":{"id":"msg","type":"agent_message","text":"changed"}}
+{"type":"turn.completed","usage":{"input_tokens":2,"output_tokens":3}}

@@ -27,7 +27,8 @@ import {
   jsonSchemaFromZod,
   type BackendApprovalPolicy,
   type BackendConfig,
-  type BackendSandboxMode
+  type BackendSandboxMode,
+  type CodexReasoningEffort
 } from "../model/index.ts";
 
 export interface CodexBackendOptions
@@ -52,6 +53,7 @@ export type CodexProcessSpawner = SubprocessSpawner;
 
 export interface ResolvedCodexConfig<Output> {
   model?: string;
+  reasoningEffort?: CodexReasoningEffort;
   systemPrompt?: string;
   approvalPolicy?: BackendApprovalPolicy;
   sandbox?: BackendSandboxMode;
@@ -98,9 +100,16 @@ export async function runCodexConversation<Output>(
       );
     }
 
+    if (conversation.signal.aborted) {
+      return;
+    }
+
     const args = codexExecJsonlArgs({
       prompt: composeBackendPrompt(request.prompt, config),
       ...(config.model === undefined ? {} : { model: config.model }),
+      ...(config.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: config.reasoningEffort }),
       ...(config.approvalPolicy === undefined ? {} : { approvalPolicy: config.approvalPolicy }),
       ...(config.sandbox === undefined ? {} : { sandbox: config.sandbox }),
       ...(config.readOnly === undefined ? {} : { readOnly: config.readOnly }),
@@ -150,6 +159,11 @@ export function resolveCodexConfig<Output>(
   const config: ResolvedCodexConfig<Output> = {};
   const model = requestConfig?.model ?? optionConfig?.model ?? options.model;
   if (model !== undefined) config.model = model;
+  const reasoningEffort =
+    requestConfig?.reasoningEffort ??
+    optionConfig?.reasoningEffort ??
+    options.reasoningEffort;
+  if (reasoningEffort !== undefined) config.reasoningEffort = reasoningEffort;
   const systemPrompt = requestConfig?.systemPrompt ?? optionConfig?.systemPrompt;
   if (systemPrompt !== undefined) config.systemPrompt = systemPrompt;
   const approvalPolicy =

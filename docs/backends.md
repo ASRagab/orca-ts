@@ -6,6 +6,10 @@ Supported target backends are Claude, OpenCode, Codex, and Pi, each shipping a l
 
 Codex and Pi are subprocess-stream backends: they share one `runSubprocessConversation` helper (`subprocess-run.ts`) that owns process spawn, stdout line-splitting, stderr capture, non-zero-exit failure, cancellation, a 120s inactivity watchdog, and a 600s wall-clock cap by default. Claude uses an ACP JSON-RPC adapter by default and keeps the previous stream-json subprocess path as an explicit fallback. OpenCode uses a long-lived `opencode serve` process driven over HTTP/SSE through a shared server manager, with its own 120s inactivity watchdog, 600s wall-clock cap, 30s startup timeout, and abortable POSTs.
 
+A backend timeout stops the transport and resolves `awaitResult()` to `{ type: "failed", error }`; it does not abort the conversation's `signal`. The signal aborts only when `cancel()` is requested.
+
+Successful cancellation resolves `cancel()` after the backend stops, then `awaitResult()` resolves to `{ type: "cancelled", reason }`. If cancellation cleanup fails, the shared `cancel()` promise rejects with the cleanup error and `awaitResult()` resolves to a typed `BackendFailed` outcome only after final cleanup and settlement release.
+
 Backend fixture collection uses the shared conversation harness so adapters keep protocol parsing local while event capture and final outcome collection stay in one module.
 
 Autonomous human interaction is rejected. `UserQuestion` and `ApproveTool` remain explicit model variants; interactive support is only available when a backend starts an interactive session with an Orcats-owned bridge.
@@ -18,9 +22,16 @@ The Codex child run lifecycle is internal to the backend adapter: config resolut
 
 Set `codex({ ignoreUserConfig: true })` for hermetic automation that should keep Codex auth but skip user `~/.codex/config.toml` settings such as MCP servers. Orca passes this through as `codex exec --ignore-user-config`. The option is off by default so normal flows still honor the operator's Codex setup.
 
+Codex subprocess requests may set `config.reasoningEffort` to `low`, `medium`,
+`high`, `xhigh`, `max`, or `ultra`. Orcats passes the value as the scoped
+`model_reasoning_effort` config override for that `codex exec` turn. The
+experimental Codex ACP path does not expose this setting.
+
+Orcats forwards all six declared values to Codex without a local model catalog. Actual acceptance depends on the selected model and Codex CLI version. Unsupported combinations return a backend failure.
+
 Codex parity status:
 
-- Backend config: model, approval policy, read-only mode, retry metadata, system prompt, self-managed git policy, and structured output are represented in the shared config model.
+- Backend config: model, Codex reasoning effort, approval policy, read-only mode, retry metadata, system prompt, self-managed git policy, and structured output are represented in the shared config model.
 - Sessions/resume: TypeScript-facing session handles are backend-branded; Codex thread ids are captured from JSONL and can be requested on subsequent calls.
 - Structured output: Zod schemas are converted to JSON Schema for supported live calls and validated again on return.
 - `ask_user`: autonomous conversations reject `ask_user`; explicit interactive conversations use an Orcats-owned MCP bridge.

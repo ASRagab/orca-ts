@@ -10,6 +10,7 @@ import {
   type SubprocessProcess,
   type SubprocessSpawner
 } from "./subprocess-run.ts";
+import { terminateSubprocess } from "./subprocess-termination.ts";
 import type { AutonomousRequest, LlmBackend } from "./types.ts";
 import { StreamConversation } from "../conversation/index.ts";
 import { backendFailed, type BackendConfig } from "../model/index.ts";
@@ -137,12 +138,17 @@ export function pi(options: PiBackendOptions = {}): LlmBackend<"pi"> {
         backend: "pi",
         capacity: options.capacity ?? 256,
         canAskUser: false,
-        onCancel: () => {
-          child?.kill("SIGTERM");
+        onCancel: async () => {
+          if (child) {
+            await terminateSubprocess(child);
+          }
         }
       });
 
       queueMicrotask(() => {
+        if (conversation.signal.aborted) {
+          return;
+        }
         void runPiConversation(request, options, conversation, (process) => {
           child = process;
         });
