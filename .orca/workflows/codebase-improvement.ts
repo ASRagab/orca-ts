@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import * as ts from "typescript";
 import {
   codex,
@@ -27,7 +27,9 @@ import {
 import {
   assertCurrentBranch,
   assertCandidateFitsActiveProfile,
+  assertMergedPullRequestState,
   assertImmutableTestDiff,
+  assertRequiredMergeProtection,
   assertReadyPullRequestHead,
   candidateRedMarker,
   CandidateControlSchema,
@@ -41,12 +43,14 @@ import {
   mergeUsage,
   namedTestArgs,
   normalizeFailure,
+  parseRemoteChecksCommandResult,
   profileLimits,
   pullRequestCreateArgs,
   renderScoutEvidence,
   renderShellCommand,
   requireLauncherDeliveryIdentity,
   requireRecordedUsage,
+  remoteCheckState,
   runRankedCandidateFallback,
   ScopedScoutResultSchema,
   selectScoutEvidence,
@@ -146,6 +150,7 @@ const SCOUT_EVIDENCE_MAX_FILES = 8;
 const SCOUT_EVIDENCE_MAX_CHARS = 10_000;
 const FALLBACK_CONTROL_LIMIT_MS = 10_000;
 const RUNTIME_FINALIZATION_RESERVE_MS = 60_000;
+const DELIVERY_CONTINUATION_DEADLINE_MS = 30 * 60_000;
 const PROFILE_SCALE = {
   simple: 1,
   medium: 2,
@@ -191,6 +196,10 @@ const PreflightAttestationSchema = z.object({
 
 type ReviewFinding = z.infer<typeof ReviewResultSchema>["findings"][number];
 type StageLimit = keyof typeof SIMPLE_STAGE_LIMITS;
+type DeliveryReadyPullRequest = z.infer<typeof PullRequestHeadSchema>;
+type DeliveryMergedPullRequest = DeliveryReadyPullRequest & {
+  readonly state: string;
+};
 type SemanticControlEvidence = SemanticPositiveControlEvidence & {
   readonly testAstSha256: string;
 };
@@ -384,7 +393,316 @@ async function awaitConversationWithinBudget<T>(
   }
 }
 
+interface DeliveryContinuationDependencies {
+  readonly now: () => number;
+  readonly readProtection: (remainingMs: number) => Promise<{
+    readonly valid: boolean;
+    readonly log: CommandLog;
+  }>;
+  readonly readChecks: (remainingMs: number) => Promise<{
+    readonly state: "pending" | "passed" | "failed";
+    readonly log: CommandLog;
+  }>;
+  readonly readPullRequest: (
+    phase: "ready" | "merged",
+    remainingMs: number,
+  ) => Promise<{
+    readonly pr: DeliveryReadyPullRequest | DeliveryMergedPullRequest;
+    readonly log: CommandLog;
+  }>;
+  readonly merge: (
+    lockedHeadSha: string,
+    remainingMs: number,
+  ) => Promise<CommandLog>;
+  readonly persist: (record: DeliveryRecordV1) => Promise<void>;
+}
+
+interface DeliveryContinuationResult {
+  readonly status: "pending" | "blocked" | "delivered";
+  readonly exitCode: 0 | 75;
+  readonly record: DeliveryRecordV1;
+}
+
+function parseDeliveryContinuationArgs(args: readonly string[]): string | undefined {
+  const continuation = args.filter((arg) => arg.startsWith("--continue-delivery="));
+  if (continuation.length === 0) return undefined;
+  const continuationArgument = continuation[0];
+  if (
+    continuation.length !== 1 ||
+    args.length !== 1 ||
+    continuationArgument === undefined
+  ) {
+    throw new Error("--continue-delivery must be used alone");
+  }
+  const runId = continuationArgument.slice("--continue-delivery=".length);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(runId)) {
+    throw new Error("--continue-delivery requires a valid run ID");
+  }
+  return runId;
+}
+
+async function runDeliveryContinuation(
+  rawRecord: string,
+  dependencies: DeliveryContinuationDependencies,
+): Promise<DeliveryContinuationResult> {
+  const record = DeliveryRecordSchema.parse(JSON.parse(rawRecord));
+  const startedAtMs = dependencies.now();
+  const deadlineAtMs = startedAtMs + DELIVERY_CONTINUATION_DEADLINE_MS;
+  const identity: PullRequestIdentity = {
+    repository: record.repository,
+    branch: record.branch,
+    headSha: record.lockedHeadSha,
+  };
+  const checks: CommandLog[] = [];
+  let latestPr: DeliveryReadyPullRequest | undefined;
+
+  const remaining = (operation: string): number => {
+    const value = deadlineAtMs - dependencies.now();
+    if (value <= 0) throw new Error(`delivery continuation exceeded deadline before ${operation}`);
+    return value;
+  };
+  const finish = async (
+    status: "pending" | "blocked" | "delivered",
+    merge?: CommandLog,
+  ): Promise<DeliveryContinuationResult> => {
+    const finishedAtMs = Math.max(startedAtMs, dependencies.now());
+    const next = DeliveryRecordSchema.parse({
+      ...record,
+      delivery: {
+        status,
+        attempts: [
+          ...record.delivery.attempts,
+          {
+            startedAtMs,
+            finishedAtMs,
+            status,
+            ...(latestPr === undefined ? {} : { pr: latestPr }),
+            ...(checks.length === 0 ? {} : { checks }),
+            ...(merge === undefined ? {} : { merge }),
+          },
+        ],
+      },
+    });
+    await dependencies.persist(next);
+    return {
+      status,
+      exitCode: status === "pending" ? 75 : 0,
+      record: next,
+    };
+  };
+  const readReady = async (): Promise<"ok" | "blocked"> => {
+    try {
+      const read = await dependencies.readPullRequest("ready", remaining("PR identity"));
+      latestPr = read.pr;
+      assertReadyPullRequestHead(read.pr, identity);
+      return "ok";
+    } catch {
+      return "blocked";
+    }
+  };
+
+  if (record.delivery.status !== "pending") return await finish("blocked");
+  if ((await readReady()) !== "ok") return await finish("blocked");
+
+  let initialChecks: Awaited<ReturnType<DeliveryContinuationDependencies["readChecks"]>>;
+  try {
+    initialChecks = await dependencies.readChecks(remaining("initial checks"));
+  } catch {
+    return await finish("blocked");
+  }
+  checks.push(initialChecks.log);
+  if (initialChecks.state === "failed") return await finish("blocked");
+  if (initialChecks.state === "pending" || dependencies.now() >= deadlineAtMs) {
+    return await finish("pending");
+  }
+
+  let protection: Awaited<ReturnType<DeliveryContinuationDependencies["readProtection"]>>;
+  try {
+    protection = await dependencies.readProtection(remaining("merge protection"));
+  } catch {
+    return await finish("blocked");
+  }
+  if (!protection.valid) return await finish("blocked");
+
+  let freshChecks: Awaited<ReturnType<DeliveryContinuationDependencies["readChecks"]>>;
+  try {
+    freshChecks = await dependencies.readChecks(remaining("fresh checks"));
+  } catch {
+    return await finish("blocked");
+  }
+  checks.push(freshChecks.log);
+  if (freshChecks.state === "failed") return await finish("blocked");
+  if (freshChecks.state === "pending") return await finish("pending");
+  if ((await readReady()) !== "ok") return await finish("blocked");
+
+  let merge: CommandLog;
+  try {
+    merge = await dependencies.merge(record.lockedHeadSha, remaining("merge"));
+  } catch {
+    return await finish("blocked");
+  }
+  if (merge.status !== "passed") return await finish("blocked", merge);
+
+  try {
+    const confirmation = await dependencies.readPullRequest(
+      "merged",
+      remaining("merged confirmation"),
+    );
+    const mergedPr = confirmation.pr as DeliveryMergedPullRequest;
+    assertMergedPullRequestState(
+      mergedPr,
+      identity,
+    );
+    latestPr = {
+      url: mergedPr.url,
+      baseRefName: mergedPr.baseRefName,
+      headRefName: mergedPr.headRefName,
+      headRefOid: mergedPr.headRefOid,
+      isDraft: mergedPr.isDraft,
+    };
+  } catch {
+    return await finish("blocked", merge);
+  }
+  return await finish("delivered", merge);
+}
+
+async function persistDeliveryRecordAtomically(
+  destination: string,
+  record: DeliveryRecordV1,
+): Promise<void> {
+  const temporary = `${destination}.delivery-${String(process.pid)}-${String(Date.now())}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+  await rename(temporary, destination);
+}
+
 await flow(flowArgs())(async () => {
+  const continuationRunId = parseDeliveryContinuationArgs(flowArgs());
+  if (continuationRunId !== undefined) {
+    const deliveryRecordPath = requiredEnvironment(
+      "ORCA_IMPROVEMENT_DELIVERY_RECORD_PATH",
+    );
+    const rawRecord = await readFile(deliveryRecordPath, "utf8");
+    const launcherValidatedRecord = DeliveryRecordSchema.parse(JSON.parse(rawRecord));
+    if (launcherValidatedRecord.runId !== continuationRunId) {
+      throw new Error("delivery record run ID does not match continuation");
+    }
+    const commandLog = async (
+      commandName: string,
+      args: readonly string[],
+      remainingMs: number,
+    ) => {
+      const result = await command().run({
+        command: commandName,
+        args,
+        timeoutMs: remainingTimeout(
+          30_000,
+          remainingMs,
+          [commandName, ...args].join(" "),
+        ),
+      });
+      return {
+        result,
+        log: {
+          command: [commandName, ...args].join(" "),
+          status: result.type === "success" ? ("passed" as const) : ("failed" as const),
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode,
+          durationMs: result.durationMs,
+        },
+      };
+    };
+    const outcome = await runDeliveryContinuation(rawRecord, {
+      now: Date.now,
+      readProtection: async (remainingMs) => {
+        const commandResult = await commandLog(
+          "gh",
+          [
+            "api",
+            `repos/${launcherValidatedRecord.repository}/branches/main/protection`,
+          ],
+          remainingMs,
+        );
+        if (commandResult.result.type !== "success") {
+          return { valid: false, log: commandResult.log };
+        }
+        try {
+          assertRequiredMergeProtection(
+            JSON.parse(commandResult.result.stdout),
+            "Verify",
+            15368,
+          );
+          return { valid: true, log: commandResult.log };
+        } catch {
+          return { valid: false, log: commandResult.log };
+        }
+      },
+      readChecks: async (remainingMs) => {
+        const commandResult = await commandLog(
+          "gh",
+          [
+            "pr",
+            "checks",
+            launcherValidatedRecord.prUrl,
+            "--json",
+            "name,workflow,bucket",
+          ],
+          remainingMs,
+        );
+        try {
+          return {
+            state: remoteCheckState(
+              parseRemoteChecksCommandResult(
+                commandResult.result,
+                commandResult.log.command,
+              ),
+            ),
+            log: commandResult.log,
+          };
+        } catch {
+          return { state: "failed" as const, log: commandResult.log };
+        }
+      },
+      readPullRequest: async (phase, remainingMs) => {
+        const fields =
+          phase === "merged"
+            ? "url,baseRefName,headRefName,headRefOid,isDraft,state"
+            : "url,baseRefName,headRefName,headRefOid,isDraft";
+        const commandResult = await commandLog(
+          "gh",
+          ["pr", "view", launcherValidatedRecord.prUrl, "--json", fields],
+          remainingMs,
+        );
+        if (commandResult.result.type !== "success") {
+          throw new Error(`${commandResult.log.command} failed`);
+        }
+        return {
+          pr: JSON.parse(commandResult.result.stdout) as DeliveryReadyPullRequest,
+          log: commandResult.log,
+        };
+      },
+      merge: async (lockedHeadSha, remainingMs) =>
+        (
+          await commandLog(
+            "gh",
+            [
+              "pr",
+              "merge",
+              launcherValidatedRecord.prUrl,
+              "--squash",
+              "--match-head-commit",
+              lockedHeadSha,
+            ],
+            remainingMs,
+          )
+        ).log,
+      persist: async (record) => {
+        await persistDeliveryRecordAtomically(deliveryRecordPath, record);
+      },
+    });
+    process.exitCode = outcome.exitCode;
+    return;
+  }
   const requestedBackend = process.env.ORCA_BACKEND?.trim() || "codex";
   if (requestedBackend !== "codex") {
     throw new Error(

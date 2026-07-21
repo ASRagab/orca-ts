@@ -2122,7 +2122,7 @@ async function runConcurrentCanonicalPublicationHarness(
   await Bun.write(
     script,
     [
-      "#!/usr/bin/env bash",
+      "#!/bin/sh",
       "set -euo pipefail",
       sha256,
       action,
@@ -19031,4 +19031,165 @@ test("scout timing reserves one exact active-ready allocation", async () => {
   expect(source).toContain("const SCOUT_VALIDATION_LIMIT_MS = 20_000;");
   expect(source).not.toContain("SCOUT_ATTEMPT_LIMIT_MS");
   expect(source).toContain("runScopedScoutFanout");
+});
+
+async function runDeliveryContinuationLauncher(
+  record: string | undefined,
+  options: {
+    readonly args?: readonly string[];
+    readonly unreadable?: boolean;
+    readonly backend?: string;
+  } = {},
+): Promise<{
+  readonly exitCode: number;
+  readonly stderr: string;
+  readonly spawnLog: string | undefined;
+}> {
+  const runId = `task5-continuation-${String(Date.now())}-${String(globalThis.process.pid)}`;
+  const recordDirectory = join(".orca/improvement-loop/runs", runId);
+  const recordPath = join(recordDirectory, "delivery.json");
+  const root = await mkdtemp(join(tmpdir(), "orcats-continuation-launcher-"));
+  const fakeBin = join(root, "bin");
+  const fakeBash = join(fakeBin, "bash");
+  const spawnLogPath = join(root, "flow-spawn.log");
+  const launcher = resolve(".orca/workflows/codebase-improvement.sh");
+  await mkdir(fakeBin, { recursive: true });
+  await Bun.write(
+    fakeBash,
+    [
+      "#!/bin/sh",
+      `printf '%s\\n' \"$*\" >> ${JSON.stringify(spawnLogPath)}`,
+      "exit 0",
+    ].join("\n"),
+  );
+  await chmod(fakeBash, 0o755);
+  if (record !== undefined) {
+    await mkdir(recordDirectory, { recursive: true });
+    await Bun.write(recordPath, record);
+    if (options.unreadable === true) await chmod(recordPath, 0o000);
+  }
+  try {
+    const process = Bun.spawn(
+      ["/bin/bash", launcher, ...(options.args ?? [`--continue-delivery=${runId}`])],
+      {
+        cwd: resolve("."),
+        env: {
+          ...globalThis.process.env,
+          ORCA_BACKEND: options.backend ?? "",
+          PATH: `${fakeBin}:${globalThis.process.env.PATH ?? ""}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [exitCode, stderr] = await Promise.all([
+      process.exited,
+      new Response(process.stderr).text(),
+    ]);
+    return {
+      exitCode,
+      stderr,
+      spawnLog: (await Bun.file(spawnLogPath).exists())
+        ? await Bun.file(spawnLogPath).text()
+        : undefined,
+    };
+  } finally {
+    if (options.unreadable === true && (await Bun.file(recordPath).exists())) {
+      await chmod(recordPath, 0o600);
+    }
+    await rm(recordDirectory, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+function continuationDeliveryRecord(runId: string): string {
+  return JSON.stringify({
+    version: 1,
+    runId,
+    repository: "example/project",
+    prUrl: "https://github.com/example/project/pull/42",
+    branch: `orca/improve-${runId}`,
+    baseRefName: "main",
+    lockedHeadSha: "a".repeat(40),
+    active: {
+      profile: "simple",
+      startedAtMs: 1,
+      readyAtMs: 2,
+      elapsedMs: 1,
+      activeDeadlineAtMs: 600_000,
+      verification: [],
+    },
+    delivery: { status: "pending", attempts: [] },
+  });
+}
+
+test("continue-delivery rejects mixed arguments before a TypeScript flow spawn", async () => {
+  const run = await runDeliveryContinuationLauncher(undefined, {
+    args: ["--continue-delivery=task5-mixed", "--complexity=simple"],
+  });
+  expect(run.exitCode).toBe(64);
+  expect(run.stderr).toContain("--continue-delivery must be used alone");
+  expect(run.spawnLog).toBeUndefined();
+});
+
+test("missing delivery record blocks the continuation before a TypeScript flow spawn", async () => {
+  const run = await runDeliveryContinuationLauncher(undefined);
+  expect(run.exitCode).toBe(66);
+  expect(run.stderr).toContain("delivery record is missing or unreadable");
+  expect(run.spawnLog).toBeUndefined();
+});
+
+test("unreadable delivery record blocks the continuation before a TypeScript flow spawn", async () => {
+  const run = await runDeliveryContinuationLauncher("{}", { unreadable: true });
+  expect(run.exitCode).toBe(66);
+  expect(run.stderr).toContain("delivery record is missing or unreadable");
+  expect(run.spawnLog).toBeUndefined();
+});
+
+test("malformed delivery record blocks the continuation before a TypeScript flow spawn", async () => {
+  const run = await runDeliveryContinuationLauncher("{not-json");
+  expect(run.exitCode).toBe(66);
+  expect(run.stderr).toContain("delivery record failed strict validation");
+  expect(run.spawnLog).toBeUndefined();
+});
+
+test("schema-invalid delivery record blocks the continuation before a TypeScript flow spawn", async () => {
+  const run = await runDeliveryContinuationLauncher('{"version":1}');
+  expect(run.exitCode).toBe(66);
+  expect(run.stderr).toContain("delivery record failed strict validation");
+  expect(run.spawnLog).toBeUndefined();
+});
+
+test("continue-delivery executes the strict DeliveryRecordV1 validator before flow spawn", async () => {
+  const runId = "task5-unknown-field";
+  const record = JSON.parse(continuationDeliveryRecord(runId)) as Record<string, unknown>;
+  record.unexpected = true;
+  const root = await mkdtemp(join(tmpdir(), "orcats-continuation-schema-"));
+  await rm(root, { recursive: true, force: true });
+  const originalNow = Date.now;
+  try {
+    Date.now = () => Number(runId.replace(/\D/g, "").slice(-6)) || 1;
+    const run = await runDeliveryContinuationLauncher(JSON.stringify(record));
+    expect(run.exitCode).toBe(66);
+    expect(run.stderr).toContain("delivery record failed strict validation");
+    expect(run.spawnLog).toBeUndefined();
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("active ready delivery reloads into its isolated continuation without backend selection", async () => {
+  const originalNow = Date.now;
+  try {
+    Date.now = () => 1_234_567_890;
+    const runId = `task5-continuation-${String(Date.now())}-${String(globalThis.process.pid)}`;
+    const run = await runDeliveryContinuationLauncher(continuationDeliveryRecord(runId), {
+      backend: "opencode",
+    });
+    expect(run.exitCode).toBe(0);
+    expect(run.spawnLog).toContain(`--continue-delivery=${runId}`);
+    expect(run.spawnLog).toContain("codebase-improvement.ts");
+  } finally {
+    Date.now = originalNow;
+  }
 });

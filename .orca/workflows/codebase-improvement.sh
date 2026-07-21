@@ -2011,6 +2011,89 @@ run_live_workflow() {
     --baseline=strict "--complexity=$complexity"
 }
 
+validate_delivery_continuation_record() {
+  local continuation_run_id="${1:-}"
+  local delivery_record_path="${2:-}"
+  local delivery_record_bytes=""
+
+  if [[ "$#" -ne 2 ]]; then
+    return 64
+  fi
+  if [[ ! "$continuation_run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
+    echo "--continue-delivery requires a valid run ID" >&2
+    return 64
+  fi
+  if [[ ! -f "$delivery_record_path" || -L "$delivery_record_path" || \
+    ! -r "$delivery_record_path" ]]; then
+    echo "delivery record is missing or unreadable" >&2
+    return 66
+  fi
+  delivery_record_bytes=$(wc -c < "$delivery_record_path") || return $?
+  delivery_record_bytes="${delivery_record_bytes//[[:space:]]/}"
+  if [[ ! "$delivery_record_bytes" =~ ^[0-9]+$ || \
+    "$delivery_record_bytes" -eq 0 || "$delivery_record_bytes" -gt 1048576 ]]; then
+    echo "delivery record is missing or unreadable" >&2
+    return 66
+  fi
+  if ! (
+    cd "$source_root"
+    ORCA_IMPROVEMENT_CONTINUATION_RUN_ID="$continuation_run_id" \
+      ORCA_IMPROVEMENT_DELIVERY_RECORD_PATH="$delivery_record_path" \
+      bun -e '
+        import { DeliveryRecordSchema } from "./.orca/workflows/codebase-improvement-lib.ts";
+        const path = process.env.ORCA_IMPROVEMENT_DELIVERY_RECORD_PATH;
+        const runId = process.env.ORCA_IMPROVEMENT_CONTINUATION_RUN_ID;
+        if (path === undefined || runId === undefined) throw new Error("missing continuation input");
+        const record = DeliveryRecordSchema.parse(JSON.parse(await Bun.file(path).text()));
+        if (record.runId !== runId) throw new Error("delivery record run ID does not match continuation");
+      '
+  ); then
+    echo "delivery record failed strict validation" >&2
+    return 66
+  fi
+}
+
+run_delivery_continuation() {
+  local continuation_run_id="${1:-}"
+  local continuation_script_source="${2:-}"
+  local continuation_script_parent=""
+  local continuation_status=0
+  local delivery_record_path=""
+
+  if [[ "$#" -ne 2 ]]; then
+    return 64
+  fi
+  continuation_script_parent="${continuation_script_source%/*}"
+  if [[ "$continuation_script_parent" == "$continuation_script_source" ]]; then
+    continuation_script_parent=.
+  fi
+  script_dir=$(cd "$continuation_script_parent" && pwd -P) || return $?
+  source_root=$(cd "$script_dir/../.." && pwd -P) || return $?
+  delivery_record_path="$source_root/.orca/improvement-loop/runs/$continuation_run_id/delivery.json"
+  validate_delivery_continuation_record \
+    "$continuation_run_id" "$delivery_record_path" || return $?
+
+  controller_capture_before_deadline started_at_ms now_ms || return $?
+  if [[ ! "$started_at_ms" =~ ^[0-9]+$ ]]; then
+    return 64
+  fi
+  launcher_deadline_ms=1800000
+  launcher_absolute_deadline_at_ms=$(( started_at_ms + launcher_deadline_ms ))
+  launcher_deadline_at_ms="$launcher_absolute_deadline_at_ms"
+  phase=delivery-continuation
+  cd "$source_root" || return $?
+  hash -r
+  set +e
+  run_before_deadline env \
+    "ORCA_IMPROVEMENT_DELIVERY_RECORD_PATH=$delivery_record_path" \
+    bash skills/orcats-flow/scripts/orca-run.sh \
+    .orca/workflows/codebase-improvement.ts -- \
+    "--continue-delivery=$continuation_run_id"
+  continuation_status=$?
+  set -e
+  return "$continuation_status"
+}
+
 compute_preflight_terminal_proof() {
   local proof_run_id="$1"
   local proof_runtime_head="$2"
@@ -2848,15 +2931,15 @@ main() {
   local stable_preflight_path=""
   local claimed_preflight_path=""
   local workflow_status=0
+  local continuation_run_id=""
+  local continuation_argument_count=0
 
-  requested_backend="${ORCA_BACKEND:-}"
-  if [[ -n "$requested_backend" && "$requested_backend" != codex ]]; then
-    echo "unsupported proving backend: ${requested_backend}; expected codex" >&2
-    return 64
-  fi
-  export ORCA_BACKEND=codex
   for arg in "$@"; do
     case "$arg" in
+      --continue-delivery=*)
+        continuation_argument_count=$(( continuation_argument_count + 1 ))
+        continuation_run_id="${arg#--continue-delivery=}"
+        ;;
       --preflight-only) mode=preflight ;;
       --complexity=simple) complexity=simple ;;
       --complexity=medium) complexity=medium ;;
@@ -2864,6 +2947,21 @@ main() {
       *) echo "unsupported argument: $arg" >&2; return 64 ;;
     esac
   done
+  if [[ "$continuation_argument_count" -gt 0 ]]; then
+    if [[ "$continuation_argument_count" -ne 1 || "$#" -ne 1 ]]; then
+      echo "--continue-delivery must be used alone" >&2
+      return 64
+    fi
+    run_delivery_continuation "$continuation_run_id" "$script_source"
+    return $?
+  fi
+
+  requested_backend="${ORCA_BACKEND:-}"
+  if [[ -n "$requested_backend" && "$requested_backend" != codex ]]; then
+    echo "unsupported proving backend: ${requested_backend}; expected codex" >&2
+    return 64
+  fi
+  export ORCA_BACKEND=codex
   case "$complexity" in
     simple) launcher_deadline_ms=600000 ;;
     medium) launcher_deadline_ms=1800000 ;;

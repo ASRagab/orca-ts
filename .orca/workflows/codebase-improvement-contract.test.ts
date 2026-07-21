@@ -17,7 +17,10 @@ import { join } from "node:path";
 import { expect, test } from "bun:test";
 import * as ts from "typescript";
 import {
+  assertMergedPullRequestState,
   assertReadyPullRequestHead,
+  DeliveryRecordSchema,
+  remoteCheckState,
   type PullRequestIdentity,
 } from "./codebase-improvement-lib.ts";
 import {
@@ -4562,7 +4565,11 @@ function earlyBackendGuardContractIssues(source: string): string[] {
   );
   const requested = variableNamed(sourceFile, "requestedBackend");
   const selected = variableNamed(sourceFile, "activeSelected");
-  const startedAt = variableNamed(sourceFile, "startedAtMs");
+  const startedAt = variablesNamed(sourceFile, "startedAtMs").find(
+    (declaration) =>
+      declaration.initializer?.getText(sourceFile) ===
+      'parseStartedAt(\n    requiredEnvironment("ORCA_IMPROVEMENT_STARTED_AT_MS"),\n  )',
+  );
   const monitor = variableNamed(sourceFile, "monitor");
   const firstFilesystem = callsNamed(sourceFile, "fs")[0];
   const guards: ts.IfStatement[] = [];
@@ -6655,7 +6662,9 @@ test("active delivery rejects post-push identity drift before ready proof", asyn
     "",
   );
   expect(missingReadyProof).not.toBe(source);
-  expect(missingReadyProof.indexOf("DeliveryRecordSchema.parse(")).toBeGreaterThan(
+  expect(
+    missingReadyProof.indexOf("deliveryRecord = DeliveryRecordSchema.parse("),
+  ).toBeGreaterThan(
     missingReadyProof.indexOf('monitor.stage("pull-request"'),
   );
   expect(missingReadyProof).not.toContain(
@@ -6702,7 +6711,7 @@ test("active work leaves the exact finalization reserve", async () => {
 
 test("delivery record remains bound to the validated head", async () => {
   const source = await Bun.file(path).text();
-  const record = source.indexOf("DeliveryRecordSchema.parse(");
+  const record = source.indexOf("deliveryRecord = DeliveryRecordSchema.parse(");
   const identity = source.indexOf("lockedHeadSha: pullRequestIdentity.headSha", record);
   expect(identity).toBeGreaterThan(record);
   expect(source.slice(record)).not.toContain("validatedHeadSha =");
@@ -9000,9 +9009,8 @@ test("workflow finalization cannot be shadowed by a local no-op", async () => {
   expect(statusAndArtifactContractIssues(source)).toEqual([]);
 
   const mutation = source.replace(
-    "await flow(flowArgs())(async () => {\n  const requestedBackend",
+    "\n  const requestedBackend",
     [
-      "await flow(flowArgs())(async () => {",
       "  const finalizeWorkflowEvidence = async () => [];",
       "  const requestedBackend",
     ].join("\n"),
@@ -9350,7 +9358,9 @@ test("active ready proof locks one non-draft PR head before record publication",
     await expect(reject(prUrl, identity, 1_234)).rejects.toThrow();
   }
 
-  const recordPublication = source.indexOf("DeliveryRecordSchema.parse(");
+  const recordPublication = source.indexOf(
+    "deliveryRecord = DeliveryRecordSchema.parse(",
+  );
   const readyProof = source.indexOf(
     "await assertPullRequestHead(prUrl, pullRequestIdentity);",
   );
@@ -9365,4 +9375,264 @@ test("active ready proof locks one non-draft PR head before record publication",
   expect(source).not.toContain('enter("remote-checks");');
   expect(source).not.toContain('enter("merge");');
   expect(source).toContain("delivery.json");
+});
+
+type DeliveryContinuation = (
+  rawRecord: string,
+  dependencies: {
+    readonly now: () => number;
+    readonly readProtection: (remainingMs: number) => Promise<{
+      readonly valid: boolean;
+      readonly log: Record<string, unknown>;
+    }>;
+    readonly readChecks: (remainingMs: number) => Promise<{
+      readonly state: "pending" | "passed" | "failed";
+      readonly log: Record<string, unknown>;
+    }>;
+    readonly readPullRequest: (
+      phase: "ready" | "merged",
+      remainingMs: number,
+    ) => Promise<{
+      readonly pr: Record<string, unknown>;
+      readonly log: Record<string, unknown>;
+    }>;
+    readonly merge: (
+      lockedHeadSha: string,
+      remainingMs: number,
+    ) => Promise<Record<string, unknown>>;
+    readonly persist: (record: Record<string, unknown>) => Promise<void>;
+  },
+) => Promise<{
+  readonly status: "pending" | "blocked" | "delivered";
+  readonly exitCode: 0 | 75;
+  readonly record: Record<string, unknown>;
+}>;
+
+function loadDeliveryContinuation(source: string): DeliveryContinuation | undefined {
+  const sourceFile = ts.createSourceFile(
+    path,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const declaration = functionDeclarationsNamed(
+    sourceFile,
+    "runDeliveryContinuation",
+  )[0];
+  if (declaration === undefined) return undefined;
+  const emitted = ts.transpileModule(declaration.getText(sourceFile), {
+    compilerOptions: {
+      module: ts.ModuleKind.None,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
+  const loaded: unknown = runInNewContext(
+    `${emitted}\nrunDeliveryContinuation;`,
+    {
+      assertMergedPullRequestState,
+      assertReadyPullRequestHead,
+      DELIVERY_CONTINUATION_DEADLINE_MS: 1_800_000,
+      DeliveryRecordSchema,
+      remoteCheckState,
+    },
+  );
+  return typeof loaded === "function" ? (loaded as DeliveryContinuation) : undefined;
+}
+
+function deliveryRecordFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const runId = "20260720-123";
+  return {
+    version: 1,
+    runId,
+    repository: "example/project",
+    prUrl: "https://github.com/example/project/pull/42",
+    branch: `orca/improve-${runId}`,
+    baseRefName: "main",
+    lockedHeadSha: "a".repeat(40),
+    active: {
+      profile: "simple",
+      startedAtMs: 1,
+      readyAtMs: 2,
+      elapsedMs: 1,
+      activeDeadlineAtMs: 600_000,
+      verification: [],
+    },
+    delivery: { status: "pending", attempts: [] },
+    ...overrides,
+  };
+}
+
+function deliveryCommand(command: string): Record<string, unknown> {
+  return {
+    command,
+    status: "passed",
+    stdout: "",
+    stderr: "",
+    exitCode: 0,
+    durationMs: 1,
+  };
+}
+
+function readyDeliveryPr(headSha = "a".repeat(40)): Record<string, unknown> {
+  return {
+    url: "https://github.com/example/project/pull/42",
+    baseRefName: "main",
+    headRefName: "orca/improve-20260720-123",
+    headRefOid: headSha,
+    isDraft: false,
+  };
+}
+
+test("delivery continuation only merges a freshly locked ready PR", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  const events: string[] = [];
+  const persisted: Record<string, unknown>[] = [];
+  const fakeGh = {
+    async readPullRequest(phase: "ready" | "merged") {
+      events.push(phase === "ready" ? "pr-identity" : "merged-identity");
+      return {
+        pr: phase === "ready" ? readyDeliveryPr() : { ...readyDeliveryPr(), state: "MERGED" },
+        log: deliveryCommand(`gh pr view ${phase}`),
+      };
+    },
+    async readChecks() {
+      events.push("checks");
+      return { state: "passed" as const, log: deliveryCommand("gh pr checks") };
+    },
+    async readProtection() {
+      events.push("protection");
+      return { valid: true, log: deliveryCommand("gh api protection") };
+    },
+    async merge(lockedHeadSha: string) {
+      events.push(`merge:${lockedHeadSha}`);
+      return deliveryCommand(`gh pr merge --squash --match-head-commit ${lockedHeadSha}`);
+    },
+  };
+  const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+    now: () => 10,
+    readProtection: async () => await fakeGh.readProtection(),
+    readChecks: async () => await fakeGh.readChecks(),
+    readPullRequest: async (phase) => await fakeGh.readPullRequest(phase),
+    merge: async (lockedHeadSha) => await fakeGh.merge(lockedHeadSha),
+    persist: async (record) => {
+      events.push("persist");
+      persisted.push(record);
+    },
+  });
+
+  expect(result.status).toBe("delivered");
+  expect(result.exitCode).toBe(0);
+  expect(events).toEqual([
+    "pr-identity",
+    "checks",
+    "protection",
+    "checks",
+    "pr-identity",
+    `merge:${"a".repeat(40)}`,
+    "merged-identity",
+    "persist",
+  ]);
+  expect(persisted).toHaveLength(1);
+});
+
+test("delivery pending at its exact deadline records pending without a merge", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  const events: string[] = [];
+  let now = 0;
+  const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+    now: () => now,
+    readProtection: async () => {
+      events.push("protection");
+      return { valid: true, log: deliveryCommand("gh api protection") };
+    },
+    readChecks: async () => {
+      events.push("checks");
+      now = 1_800_000;
+      return { state: "pending", log: deliveryCommand("gh pr checks") };
+    },
+    readPullRequest: async () => {
+      events.push("pr-identity");
+      return { pr: readyDeliveryPr(), log: deliveryCommand("gh pr view") };
+    },
+    merge: async () => {
+      events.push("merge");
+      return deliveryCommand("gh pr merge");
+    },
+    persist: async (record) => {
+      events.push("persist");
+      expect(record.lockedHeadSha).toBe("a".repeat(40));
+    },
+  });
+
+  expect(result).toMatchObject({ status: "pending", exitCode: 75 });
+  expect(events).toEqual(["pr-identity", "checks", "persist"]);
+});
+
+test("delivery continuation blocks failed checks and identity drift without merge", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  for (const scenario of ["failed-checks", "head-drift"] as const) {
+    const events: string[] = [];
+    const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+      now: () => 10,
+      readProtection: async () => {
+        events.push("protection");
+        return { valid: true, log: deliveryCommand("gh api protection") };
+      },
+      readChecks: async () => {
+        events.push("checks");
+        return {
+          state: scenario === "failed-checks" ? "failed" : "passed",
+          log: deliveryCommand("gh pr checks"),
+        };
+      },
+      readPullRequest: async () => {
+        events.push("pr-identity");
+        return {
+          pr: readyDeliveryPr(scenario === "head-drift" ? "b".repeat(40) : undefined),
+          log: deliveryCommand("gh pr view"),
+        };
+      },
+      merge: async () => {
+        events.push("merge");
+        return deliveryCommand("gh pr merge");
+      },
+      persist: async () => {
+        events.push("persist");
+      },
+    });
+    expect(result).toMatchObject({ status: "blocked", exitCode: 0 });
+    expect(events).toContain("persist");
+    expect(events).not.toContain("merge");
+  }
+});
+
+test("delivery continuation defensively rejects an unknown delivery record field", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  await expect(
+    continuation(JSON.stringify(deliveryRecordFixture({ unexpected: true })), {
+      now: () => 0,
+      readProtection: async () => ({ valid: true, log: deliveryCommand("protection") }),
+      readChecks: async () => ({ state: "passed", log: deliveryCommand("checks") }),
+      readPullRequest: async () => ({ pr: readyDeliveryPr(), log: deliveryCommand("pr") }),
+      merge: async () => deliveryCommand("merge"),
+      persist: async () => {},
+    }),
+  ).rejects.toThrow();
 });
