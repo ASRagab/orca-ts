@@ -187,3 +187,35 @@ Result: update the flow skill, not the public website/README.
 - R3 → treat as release-validation-only; no new public docs.
 - M1 → update `skills/orcats-flow/SKILL.md` to teach delivery-state evidence
   and continuation handling for `codebase-improvement`.
+
+## Task 4 — skill-boundary verification addendum
+
+Boundary evidence from the required targeted search:
+
+- `skills/orcats-setup/SKILL.md` stays scoped to binary/backend readiness:
+  authenticated backend, doctor, auth troubleshooting, rerun-as-doctor.
+- `skills/orcats-author/SKILL.md` keeps `issue-to-pr` under authoring and sets
+  the delivery default to `open PR against main`.
+- `skills/orcats-author/assets/templates/issue-to-pr.ts` implements commit →
+  push → open PR and stops after PR creation.
+- `skills/orcats-flow/SKILL.md` owns monitoring/healing and delivery-state
+  observation, including `locked head SHA`, `deliveryStatus`, and explicit
+  `Do not ... merge manually`.
+
+M1 conclusions:
+
+- orcats-setup needs no change: PR #41 adds no backend installation/auth requirement.
+- orcats-author needs no change: issue-to-pr defaults to ready PR; merged PR is explicit workflow policy.
+- orcats-flow owns delivery-evidence observation and must not merge manually.
+
+Verification table:
+
+| Command | Result |
+| --- | --- |
+| `bun test tests/jsonl-backends.test.ts tests/skill-templates.test.ts` | PASS / exit 0 |
+| `bun run docs:check` | PASS / exit 0 |
+| `bun run docs:symbols` | PASS / exit 0 |
+| `bun run docs:signatures` | PASS / exit 0 |
+| `bun run typecheck` | PASS / exit 0 |
+| `bun run verify` | PASS / exit 0 |
+| `git diff --check` | PASS / exit 0 |
