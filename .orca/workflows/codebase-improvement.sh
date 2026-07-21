@@ -2073,6 +2073,35 @@ validate_delivery_continuation_record() {
   fi
 }
 
+validate_delivery_continuation_repository() {
+  local delivery_record_path="${1:-}"
+  local current_repository="${2:-}"
+
+  if [[ "$#" -ne 2 || -z "$current_repository" ]]; then
+    return 64
+  fi
+  if ! (
+    cd "$source_root"
+    ORCA_IMPROVEMENT_DELIVERY_RECORD_PATH="$delivery_record_path" \
+      ORCA_IMPROVEMENT_CURRENT_REPOSITORY="$current_repository" \
+      bun -e '
+        import { DeliveryRecordSchema } from "./.orca/workflows/codebase-improvement-lib.ts";
+        const path = process.env.ORCA_IMPROVEMENT_DELIVERY_RECORD_PATH;
+        const currentRepository = process.env.ORCA_IMPROVEMENT_CURRENT_REPOSITORY;
+        if (path === undefined || currentRepository === undefined) {
+          throw new Error("missing continuation identity");
+        }
+        const record = DeliveryRecordSchema.parse(JSON.parse(await Bun.file(path).text()));
+        if (record.repository.toLowerCase() !== currentRepository.toLowerCase()) {
+          throw new Error("delivery record repository does not match current origin");
+        }
+      '
+  ); then
+    echo "delivery record repository does not match current origin" >&2
+    return 66
+  fi
+}
+
 run_delivery_continuation() {
   local continuation_run_id="${1:-}"
   local continuation_script_source="${2:-}"
@@ -2106,6 +2135,9 @@ run_delivery_continuation() {
   delivery_deadline_at_ms=$(( started_at_ms + 1800000 ))
   phase=delivery-continuation
   cd "$source_root" || return $?
+  capture_delivery_identity
+  validate_delivery_continuation_repository \
+    "$delivery_record_path" "$repository" || return $?
   hash -r
   set +e
   run_before_deadline env \

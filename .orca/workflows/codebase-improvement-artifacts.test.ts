@@ -4909,7 +4909,7 @@ async function runFinalizerHarness(
     600000;
   const launcherFinalizationDeadlineAtMs =
     options.launcherFinalizationDeadlineAtMs ??
-    launcherWorkDeadlineAtMs + 60000;
+    launcherWorkDeadlineAtMs;
   await mkdir(join(worktree, ".orca", "monitoring"), { recursive: true });
   await mkdir(state, { recursive: true });
   const preflightPath = join(state, "preflight.json");
@@ -19140,8 +19140,8 @@ function continuationDeliveryRecord(runId: string): string {
   return JSON.stringify({
     version: 1,
     runId,
-    repository: "example/project",
-    prUrl: "https://github.com/example/project/pull/42",
+    repository: "ASRagab/orca-ts",
+    prUrl: "https://github.com/ASRagab/orca-ts/pull/42",
     branch: `orca/improve-${runId}`,
     baseRefName: "main",
     lockedHeadSha: "a".repeat(40),
@@ -19228,6 +19228,22 @@ test("active ready delivery reloads into its isolated continuation without backe
   }
 });
 
+test("continuation revalidates its current origin identity before targeting the stored PR", async () => {
+  const launcher = await Bun.file(".orca/workflows/codebase-improvement.sh").text();
+  const start = launcher.indexOf("run_delivery_continuation() {");
+  const end = launcher.indexOf("compute_preflight_terminal_proof()", start);
+  const continuation = launcher.slice(start, end);
+  const identity = continuation.indexOf("capture_delivery_identity");
+  const record = continuation.indexOf("validate_delivery_continuation_record");
+  const repository = continuation.indexOf("validate_delivery_continuation_repository");
+  const flow = continuation.indexOf('bash skills/orcats-flow/scripts/orca-run.sh');
+
+  expect(identity).toBeGreaterThan(-1);
+  expect(record).toBeGreaterThan(-1);
+  expect(repository).toBeGreaterThan(record);
+  expect(flow).toBeGreaterThan(repository);
+});
+
 test("delivery continuation reserves shell cleanup after its exact 30-minute deadline", async () => {
   const launcher = await Bun.file(".orca/workflows/codebase-improvement.sh").text();
   expect(launcher).toContain("launcher_deadline_ms=1803000");
@@ -19236,6 +19252,22 @@ test("delivery continuation reserves shell cleanup after its exact 30-minute dea
   );
   expect(launcher).toContain(
     '\"ORCA_IMPROVEMENT_DELIVERY_DEADLINE_AT_MS=$delivery_deadline_at_ms\"',
+  );
+});
+
+test("finalizer artifact harness defaults to the production active deadline", async () => {
+  const source = await Bun.file(
+    ".orca/workflows/codebase-improvement-artifacts.test.ts",
+  ).text();
+  const start = source.indexOf("async function runFinalizerHarness(");
+  const end = source.indexOf("function terminalMonitorFixture(", start);
+  const harness = source.slice(start, end);
+  expect(harness).toContain(
+    [
+      "const launcherFinalizationDeadlineAtMs =",
+      "    options.launcherFinalizationDeadlineAtMs ??",
+      "    launcherWorkDeadlineAtMs;",
+    ].join("\n"),
   );
 });
 

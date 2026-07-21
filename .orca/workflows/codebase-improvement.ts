@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import * as ts from "typescript";
 import {
   codex,
@@ -152,6 +152,7 @@ const SCOUT_EVIDENCE_MAX_CHARS = 10_000;
 const FALLBACK_CONTROL_LIMIT_MS = 10_000;
 const RUNTIME_FINALIZATION_RESERVE_MS = 60_000;
 const DELIVERY_CONTINUATION_DEADLINE_MS = 30 * 60_000;
+const DELIVERY_RECORD_LOCK_STALE_MS = 60_000;
 const PROFILE_SCALE = {
   simple: 1,
   medium: 2,
@@ -628,36 +629,38 @@ async function runDeliveryContinuation(
   if (freshReady !== "ok") return await finish(freshReady);
 
   if (expired()) return await finish("pending");
-  let merge: CommandLog;
+  let merge: CommandLog | undefined;
+  const confirmMerged = async (): Promise<DeliveryContinuationResult | undefined> => {
+    if (expired()) return await finish("pending", merge);
+    try {
+      const confirmation = await dependencies.readPullRequest(
+        "merged",
+        remaining("merged confirmation"),
+      );
+      const mergedPr = confirmation.pr as DeliveryMergedPullRequest;
+      assertMergedPullRequestState(mergedPr, identity);
+      latestPr = {
+        url: mergedPr.url,
+        baseRefName: mergedPr.baseRefName,
+        headRefName: mergedPr.headRefName,
+        headRefOid: mergedPr.headRefOid,
+        isDraft: mergedPr.isDraft,
+      };
+      return await finish("delivered", merge);
+    } catch {
+      return undefined;
+    }
+  };
   try {
     merge = await dependencies.merge(record.lockedHeadSha, remaining("merge"));
   } catch {
+    const confirmed = await confirmMerged();
+    if (confirmed !== undefined) return confirmed;
     return await finish(expired() ? "pending" : "blocked");
   }
-  if (merge.status !== "passed") return await finish("blocked", merge);
-
-  if (expired()) return await finish("pending", merge);
-  try {
-    const confirmation = await dependencies.readPullRequest(
-      "merged",
-      remaining("merged confirmation"),
-    );
-    const mergedPr = confirmation.pr as DeliveryMergedPullRequest;
-    assertMergedPullRequestState(
-      mergedPr,
-      identity,
-    );
-    latestPr = {
-      url: mergedPr.url,
-      baseRefName: mergedPr.baseRefName,
-      headRefName: mergedPr.headRefName,
-      headRefOid: mergedPr.headRefOid,
-      isDraft: mergedPr.isDraft,
-    };
-  } catch {
-    return await finish(expired() ? "pending" : "blocked", merge);
-  }
-  return await finish("delivered", merge);
+  const confirmed = await confirmMerged();
+  if (confirmed !== undefined) return confirmed;
+  return await finish(expired() ? "pending" : "blocked", merge);
 }
 
 function isErrnoCode(error: unknown, code: string): boolean {
@@ -681,9 +684,16 @@ async function acquireDeliveryRecordLock(
     }
     try {
       await mkdir(lock, { mode: 0o700 });
-      return lock;
+      try {
+        await writeDeliveryRecordLockOwner(lock);
+        return lock;
+      } catch (error) {
+        await rm(lock, { recursive: true, force: true });
+        throw error;
+      }
     } catch (error) {
       if (!isErrnoCode(error, "EEXIST")) throw error;
+      if (await recoverStaleDeliveryRecordLock(lock)) continue;
       if (deadlineAtMs !== undefined && Date.now() >= deadlineAtMs) {
         throw new Error("delivery record lock wait exceeded continuation deadline");
       }
@@ -696,6 +706,73 @@ async function acquireDeliveryRecordLock(
       await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
     }
   }
+}
+
+interface DeliveryRecordLockOwner {
+  readonly pid: number;
+  readonly createdAtMs: number;
+}
+
+function parseDeliveryRecordLockOwner(raw: string): DeliveryRecordLockOwner | undefined {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !Number.isSafeInteger((parsed as { pid?: unknown }).pid) ||
+      !Number.isSafeInteger((parsed as { createdAtMs?: unknown }).createdAtMs)
+    ) {
+      return undefined;
+    }
+    const { pid, createdAtMs } = parsed as DeliveryRecordLockOwner;
+    return pid > 0 && createdAtMs >= 0 ? { pid, createdAtMs } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeDeliveryRecordLockOwner(lock: string): Promise<void> {
+  await writeFile(
+    `${lock}/owner.json`,
+    `${JSON.stringify({ pid: process.pid, createdAtMs: Date.now() })}\n`,
+    { mode: 0o600 },
+  );
+}
+
+function isDeliveryRecordLockOwnerLive(owner: DeliveryRecordLockOwner): boolean {
+  if (typeof process.kill !== "function") return true;
+  try {
+    process.kill(owner.pid, 0);
+    return true;
+  } catch (error) {
+    return !isErrnoCode(error, "ESRCH");
+  }
+}
+
+async function recoverStaleDeliveryRecordLock(lock: string): Promise<boolean> {
+  let owner: DeliveryRecordLockOwner | undefined;
+  try {
+    owner = parseDeliveryRecordLockOwner(await readFile(`${lock}/owner.json`, "utf8"));
+  } catch {
+    // A process killed between mkdir and owner publication is reclaimable only
+    // after the directory lease expires.
+  }
+  if (owner !== undefined && isDeliveryRecordLockOwnerLive(owner)) return false;
+  try {
+    const lockStat = await stat(lock);
+    if (Date.now() - lockStat.mtimeMs < DELIVERY_RECORD_LOCK_STALE_MS) {
+      return false;
+    }
+  } catch (error) {
+    if (isErrnoCode(error, "ENOENT")) return true;
+    throw error;
+  }
+  try {
+    await rm(lock, { recursive: true, force: false });
+  } catch (error) {
+    if (!isErrnoCode(error, "ENOENT")) throw error;
+  }
+  return true;
 }
 
 function mergeDeliveryAttempt(
@@ -792,6 +869,22 @@ await flow(flowArgs())(async () => {
         -"delivery.json".length,
       )}report.json`;
       const activeReadyReport = await readFile(deliveryReportPath, "utf8");
+      const persistDeliveryReportMirror = async (record: DeliveryRecordV1) => {
+        await persistDeliveryReportEvidence(
+          deliveryReportPath,
+          renderDeliveryReportEvidence(
+            activeReadyReport,
+            record,
+            deliveryRecordPath,
+          ),
+          deliveryDeadlineAtMs,
+        );
+      };
+      await persistDeliveryReportMirror(launcherValidatedRecord);
+      if (launcherValidatedRecord.delivery.status !== "pending") {
+        process.exitCode = launcherValidatedRecord.delivery.status === "delivered" ? 0 : 1;
+        return;
+      }
       const commandLog = async (
         commandName: string,
         args: readonly string[],
@@ -912,20 +1005,12 @@ await flow(flowArgs())(async () => {
             )
           ).log,
         persist: async (record, persistenceDeadlineAtMs) => {
+          await persistDeliveryReportMirror(record);
           await persistDeliveryRecordAtomically(
             deliveryRecordPath,
             record,
             persistenceDeadlineAtMs,
             deliveryLock,
-          );
-          await persistDeliveryReportEvidence(
-            deliveryReportPath,
-            renderDeliveryReportEvidence(
-              activeReadyReport,
-              record,
-              deliveryRecordPath,
-            ),
-            persistenceDeadlineAtMs,
           );
         },
       });

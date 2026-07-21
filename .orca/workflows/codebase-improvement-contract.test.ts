@@ -9589,6 +9589,10 @@ function loadDeliveryRecordPersistence(
   );
   const declarations = [
     "isErrnoCode",
+    "parseDeliveryRecordLockOwner",
+    "writeDeliveryRecordLockOwner",
+    "isDeliveryRecordLockOwnerLive",
+    "recoverStaleDeliveryRecordLock",
     "acquireDeliveryRecordLock",
     "mergeDeliveryAttempt",
     "persistDeliveryRecordAtomically",
@@ -9607,11 +9611,13 @@ function loadDeliveryRecordPersistence(
     `${emitted}\npersistDeliveryRecordAtomically;`,
     {
       DeliveryRecordSchema,
+      DELIVERY_RECORD_LOCK_STALE_MS: 60_000,
       Date,
       Error,
       JSON,
       process: { pid: 42 },
       setTimeout,
+      stat: async () => ({ mtimeMs: Date.now() }),
       ...bindings,
     },
   );
@@ -9756,6 +9762,74 @@ test("delivery terminal reruns return their existing record without commands or 
     expect(result.record).toEqual(record);
     expect(events).toEqual([]);
   }
+});
+
+test("delivery continuation recovers a merged PR after an ambiguous merge response", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  const events: string[] = [];
+  const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+    now: () => 10,
+    requireActiveReadyReport: async () => {},
+    readProtection: async () => ({ valid: true, log: deliveryCommand("protection") }),
+    readChecks: async () => ({ state: "passed", log: deliveryCommand("checks") }),
+    readPullRequest: async (phase) => {
+      events.push(`pr:${phase}`);
+      return {
+        pr:
+          phase === "merged"
+            ? { ...readyDeliveryPr(), state: "MERGED" }
+            : readyDeliveryPr(),
+        log: deliveryCommand(`pr:${phase}`),
+      };
+    },
+    merge: async () => {
+      events.push("merge");
+      return { ...deliveryCommand("merge"), status: "failed", exitCode: 1 };
+    },
+    persist: async () => {
+      events.push("persist");
+    },
+  });
+
+  expect(result).toMatchObject({ status: "delivered", exitCode: 0 });
+  expect(events).toEqual([
+    "pr:ready",
+    "pr:ready",
+    "merge",
+    "pr:merged",
+    "persist",
+  ]);
+});
+
+test("delivery continuation recovers a merged PR after a lost merge response", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+    now: () => 10,
+    requireActiveReadyReport: async () => {},
+    readProtection: async () => ({ valid: true, log: deliveryCommand("protection") }),
+    readChecks: async () => ({ state: "passed", log: deliveryCommand("checks") }),
+    readPullRequest: async (phase) => ({
+      pr:
+        phase === "merged"
+          ? { ...readyDeliveryPr(), state: "MERGED" }
+          : readyDeliveryPr(),
+      log: deliveryCommand(`pr:${phase}`),
+    }),
+    merge: async () => {
+      throw new Error("connection lost after merge submission");
+    },
+    persist: async () => {},
+  });
+
+  expect(result).toMatchObject({ status: "delivered", exitCode: 0 });
 });
 
 test("delivery continuation writes blocked and exits nonzero for failed checks and identity drift", async () => {
@@ -9998,6 +10072,10 @@ test("delivery record persistence serializes concurrent attempts without loss", 
       lockHeld = false;
     },
     writeFile: async (file: string, value: string) => {
+      if (file.endsWith("/owner.json")) {
+        files.set(file, value);
+        return;
+      }
       writes += 1;
       if (writes === 1) {
         firstWriteStarted?.();
@@ -10238,6 +10316,144 @@ test("delivery record persistence bounds a stale lock by the continuation deadli
   ).rejects.toThrow("delivery record lock wait exceeded continuation deadline");
 });
 
+test("delivery record persistence reclaims a stale lock from a dead owner", async () => {
+  const source = await Bun.file(path).text();
+  const destination = "/tmp/delivery.json";
+  const lock = `${destination}.lock`;
+  const files = new Map<string, string>([
+    [destination, JSON.stringify(deliveryRecordFixture())],
+    [`${lock}/owner.json`, JSON.stringify({ pid: 991, createdAtMs: 0 })],
+  ]);
+  let lockHeld = true;
+  const removed: string[] = [];
+  const persistence = loadDeliveryRecordPersistence(source, {
+    Date: { now: () => 60_001 },
+    mkdir: async () => {
+      if (lockHeld) throw Object.assign(new Error("lock exists"), { code: "EEXIST" });
+      lockHeld = true;
+    },
+    process: {
+      pid: 42,
+      kill: () => {
+        throw Object.assign(new Error("owner exited"), { code: "ESRCH" });
+      },
+    },
+    readFile: async (file: string) => files.get(file) ?? "",
+    rename: async (from: string, to: string) => {
+      files.set(to, files.get(from) ?? "");
+    },
+    rm: async (file: string) => {
+      removed.push(file);
+      if (file === lock) lockHeld = false;
+    },
+    stat: async () => ({ mtimeMs: 0 }),
+    writeFile: async (file: string, value: string) => {
+      files.set(file, value);
+    },
+  });
+  expect(persistence).toBeFunction();
+  if (persistence === undefined) return;
+
+  await persistence(
+    destination,
+    DeliveryRecordSchema.parse({
+      ...deliveryRecordFixture(),
+      delivery: {
+        status: "pending",
+        attempts: [{ startedAtMs: 2, finishedAtMs: 3, status: "pending" }],
+      },
+    }),
+  );
+
+  expect(removed).toContain(lock);
+  expect(DeliveryRecordSchema.parse(JSON.parse(files.get(destination) ?? ""))).toBeDefined();
+});
+
+test("delivery record persistence retries after another waiter reclaims a stale lock", async () => {
+  const source = await Bun.file(path).text();
+  const destination = "/tmp/delivery.json";
+  const lock = `${destination}.lock`;
+  let lockHeld = true;
+  let mkdirCalls = 0;
+  let staleRemoval = true;
+  const persistence = loadDeliveryRecordPersistence(source, {
+    Date: { now: () => 60_001 },
+    mkdir: async () => {
+      mkdirCalls += 1;
+      if (lockHeld) throw Object.assign(new Error("lock exists"), { code: "EEXIST" });
+      lockHeld = true;
+    },
+    process: {
+      pid: 42,
+      kill: () => {
+        throw Object.assign(new Error("owner exited"), { code: "ESRCH" });
+      },
+    },
+    readFile: async (file: string) =>
+      file === destination
+        ? JSON.stringify(deliveryRecordFixture())
+        : JSON.stringify({ pid: 991, createdAtMs: 0 }),
+    rename: async () => {},
+    rm: async (file: string) => {
+      if (file !== lock) return;
+      lockHeld = false;
+      if (staleRemoval) {
+        staleRemoval = false;
+        throw Object.assign(new Error("already removed"), { code: "ENOENT" });
+      }
+    },
+    stat: async () => ({ mtimeMs: 0 }),
+    writeFile: async () => {},
+  });
+  expect(persistence).toBeFunction();
+  if (persistence === undefined) return;
+
+  await persistence(
+    destination,
+    DeliveryRecordSchema.parse({
+      ...deliveryRecordFixture(),
+      delivery: {
+        status: "pending",
+        attempts: [{ startedAtMs: 2, finishedAtMs: 3, status: "pending" }],
+      },
+    }),
+  );
+
+  expect(mkdirCalls).toBe(2);
+});
+
+test("delivery record persistence never reclaims a stale-looking lock with a live owner", async () => {
+  const source = await Bun.file(path).text();
+  const destination = "/tmp/delivery.json";
+  const lock = `${destination}.lock`;
+  let now = 0;
+  const removed: string[] = [];
+  const persistence = loadDeliveryRecordPersistence(source, {
+    Date: { now: () => now },
+    mkdir: async () => {
+      throw Object.assign(new Error("lock exists"), { code: "EEXIST" });
+    },
+    process: { pid: 42, kill: () => undefined },
+    readFile: async (file: string) =>
+      file === `${lock}/owner.json` ? JSON.stringify({ pid: 991, createdAtMs: 0 }) : "",
+    rm: async (file: string) => {
+      removed.push(file);
+    },
+    setTimeout: (resolve: () => void) => {
+      now = 1;
+      resolve();
+    },
+    stat: async () => ({ mtimeMs: 0 }),
+  });
+  expect(persistence).toBeFunction();
+  if (persistence === undefined) return;
+
+  await expect(
+    persistence(destination, deliveryRecordFixture(), 1),
+  ).rejects.toThrow("delivery record lock wait exceeded continuation deadline");
+  expect(removed).not.toContain(lock);
+});
+
 test("delivery continuation defensively rejects an unknown delivery record field", async () => {
   const source = await Bun.file(path).text();
   const continuation = loadDeliveryContinuation(source);
@@ -10333,16 +10549,45 @@ test("delivery preloads report evidence and persists its blocked mirror after pr
   const continuation = source.indexOf("const outcome = await runDeliveryContinuation(rawRecord, {");
   const proof = source.indexOf("assertActiveReadyDeliveryReport(", continuation);
   const recordPersistence = source.indexOf("await persistDeliveryRecordAtomically(", continuation);
-  const reportPersistence = source.indexOf("await persistDeliveryReportEvidence(", continuation);
+  const reportPersistence = source.indexOf(
+    "await persistDeliveryReportMirror(record);",
+    continuation,
+  );
 
   expect(reportRead).toBeGreaterThan(-1);
   expect(continuation).toBeGreaterThan(reportRead);
   expect(proof).toBeGreaterThan(continuation);
-  expect(recordPersistence).toBeGreaterThan(proof);
-  expect(reportPersistence).toBeGreaterThan(recordPersistence);
-  expect(source.slice(recordPersistence, reportPersistence)).not.toContain(
+  expect(reportPersistence).toBeGreaterThan(proof);
+  expect(recordPersistence).toBeGreaterThan(reportPersistence);
+  expect(source.slice(reportPersistence, recordPersistence)).not.toContain(
     "activeReadyReport !== undefined",
   );
+});
+
+test("delivery reconciles its report mirror before terminal return and record advancement", async () => {
+  const source = await Bun.file(path).text();
+  const terminalRecord = source.indexOf(
+    'if (launcherValidatedRecord.delivery.status !== "pending")',
+  );
+  const terminalReport = source.indexOf(
+    "await persistDeliveryReportMirror(launcherValidatedRecord);",
+  );
+  const continuation = source.indexOf("const outcome = await runDeliveryContinuation(rawRecord, {");
+  const reportPersistence = source.indexOf(
+    "await persistDeliveryReportMirror(record);",
+    continuation,
+  );
+  const recordPersistence = source.indexOf(
+    "await persistDeliveryRecordAtomically(",
+    continuation,
+  );
+
+  expect(terminalRecord).toBeGreaterThan(-1);
+  expect(terminalReport).toBeGreaterThan(-1);
+  expect(terminalRecord).toBeGreaterThan(terminalReport);
+  expect(continuation).toBeGreaterThan(terminalRecord);
+  expect(reportPersistence).toBeGreaterThan(continuation);
+  expect(recordPersistence).toBeGreaterThan(reportPersistence);
 });
 
 test("delivery blocks before remote reads when active-ready proof dependency is unavailable", async () => {
