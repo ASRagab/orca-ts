@@ -6121,6 +6121,39 @@ test("scoped fanout counts only fully validated candidates toward quorum", async
   }
 });
 
+test("scoped fanout invalidates a cited no-candidate response when scoped validation fails", async () => {
+  const runtime = await scopedScoutRuntime();
+  if (runtime === undefined) return;
+
+  const result = await runtime.runScopedScoutFanout({
+    conversations: [
+      {
+        label: "cited no candidate",
+        async run() {
+          return {
+            status: "no_candidate" as const,
+            reason: "src/scoped/tool.ts:1 and tests/scoped-tool.test.ts:1",
+          };
+        },
+        cancel(): void {},
+      },
+    ],
+    modelAllocationMs: 120_000,
+    settlementReserveMs: 5_000,
+    quorum: 1,
+    accept: () => false,
+    validateAccepted: () => ["no_candidate source citation is not rendered"],
+  });
+
+  expect(result.accepted).toEqual([]);
+  expect(result.records).toMatchObject([
+    {
+      status: "invalid",
+      validationIssues: ["no_candidate source citation is not rendered"],
+    },
+  ]);
+});
+
 test("scoped fanout quorum cancels each pending scope once and drains cancellation rejection", async () => {
   const runtime = await scopedScoutRuntime();
   if (runtime === undefined) return;

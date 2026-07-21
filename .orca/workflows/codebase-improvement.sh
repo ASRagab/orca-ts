@@ -2846,7 +2846,7 @@ finalize() {
   fi
   if [[ "$started_at_ms" =~ ^[0-9]+$ && "$ended_at_ms" =~ ^[0-9]+$ ]]; then
     elapsed_ms=$(( ended_at_ms - started_at_ms ))
-    if [[ "$elapsed_ms" -gt $(( launcher_deadline_ms + launcher_finalization_reserve_ms )) ]]; then
+    if [[ "$elapsed_ms" -gt "$launcher_deadline_ms" ]]; then
       record_finalize_failure "launcher exceeded profile deadline"
     fi
   else
@@ -2873,7 +2873,7 @@ finalize() {
   if capture_before_deadline ended_at_ms now_ms && \
     [[ "$started_at_ms" =~ ^[0-9]+$ ]]; then
     elapsed_ms=$(( ended_at_ms - started_at_ms ))
-    if [[ "$elapsed_ms" -gt $(( launcher_deadline_ms + launcher_finalization_reserve_ms )) ]]; then
+    if [[ "$elapsed_ms" -gt "$launcher_deadline_ms" ]]; then
       record_finalize_failure "finalization exceeded profile deadline"
     fi
   else
@@ -3015,9 +3015,7 @@ main() {
   fi
   launcher_absolute_deadline_at_ms=$(( started_at_ms + launcher_deadline_ms ))
   launcher_work_deadline_at_ms="$launcher_absolute_deadline_at_ms"
-  launcher_finalization_deadline_at_ms=$((
-    launcher_absolute_deadline_at_ms + launcher_finalization_reserve_ms
-  ))
+  launcher_finalization_deadline_at_ms="$launcher_absolute_deadline_at_ms"
   launcher_deadline_at_ms="$launcher_work_deadline_at_ms"
 
   script_parent="${script_source%/*}"

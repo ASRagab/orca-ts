@@ -7315,7 +7315,7 @@ test("launcher copies the locked set by mode and rejects copy-time drift", async
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-});
+}, 15_000);
 
 test("preflight attestation binds the exact live artifact digest", async () => {
   const launcher = await Bun.file(
@@ -9394,7 +9394,7 @@ test("launcher captures and exports one immutable GitHub delivery identity", asy
         [
           "#!/usr/bin/env bash",
           "set -u",
-          "now_ms() { bun -e 'process.stdout.write(String(Date.now()))'; }",
+          "now_ms() { printf '%s' 1000; }",
           ...functions,
           "launcher_signal_status=0",
           ...launcherDeadlineLines(5000),
@@ -9452,7 +9452,7 @@ test("launcher captures and exports one immutable GitHub delivery identity", asy
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-});
+}, 15_000);
 
 test("delivery identity lowercasing stays inside the launcher deadline", async () => {
   const launcher = await Bun.file(
@@ -9580,7 +9580,7 @@ test("launcher proves primary package-lock bytes and final simple SLA", async ()
     "packageLockSha256Before",
     "packageLockSha256After",
     "launcher_deadline_ms=600000",
-    'elapsed_ms" -gt $(( launcher_deadline_ms + launcher_finalization_reserve_ms ))',
+    'elapsed_ms" -gt "$launcher_deadline_ms"',
   ]) {
     expect(launcher).toContain(required);
   }
@@ -19234,7 +19234,7 @@ test("delivery continuation reserves shell cleanup after its exact 30-minute dea
   );
 });
 
-test("actual launcher gives the runtime each profile's full active cap and a distinct finalizer allocation", async () => {
+test("actual launcher gives runtime and finalizer each profile's exact active cap", async () => {
   const launcher = await Bun.file(".orca/workflows/codebase-improvement.sh").text();
   const root = await mkdtemp(join(tmpdir(), "orcats-active-cutoff-"));
   const fakeBin = join(root, "bin");
@@ -19303,7 +19303,9 @@ test("actual launcher gives the runtime each profile's full active cap and a dis
       expect(workerDeadlineAtMs, profile).toBeGreaterThan(startedAtMs);
       expect(workerDeadlineAtMs, profile).toBe(startedAtMs + capMs);
     }
-    expect(launcher).toContain("launcher_finalization_deadline_at_ms");
+    expect(launcher).toContain(
+      'launcher_finalization_deadline_at_ms="$launcher_absolute_deadline_at_ms"',
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

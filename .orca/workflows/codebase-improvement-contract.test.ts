@@ -4881,6 +4881,11 @@ function baselineUsageContractIssues(source: string): string[] {
   const outcomeUsageCalls = usageCalls.filter(
     (call) => call.arguments[0]?.getText(sourceFile) === "outcome.result.usage",
   );
+  const scopedTerminalUsageCalls = usageCalls.filter(
+    (call) =>
+      call.arguments[0]?.getText(sourceFile) ===
+      "scopedUsage.get(record.scopeIndex)",
+  );
   const timeoutUsageCalls = usageCalls.filter(
     (call) => call.arguments[0]?.getText(sourceFile) === "attempt.terminal.usage",
   );
@@ -4893,7 +4898,7 @@ function baselineUsageContractIssues(source: string): string[] {
       ? []
       : callsNamed(conversationWrapper, "recordUsage");
   if (
-    outcomeUsageCalls.length !== 8 ||
+    outcomeUsageCalls.length !== 7 ||
     outcomeUsageCalls.some(
       (call) =>
         call.arguments.length !== 1 ||
@@ -4903,7 +4908,7 @@ function baselineUsageContractIssues(source: string): string[] {
     )
   ) {
     issues.push(
-      "all eight backend turn sites must unconditionally record their usage",
+      "all non-scout backend turn sites must unconditionally record their usage",
     );
   }
   const timeoutCall = timeoutUsageCalls[0];
@@ -4913,6 +4918,7 @@ function baselineUsageContractIssues(source: string): string[] {
       : timeoutCall.parent.parent.parent;
   if (
     usageCalls.length !== 10 ||
+    scopedTerminalUsageCalls.length !== 1 ||
     timeoutUsageCalls.length !== 1 ||
     conversationTimeoutUsageCalls.length !== 1 ||
     timeoutCall === undefined ||
@@ -4926,6 +4932,9 @@ function baselineUsageContractIssues(source: string): string[] {
     issues.push(
       "timed-out scout attempts must retain terminal usage exactly once",
     );
+  }
+  if (scopedTerminalUsageCalls.length !== 1) {
+    issues.push("scout finalization must record pair-ordered terminal usage once");
   }
   if (callbackCount !== 1) {
     issues.push("baseline repair must record each backend outcome exactly once");
@@ -7283,16 +7292,55 @@ test("scout synthesis is one watched tool-free ranked callsite", async () => {
   expect(runtimeSource).toContain("export async function runScopedScoutFanout");
 });
 
-test("scout validation owns one absolute deadline after synthesis", async () => {
+test("scout validation starts only after shared fanout finalization", async () => {
   const source = await Bun.file(path).text();
   const deadline =
     "const validationDeadlineMs = Date.now() + SCOUT_VALIDATION_LIMIT_MS;";
   expect(source).toContain(deadline);
+  expect(source.indexOf(deadline)).toBeGreaterThan(
+    source.indexOf("const scopedResult = await finalizeScopedScoutRecords({"),
+  );
   expect(source).toContain("awaitWithinDeadline(\n          `candidate ${proposed.id} tracked paths`");
   expect(source).toContain("validationRemaining(),");
   const removedDeadline = source.replace(deadline, "");
   expect(removedDeadline).not.toBe(source);
   expect(removedDeadline).not.toContain(deadline);
+});
+
+test("scout hashes and rechecks every ordered pair packet before fanout", async () => {
+  const source = await Bun.file(path).text();
+  const packetDeclaration = "const scopedPackets: ScoutEvidencePacket[] = [];";
+  const packetDigest =
+    'const scopedPacketSha256 = createHash("sha256").update(packet.text).digest("hex");';
+  expect(source).toContain(packetDeclaration);
+  expect(source).toContain(packetDigest);
+  expect(source.indexOf(packetDigest)).toBeLessThan(
+    source.indexOf("const fanout = await runScopedScoutFanout<ScopedScoutResult>({"),
+  );
+});
+
+test("scout records terminal usage only through pair-ordered finalization", async () => {
+  const source = await Bun.file(path).text();
+  const fanout = source.indexOf("const fanout = await runScopedScoutFanout<ScopedScoutResult>({");
+  const finalization = source.indexOf("const scopedResult = await finalizeScopedScoutRecords({");
+  const validation = source.indexOf(
+    "const validationDeadlineMs = Date.now() + SCOUT_VALIDATION_LIMIT_MS;",
+  );
+  expect(fanout).toBeGreaterThan(-1);
+  expect(finalization).toBeGreaterThan(fanout);
+  expect(validation).toBeGreaterThan(finalization);
+  expect(source.slice(0, fanout)).toContain(
+    "const scopedUsage = new Map<number, Usage | undefined>();",
+  );
+  expect(source.slice(fanout, finalization)).toContain(
+    "scopedUsage.set(scopeIndex, outcome.result.usage);",
+  );
+  expect(source.slice(fanout, finalization)).not.toContain(
+    "recordUsage(outcome.result.usage);",
+  );
+  expect(source.slice(finalization, validation)).toContain(
+    "recordTerminalUsage: (record) => {\n          recordUsage(scopedUsage.get(record.scopeIndex));\n        },",
+  );
 });
 
 test("scout alone uses low Codex reasoning with whole-result rank-one control", async () => {
@@ -8883,15 +8931,13 @@ test("fresh locked-audit mutants remain load-bearing", async () => {
 
   const scoutUsageOmitted = source.replace(
     [
-      "                recordUsage(outcome.result.usage);",
-      "                const structured = ScopedScoutResultSchema.safeParse(",
-      "                  outcome.result.structured,",
-      "                );",
+      "          recordUsage(scopedUsage.get(record.scopeIndex));",
+      "        },",
+      "        recordReportSummary: (summary) => {",
     ].join("\n"),
     [
-      "                const structured = ScopedScoutResultSchema.safeParse(",
-      "                  outcome.result.structured,",
-      "                );",
+      "        },",
+      "        recordReportSummary: (summary) => {",
     ].join("\n"),
   );
   expect(scoutUsageOmitted).not.toBe(source);
@@ -9659,6 +9705,50 @@ test("delivery pending at its exact deadline records pending without a merge", a
   expect(events).toEqual(["pr-identity", "checks", "persist"]);
 });
 
+test("delivery terminal reruns return their existing record without commands or persistence", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  for (const status of ["delivered", "blocked"] as const) {
+    const record = deliveryRecordFixture({
+      delivery: {
+        status,
+        attempts: [{ startedAtMs: 1, finishedAtMs: 2, status }],
+      },
+    });
+    const events: string[] = [];
+    const result = await continuation(JSON.stringify(record), {
+      now: () => 10,
+      readProtection: async () => {
+        events.push("protection");
+        return { valid: true, log: deliveryCommand("protection") };
+      },
+      readChecks: async () => {
+        events.push("checks");
+        return { state: "passed" as const, log: deliveryCommand("checks") };
+      },
+      readPullRequest: async () => {
+        events.push("pr");
+        return { pr: readyDeliveryPr(), log: deliveryCommand("pr") };
+      },
+      merge: async () => {
+        events.push("merge");
+        return deliveryCommand("merge");
+      },
+      persist: async () => {
+        events.push("persist");
+      },
+    });
+
+    expect(result.status).toBe(status);
+    expect(result.exitCode).toBe(status === "delivered" ? 0 : 1);
+    expect(result.record).toEqual(record);
+    expect(events).toEqual([]);
+  }
+});
+
 test("delivery continuation writes blocked and exits nonzero for failed checks and identity drift", async () => {
   const source = await Bun.file(path).text();
   const continuation = loadDeliveryContinuation(source);
@@ -9905,23 +9995,23 @@ test("delivery record persistence serializes concurrent attempts without loss", 
   expect(persistence).toBeFunction();
   if (persistence === undefined) return;
 
-  const blocked = DeliveryRecordSchema.parse({
-    ...deliveryRecordFixture(),
-    delivery: {
-      status: "blocked",
-      attempts: [{ startedAtMs: 10, finishedAtMs: 11, status: "blocked" }],
-    },
-  });
   const pending = DeliveryRecordSchema.parse({
     ...deliveryRecordFixture(),
     delivery: {
       status: "pending",
-      attempts: [{ startedAtMs: 20, finishedAtMs: 21, status: "pending" }],
+      attempts: [{ startedAtMs: 10, finishedAtMs: 11, status: "pending" }],
     },
   });
-  const first = persistence(destination, blocked);
+  const blocked = DeliveryRecordSchema.parse({
+    ...deliveryRecordFixture(),
+    delivery: {
+      status: "blocked",
+      attempts: [{ startedAtMs: 20, finishedAtMs: 21, status: "blocked" }],
+    },
+  });
+  const first = persistence(destination, pending);
   await firstWrite;
-  const second = persistence(destination, pending);
+  const second = persistence(destination, blocked);
   if (releaseFirstWrite === undefined) throw new Error("first writer did not block");
   releaseFirstWrite();
   await Promise.all([first, second]);
@@ -9937,6 +10027,98 @@ test("delivery record persistence serializes concurrent attempts without loss", 
   expect(DeliveryRecordSchema.parse(JSON.parse(persisted)).delivery.status).toBe(
     "blocked",
   );
+});
+
+test("delivery record persistence leaves an already terminal record byte-equivalent", async () => {
+  const source = await Bun.file(path).text();
+  const destination = "/tmp/delivery-terminal.json";
+  const terminal = DeliveryRecordSchema.parse({
+    ...deliveryRecordFixture(),
+    delivery: {
+      status: "delivered",
+      attempts: [{ startedAtMs: 1, finishedAtMs: 2, status: "delivered" }],
+    },
+  });
+  const files = new Map<string, string>([[destination, JSON.stringify(terminal)]]);
+  const persistence = loadDeliveryRecordPersistence(source, {
+    mkdir: async () => undefined,
+    readFile: async (file: string) => files.get(file) ?? "",
+    rename: async (from: string, to: string) => {
+      files.set(to, files.get(from) ?? "");
+    },
+    rm: async () => undefined,
+    writeFile: async (file: string, value: string) => {
+      files.set(file, value);
+    },
+  });
+  expect(persistence).toBeFunction();
+  if (persistence === undefined) return;
+
+  await persistence(
+    destination,
+    DeliveryRecordSchema.parse({
+      ...deliveryRecordFixture(),
+      delivery: {
+        status: "blocked",
+        attempts: [{ startedAtMs: 3, finishedAtMs: 4, status: "blocked" }],
+      },
+    }),
+  );
+
+  expect(files.get(destination)).toBe(JSON.stringify(terminal));
+});
+
+test("delivery record persistence ignores an incomplete next attempt after terminal delivery", async () => {
+  const source = await Bun.file(path).text();
+  const destination = "/tmp/delivery-terminal-incomplete-next.json";
+  const terminal = DeliveryRecordSchema.parse({
+    ...deliveryRecordFixture(),
+    delivery: {
+      status: "delivered",
+      attempts: [{ startedAtMs: 1, finishedAtMs: 2, status: "delivered" }],
+    },
+  });
+  const files = new Map<string, string>([[destination, JSON.stringify(terminal)]]);
+  const persistence = loadDeliveryRecordPersistence(source, {
+    mkdir: async () => undefined,
+    readFile: async (file: string) => files.get(file) ?? "",
+    rename: async (from: string, to: string) => {
+      files.set(to, files.get(from) ?? "");
+    },
+    rm: async () => undefined,
+    writeFile: async (file: string, value: string) => {
+      files.set(file, value);
+    },
+  });
+  expect(persistence).toBeFunction();
+  if (persistence === undefined) return;
+
+  await persistence(
+    destination,
+    DeliveryRecordSchema.parse({
+      ...deliveryRecordFixture(),
+      delivery: { status: "pending", attempts: [] },
+    }),
+  );
+
+  expect(files.get(destination)).toBe(JSON.stringify(terminal));
+});
+
+test("delivery continuation holds one record lock across reread, run, persistence, and release", async () => {
+  const source = await Bun.file(path).text();
+  const lock = source.indexOf("const deliveryLock = await acquireDeliveryRecordLock(");
+  const read = source.indexOf("const rawRecord = await readFile(deliveryRecordPath, \"utf8\");");
+  const run = source.indexOf("const outcome = await runDeliveryContinuation(rawRecord, {");
+  const persist = source.indexOf("deliveryLock,\n          );", run);
+  const release = source.indexOf(
+    "await rm(deliveryLock, { recursive: true, force: true });",
+  );
+
+  expect(lock).toBeGreaterThan(-1);
+  expect(read).toBeGreaterThan(lock);
+  expect(run).toBeGreaterThan(read);
+  expect(persist).toBeGreaterThan(run);
+  expect(release).toBeGreaterThan(persist);
 });
 
 test("delivery continuation accepts an already elapsed positive absolute deadline", async () => {

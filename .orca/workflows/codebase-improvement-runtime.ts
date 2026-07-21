@@ -3543,10 +3543,13 @@ export async function runScopedScoutFanout<T>(
       continue;
     }
     try {
-      if (!options.accept(next.terminal.value)) {
-        next.state.status = scopedScoutNoCandidate(next.terminal.value)
-          ? "no_candidate"
-          : "invalid";
+      const validationIssues = options.validateAccepted?.(
+        next.terminal.value,
+        next.state.scopeIndex,
+      ) ?? [];
+      if (validationIssues.length > 0) {
+        next.state.status = "invalid";
+        next.state.validationIssues = [...validationIssues];
         continue;
       }
     } catch (error) {
@@ -3555,13 +3558,10 @@ export async function runScopedScoutFanout<T>(
       continue;
     }
     try {
-      const validationIssues = options.validateAccepted?.(
-        next.terminal.value,
-        next.state.scopeIndex,
-      ) ?? [];
-      if (validationIssues.length > 0) {
-        next.state.status = "invalid";
-        next.state.validationIssues = [...validationIssues];
+      if (!options.accept(next.terminal.value)) {
+        next.state.status = scopedScoutNoCandidate(next.terminal.value)
+          ? "no_candidate"
+          : "invalid";
         continue;
       }
     } catch (error) {
