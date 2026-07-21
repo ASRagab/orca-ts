@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z, type BackendConfig, type Usage } from "@twelvehart/orcats";
 
 const dependencyManifestOrLock =
@@ -206,6 +207,7 @@ export interface ScoutEvidenceSelection {
 export interface ScoutEvidencePacket {
   readonly paths: readonly string[];
   readonly text: string;
+  readonly sha256: string;
   readonly charCount: number;
   readonly renderedLineMarkers: readonly string[];
   readonly sourceTestPairs: readonly ScoutSourceTestPair[];
@@ -566,6 +568,7 @@ export function renderScoutEvidence(
   return {
     paths,
     text,
+    sha256: createHash("sha256").update(text).digest("hex"),
     charCount: text.length,
     renderedLineMarkers,
     sourceTestPairs,

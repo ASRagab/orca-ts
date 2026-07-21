@@ -3604,6 +3604,7 @@ export interface ScopedScoutFinalizationSummary {
 
 export interface FinalizeScopedScoutRecordsOptions {
   readonly records: readonly ScopedScoutRecord<ScopedScoutResult>[];
+  readonly remainingMs?: () => number;
   readonly validate: (
     value: ScopedScoutResult,
     record: ScopedScoutRecord<ScopedScoutResult>,
@@ -3625,10 +3626,16 @@ export interface FinalizeScopedScoutRecordsOptions {
 export async function finalizeScopedScoutRecords(
   options: FinalizeScopedScoutRecordsOptions,
 ): Promise<ScoutResult> {
+  const assertRemaining = (): void => {
+    if (options.remainingMs !== undefined && options.remainingMs() <= 0) {
+      throw new Error("scout finalization exceeded validation deadline");
+    }
+  };
   const records = [...options.records]
     .sort((left, right) => left.scopeIndex - right.scopeIndex)
     .map((record) => ({ ...record }));
   for (const record of records) {
+    assertRemaining();
     if (
       record.status === "accepted" &&
       record.terminal?.status === "fulfilled" &&
@@ -3640,10 +3647,13 @@ export async function finalizeScopedScoutRecords(
         record.validationIssues = [...validationIssues];
       }
     }
+    assertRemaining();
     if (record.terminal !== undefined) {
       await options.recordTerminalUsage?.(record);
+      assertRemaining();
     }
     await options.persistScopeRecord(record);
+    assertRemaining();
   }
   const accepted = records.flatMap((record) => {
     if (
@@ -3665,8 +3675,11 @@ export async function finalizeScopedScoutRecords(
     records,
     acceptedScopeIndexes: accepted.map((record) => record.scopeIndex),
   };
+  assertRemaining();
   await options.recordReportSummary(summary);
+  assertRemaining();
   await options.recordLedgerSummary(summary);
+  assertRemaining();
   return buildScoutResult(accepted);
 }
 

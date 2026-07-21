@@ -6489,3 +6489,26 @@ test("scoped fanout finalization records terminal usage once in pair order befor
   ]);
   expect(result.candidates.map((item) => item.id)).toEqual(["scope-zero"]);
 });
+
+test("scoped finalization rejects a scope record that reaches its validation deadline", async () => {
+  const runtime = await scopedScoutRuntime();
+  if (runtime === undefined) return;
+  let remaining = 1;
+
+  await expect(
+    runtime.finalizeScopedScoutRecords({
+      records: [{ scopeIndex: 0, label: "scope", status: "invalid" }],
+      remainingMs: () => remaining,
+      validate: () => [],
+      persistScopeRecord: async () => {
+        remaining = 0;
+      },
+      recordReportSummary: () => {
+        throw new Error("report must not start after validation deadline");
+      },
+      recordLedgerSummary: () => {
+        throw new Error("ledger must not start after validation deadline");
+      },
+    }),
+  ).rejects.toThrow("scout finalization exceeded validation deadline");
+});

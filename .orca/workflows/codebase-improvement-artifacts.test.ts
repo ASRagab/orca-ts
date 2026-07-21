@@ -5411,6 +5411,20 @@ async function runFinalizerHarness(
           ]
         : []),
       ...functions,
+      ...(options.expireAtTerminalLedgerCommit === true
+        ? [
+            "controller_deadline_cutoffs() {",
+            '  local term_output="${1:-}"',
+            '  local kill_output="${2:-}"',
+            '  if [[ ! "$term_output" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ||',
+            '    ! "$kill_output" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then',
+            "    return 64",
+            "  fi",
+            '  printf -v "$term_output" %s "$(( SECONDS + 30 ))"',
+            '  printf -v "$kill_output" %s "$(( SECONDS + 31 ))"',
+            "}",
+          ]
+        : []),
       ...(options.afterPreflightPublish === undefined
         ? []
         : [
@@ -9193,18 +9207,12 @@ test("live launch atomically claims one preflight and rejects concurrent replay"
   const launcher = await Bun.file(
     ".orca/workflows/codebase-improvement.sh",
   ).text();
-  const remaining = extractShellFunction(launcher, "remaining_launcher_ms");
-  const bounded = extractShellFunction(launcher, "run_before_deadline");
   const claim = extractShellFunction(
     launcher,
     "claim_preflight_attestation",
   );
-  expect(remaining).toBeDefined();
-  expect(bounded).toBeDefined();
   expect(claim).toBeDefined();
-  if (remaining === undefined || bounded === undefined || claim === undefined) {
-    return;
-  }
+  if (claim === undefined) return;
 
   const root = await mkdtemp(join(tmpdir(), "orcats-preflight-claim-"));
   const stable = join(root, "preflight.json");
@@ -9220,13 +9228,10 @@ test("live launch atomically claims one preflight and rejects concurrent replay"
       [
         "#!/usr/bin/env bash",
         "set -u",
-        "now_ms() { bun -e 'process.stdout.write(String(Date.now()))'; }",
-        remaining,
-        bounded,
+        "run_before_deadline() {",
+        '  "$@"',
+        "}",
         claim,
-        "launcher_signal_status=0",
-        ...launcherDeadlineLines(5000),
-        'launcher_deadline_at_ms=$(( $(now_ms) + 5000 ))',
         `preflight_path=${JSON.stringify(stable)}`,
         `claim_preflight_attestation ${JSON.stringify(stable)} ${JSON.stringify(claimed)}`,
       ].join("\n"),

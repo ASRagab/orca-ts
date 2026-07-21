@@ -272,6 +272,9 @@ interface RunReport {
       scopeIndex: number;
       label: string;
       status: string;
+      sourcePath: string;
+      testPath: string;
+      sha256: string;
       reason?: string;
       validationIssues?: readonly string[];
     }>;
@@ -416,6 +419,7 @@ interface DeliveryContinuationDependencies {
     lockedHeadSha: string,
     remainingMs: number,
   ) => Promise<CommandLog>;
+  readonly requireActiveReadyReport: (record: DeliveryRecordV1) => Promise<void>;
   readonly persist: (
     record: DeliveryRecordV1,
     persistenceDeadlineAtMs?: number,
@@ -426,6 +430,69 @@ interface DeliveryContinuationResult {
   readonly status: "pending" | "blocked" | "delivered";
   readonly exitCode: 0 | 1 | 75;
   readonly record: DeliveryRecordV1;
+}
+
+function parseDeliveryReportEvidence(rawReport: string): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(rawReport);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("delivery report evidence must be an object");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function renderDeliveryReportEvidence(
+  rawReport: string,
+  record: DeliveryRecordV1,
+  deliveryRecordPath: string,
+): string {
+  const report = parseDeliveryReportEvidence(rawReport);
+  const expected: ReadonlyArray<readonly [string, unknown, string]> = [
+    ["runId", record.runId, "run ID"],
+    ["profile", record.active.profile, "profile"],
+    ["repository", record.repository, "repository"],
+    ["prUrl", record.prUrl, "pull request URL"],
+    ["branch", record.branch, "branch"],
+    ["matchedHeadSha", record.lockedHeadSha, "locked head SHA"],
+    ["activeStatus", "ready", "active status"],
+    ["sla", "passed", "SLA status"],
+  ];
+  for (const [field, value, label] of expected) {
+    if (report[field] !== value) {
+      throw new Error(`delivery report ${label} does not match record`);
+    }
+  }
+  const relativeDeliveryRecordPath =
+    `.orca/improvement-loop/runs/${record.runId}/delivery.json`;
+  if (report.deliveryRecordPath !== relativeDeliveryRecordPath) {
+    throw new Error("delivery report path does not match record");
+  }
+  if (!deliveryRecordPath.endsWith(relativeDeliveryRecordPath)) {
+    throw new Error("delivery record path does not match report");
+  }
+  if (
+    report.deliveryStatus !== "pending" &&
+    report.deliveryStatus !== "blocked" &&
+    report.deliveryStatus !== "delivered"
+  ) {
+    throw new Error("delivery report status is invalid");
+  }
+  return `${JSON.stringify(
+    { ...report, deliveryStatus: record.delivery.status },
+    null,
+    2,
+  )}\n`;
+}
+
+function assertActiveReadyDeliveryReport(
+  rawReport: string,
+  record: DeliveryRecordV1,
+  deliveryRecordPath: string,
+): void {
+  const report = parseDeliveryReportEvidence(rawReport);
+  if (report.deliveryStatus !== record.delivery.status) {
+    throw new Error("delivery report status does not match record");
+  }
+  void renderDeliveryReportEvidence(rawReport, record, deliveryRecordPath);
 }
 
 function parseDeliveryContinuationArgs(args: readonly string[]): string | undefined {
@@ -516,6 +583,11 @@ async function runDeliveryContinuation(
       exitCode: record.delivery.status === "delivered" ? 0 : 1,
       record,
     };
+  }
+  try {
+    await dependencies.requireActiveReadyReport(record);
+  } catch {
+    return await finish("blocked");
   }
   const initialReady = await readReady();
   if (initialReady !== "ok") return await finish(initialReady);
@@ -675,6 +747,23 @@ async function persistDeliveryRecordAtomically(
   }
 }
 
+async function persistDeliveryReportEvidence(
+  destination: string,
+  value: string,
+  deadlineAtMs?: number,
+): Promise<void> {
+  if (deadlineAtMs !== undefined && Date.now() >= deadlineAtMs) {
+    throw new Error("delivery report persistence exceeded continuation deadline");
+  }
+  const temporary = `${destination}.delivery-report-${String(process.pid)}-${String(Date.now())}.tmp`;
+  await writeFile(temporary, value, { mode: 0o600 });
+  if (deadlineAtMs !== undefined && Date.now() >= deadlineAtMs) {
+    await rm(temporary, { force: true });
+    throw new Error("delivery report persistence exceeded continuation deadline");
+  }
+  await rename(temporary, destination);
+}
+
 await flow(flowArgs())(async () => {
   const continuationRunId = parseDeliveryContinuationArgs(flowArgs());
   if (continuationRunId !== undefined) {
@@ -695,6 +784,14 @@ await flow(flowArgs())(async () => {
       if (launcherValidatedRecord.runId !== continuationRunId) {
         throw new Error("delivery record run ID does not match continuation");
       }
+      if (!deliveryRecordPath.endsWith("delivery.json")) {
+        throw new Error("delivery record path must end with delivery.json");
+      }
+      const deliveryReportPath = `${deliveryRecordPath.slice(
+        0,
+        -"delivery.json".length,
+      )}report.json`;
+      const activeReadyReport = await readFile(deliveryReportPath, "utf8");
       const commandLog = async (
         commandName: string,
         args: readonly string[],
@@ -724,6 +821,14 @@ await flow(flowArgs())(async () => {
       const outcome = await runDeliveryContinuation(rawRecord, {
         deadlineAtMs: deliveryDeadlineAtMs,
         now: Date.now,
+        requireActiveReadyReport: (record) => {
+          assertActiveReadyDeliveryReport(
+            activeReadyReport,
+            record,
+            deliveryRecordPath,
+          );
+          return Promise.resolve();
+        },
         readProtection: async (remainingMs) => {
           const commandResult = await commandLog(
             "gh",
@@ -812,6 +917,15 @@ await flow(flowArgs())(async () => {
             record,
             persistenceDeadlineAtMs,
             deliveryLock,
+          );
+          await persistDeliveryReportEvidence(
+            deliveryReportPath,
+            renderDeliveryReportEvidence(
+              activeReadyReport,
+              record,
+              deliveryRecordPath,
+            ),
+            persistenceDeadlineAtMs,
           );
         },
       });
@@ -1243,9 +1357,8 @@ await flow(flowArgs())(async () => {
           [pair],
         );
         gatherRemaining();
-        const scopedPacketSha256 = createHash("sha256").update(packet.text).digest("hex");
         gatherRemaining();
-        if (!/^[0-9a-f]{64}$/.test(scopedPacketSha256)) {
+        if (!/^[0-9a-f]{64}$/.test(packet.sha256)) {
           throw new Error("scout evidence packet SHA-256 is invalid");
         }
         scopedPackets.push(packet);
@@ -1256,12 +1369,13 @@ await flow(flowArgs())(async () => {
       ): readonly string[] => {
         const pair = scopedPairs[scopeIndex];
         const packet = scopedPackets[scopeIndex];
-        if (value.status !== "candidate") return [];
         if (pair === undefined || packet === undefined) {
           return [`scout scope ${String(scopeIndex + 1)} is incomplete`];
         }
+        const scopedIssues = validateScopedScoutResult(value, pair, packet, profile);
+        if (value.status !== "candidate") return scopedIssues;
         return [
-          ...validateScopedScoutResult(value, pair, packet, profile),
+          ...scopedIssues,
           ...validateCandidateForProfile(value.candidate, profile),
           ...validateCandidateEvidence(value.candidate, packet),
         ];
@@ -1325,38 +1439,6 @@ await flow(flowArgs())(async () => {
         accept: (value) => value.status === "candidate",
         validateAccepted: validateScopedCandidate,
       });
-      const scopedResult = await finalizeScopedScoutRecords({
-        records: fanout.records,
-        validate: (value, record) =>
-          validateScopedCandidate(value, record.scopeIndex),
-        persistScopeRecord: async (record) => {
-          await writeJson(
-            `${REPORT_DIR}/${runId}/scout-scope-${String(record.scopeIndex + 1)}.json`,
-            record,
-          );
-        },
-        recordTerminalUsage: (record) => {
-          recordUsage(scopedUsage.get(record.scopeIndex));
-        },
-        recordReportSummary: (summary) => {
-          const scoutEvidence = report.scoutEvidence;
-          if (scoutEvidence === undefined) {
-            throw new Error("scout evidence is missing before scoped summary");
-          }
-          scoutEvidence.scopes = summary.records.map((record) => ({
-            scopeIndex: record.scopeIndex,
-            label: record.label,
-            status: record.status,
-            ...(record.reason === undefined ? {} : { reason: record.reason }),
-            ...(record.validationIssues === undefined
-              ? {}
-              : { validationIssues: record.validationIssues }),
-          }));
-        },
-        recordLedgerSummary: async (summary) => {
-          await writeJson(`${REPORT_DIR}/${runId}/scout-ledger.json`, summary);
-        },
-      });
       const validationDeadlineMs = Date.now() + SCOUT_VALIDATION_LIMIT_MS;
       const validationRemaining = (): number =>
         remainingTimeout(
@@ -1367,6 +1449,77 @@ await flow(flowArgs())(async () => {
           ),
           "scout validation",
         );
+      const withinScoutValidation = async <T>(
+        label: string,
+        operation: () => T | Promise<T>,
+      ): Promise<T> =>
+        await awaitWithinDeadline(label, validationRemaining, async () => {
+          return await operation();
+        });
+      const scopedResult = await finalizeScopedScoutRecords({
+        records: fanout.records,
+        remainingMs: validationRemaining,
+        validate: (value, record) =>
+          validateScopedCandidate(value, record.scopeIndex),
+        persistScopeRecord: async (record) => {
+          const pair = scopedPairs[record.scopeIndex];
+          const packet = scopedPackets[record.scopeIndex];
+          if (pair === undefined || packet === undefined) {
+            throw new Error(`scout scope ${String(record.scopeIndex + 1)} is incomplete`);
+          }
+          await withinScoutValidation(
+            `scout scope ${String(record.scopeIndex + 1)} evidence`,
+            async () => {
+              await writeJson(
+                `${REPORT_DIR}/${runId}/scout-scope-${String(record.scopeIndex + 1)}.json`,
+                {
+                  ...record,
+                  sourcePath: pair.sourcePath,
+                  testPath: pair.testPath,
+                  packetSha256: packet.sha256,
+                },
+              );
+            },
+          );
+        },
+        recordTerminalUsage: (record) => {
+          recordUsage(scopedUsage.get(record.scopeIndex));
+        },
+        recordReportSummary: (summary) =>
+          withinScoutValidation("scout report evidence", () => {
+            const scoutEvidence = report.scoutEvidence;
+            if (scoutEvidence === undefined) {
+              throw new Error("scout evidence is missing before scoped summary");
+            }
+            scoutEvidence.scopes = summary.records.map((record) => {
+              const pair = scopedPairs[record.scopeIndex];
+              const packet = scopedPackets[record.scopeIndex];
+              if (pair === undefined || packet === undefined) {
+                throw new Error(`scout scope ${String(record.scopeIndex + 1)} is incomplete`);
+              }
+              return {
+                scopeIndex: record.scopeIndex,
+                label: record.label,
+                status: record.status,
+                sourcePath: pair.sourcePath,
+                testPath: pair.testPath,
+                sha256: packet.sha256,
+                ...(record.reason === undefined ? {} : { reason: record.reason }),
+                ...(record.validationIssues === undefined
+                  ? {}
+                  : { validationIssues: record.validationIssues }),
+              };
+            });
+          }),
+        recordLedgerSummary: async (summary) => {
+          await withinScoutValidation(
+            "scout ledger evidence",
+            async () => {
+              await writeJson(`${REPORT_DIR}/${runId}/scout-ledger.json`, summary);
+            },
+          );
+        },
+      });
       report.scoutEvidence.attempts = [];
       for (const proposed of scopedResult.candidates) {
         await awaitWithinDeadline(

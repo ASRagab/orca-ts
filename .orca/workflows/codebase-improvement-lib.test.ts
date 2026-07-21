@@ -354,6 +354,10 @@ test("scoped validation requires exact source and test citations for no_candidat
   ).toContain("no_candidate reason must cite a rendered source path line");
 });
 
+test("scoped evidence packets retain their SHA-256 digest", () => {
+  expect(scopedScoutPacket.sha256).toMatch(/^[0-9a-f]{64}$/);
+});
+
 test("scout result accepts one to three ranked candidates and rejects invalid cardinality", () => {
   for (const count of [1, 2, 3]) {
     const records = Array.from({ length: count }, (_, index) =>

@@ -7292,12 +7292,15 @@ test("scout synthesis is one watched tool-free ranked callsite", async () => {
   expect(runtimeSource).toContain("export async function runScopedScoutFanout");
 });
 
-test("scout validation starts only after shared fanout finalization", async () => {
+test("scout validation starts before shared fanout finalization", async () => {
   const source = await Bun.file(path).text();
   const deadline =
     "const validationDeadlineMs = Date.now() + SCOUT_VALIDATION_LIMIT_MS;";
   expect(source).toContain(deadline);
   expect(source.indexOf(deadline)).toBeGreaterThan(
+    source.indexOf("const fanout = await runScopedScoutFanout<ScopedScoutResult>({"),
+  );
+  expect(source.indexOf(deadline)).toBeLessThan(
     source.indexOf("const scopedResult = await finalizeScopedScoutRecords({"),
   );
   expect(source).toContain("awaitWithinDeadline(\n          `candidate ${proposed.id} tracked paths`");
@@ -7310,8 +7313,7 @@ test("scout validation starts only after shared fanout finalization", async () =
 test("scout hashes and rechecks every ordered pair packet before fanout", async () => {
   const source = await Bun.file(path).text();
   const packetDeclaration = "const scopedPackets: ScoutEvidencePacket[] = [];";
-  const packetDigest =
-    'const scopedPacketSha256 = createHash("sha256").update(packet.text).digest("hex");';
+  const packetDigest = "if (!/^[0-9a-f]{64}$/.test(packet.sha256)) {";
   expect(source).toContain(packetDeclaration);
   expect(source).toContain(packetDigest);
   expect(source.indexOf(packetDigest)).toBeLessThan(
@@ -7328,7 +7330,8 @@ test("scout records terminal usage only through pair-ordered finalization", asyn
   );
   expect(fanout).toBeGreaterThan(-1);
   expect(finalization).toBeGreaterThan(fanout);
-  expect(validation).toBeGreaterThan(finalization);
+  expect(validation).toBeGreaterThan(fanout);
+  expect(validation).toBeLessThan(finalization);
   expect(source.slice(0, fanout)).toContain(
     "const scopedUsage = new Map<number, Usage | undefined>();",
   );
@@ -7338,7 +7341,7 @@ test("scout records terminal usage only through pair-ordered finalization", asyn
   expect(source.slice(fanout, finalization)).not.toContain(
     "recordUsage(outcome.result.usage);",
   );
-  expect(source.slice(finalization, validation)).toContain(
+  expect(source.slice(validation, finalization + 2_500)).toContain(
     "recordTerminalUsage: (record) => {\n          recordUsage(scopedUsage.get(record.scopeIndex));\n        },",
   );
 });
@@ -8933,11 +8936,11 @@ test("fresh locked-audit mutants remain load-bearing", async () => {
     [
       "          recordUsage(scopedUsage.get(record.scopeIndex));",
       "        },",
-      "        recordReportSummary: (summary) => {",
+      "        recordReportSummary: (summary) =>",
     ].join("\n"),
     [
       "        },",
-      "        recordReportSummary: (summary) => {",
+      "        recordReportSummary: (summary) =>",
     ].join("\n"),
   );
   expect(scoutUsageOmitted).not.toBe(source);
@@ -9447,6 +9450,9 @@ type DeliveryContinuation = (
       lockedHeadSha: string,
       remainingMs: number,
     ) => Promise<Record<string, unknown>>;
+    readonly requireActiveReadyReport: (
+      record: Record<string, unknown>,
+    ) => Promise<void>;
     readonly persist: (
       record: Record<string, unknown>,
       persistenceDeadlineAtMs?: number,
@@ -9643,6 +9649,7 @@ test("delivery continuation only merges a freshly locked ready PR", async () => 
   };
   const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
     now: () => 10,
+    requireActiveReadyReport: async () => {},
     readProtection: async () => await fakeGh.readProtection(),
     readChecks: async () => await fakeGh.readChecks(),
     readPullRequest: async (phase) => await fakeGh.readPullRequest(phase),
@@ -9678,6 +9685,7 @@ test("delivery pending at its exact deadline records pending without a merge", a
   let now = 0;
   const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
     now: () => now,
+    requireActiveReadyReport: async () => {},
     readProtection: async () => {
       events.push("protection");
       return { valid: true, log: deliveryCommand("gh api protection") };
@@ -9721,6 +9729,7 @@ test("delivery terminal reruns return their existing record without commands or 
     const events: string[] = [];
     const result = await continuation(JSON.stringify(record), {
       now: () => 10,
+      requireActiveReadyReport: async () => {},
       readProtection: async () => {
         events.push("protection");
         return { valid: true, log: deliveryCommand("protection") };
@@ -9759,6 +9768,7 @@ test("delivery continuation writes blocked and exits nonzero for failed checks a
     const events: string[] = [];
     const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
       now: () => 10,
+      requireActiveReadyReport: async () => {},
       readProtection: async () => {
         events.push("protection");
         return { valid: true, log: deliveryCommand("gh api protection") };
@@ -9800,6 +9810,7 @@ test("delivery continuation persists one blocked base-mismatch attempt without a
   const persisted: Record<string, unknown>[] = [];
   const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
     now: () => 10,
+    requireActiveReadyReport: async () => {},
     readProtection: async () => ({ valid: true, log: deliveryCommand("protection") }),
     readChecks: async () => ({ state: "passed", log: deliveryCommand("checks") }),
     readPullRequest: async () => ({
@@ -9836,6 +9847,7 @@ test("delivery continuation preserves retryable pending evidence at its deadline
   const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
     deadlineAtMs: 0,
     now: () => 0,
+    requireActiveReadyReport: async () => {},
     readProtection: async () => {
       throw new Error("deadline must stop before protection");
     },
@@ -9878,6 +9890,7 @@ test("delivery continuation blocks every initial ready-identity mismatch before 
     let mergeCalls = 0;
     const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
       now: () => 10,
+      requireActiveReadyReport: async () => {},
       readProtection: async () => ({ valid: true, log: deliveryCommand("protection") }),
       readChecks: async () => ({ state: "passed", log: deliveryCommand("checks") }),
       readPullRequest: async () => ({ pr: mismatch.pr, log: deliveryCommand("pr") }),
@@ -9908,6 +9921,7 @@ test("delivery continuation blocks every post-green reread drift before merge", 
     let readyReads = 0;
     const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
       now: () => 10,
+      requireActiveReadyReport: async () => {},
       readProtection: async () => {
         events.push("protection");
         return {
@@ -10233,6 +10247,7 @@ test("delivery continuation defensively rejects an unknown delivery record field
   await expect(
     continuation(JSON.stringify(deliveryRecordFixture({ unexpected: true })), {
       now: () => 0,
+      requireActiveReadyReport: async () => {},
       readProtection: async () => ({ valid: true, log: deliveryCommand("protection") }),
       readChecks: async () => ({ state: "passed", log: deliveryCommand("checks") }),
       readPullRequest: async () => ({ pr: readyDeliveryPr(), log: deliveryCommand("pr") }),
@@ -10240,4 +10255,271 @@ test("delivery continuation defensively rejects an unknown delivery record field
       persist: async () => {},
     }),
   ).rejects.toThrow();
+});
+
+test("scout validates no_candidate citations before preserving zero-candidate evidence", async () => {
+  const source = await Bun.file(path).text();
+  const validatorStart = source.indexOf("const validateScopedCandidate = (");
+  const fanoutStart = source.indexOf("const fanout = await runScopedScoutFanout", validatorStart);
+  expect(validatorStart).toBeGreaterThan(-1);
+  expect(fanoutStart).toBeGreaterThan(validatorStart);
+  const validator = source.slice(validatorStart, fanoutStart);
+
+  expect(validator).toContain(
+    "validateScopedScoutResult(value, pair, packet, profile)",
+  );
+  expect(validator).not.toContain('if (value.status !== "candidate") return [];');
+});
+
+test("scout starts its validation allocation before every scope finalization write", async () => {
+  const source = await Bun.file(path).text();
+  const fanout = source.indexOf("const fanout = await runScopedScoutFanout<ScopedScoutResult>({");
+  const validationDeadline = source.indexOf(
+    "const validationDeadlineMs = Date.now() + SCOUT_VALIDATION_LIMIT_MS;",
+  );
+  const finalization = source.indexOf("const scopedResult = await finalizeScopedScoutRecords({");
+
+  expect(fanout).toBeGreaterThan(-1);
+  expect(validationDeadline).toBeGreaterThan(fanout);
+  expect(finalization).toBeGreaterThan(validationDeadline);
+  const finalizationSlice = source.slice(validationDeadline, finalization + 2_500);
+  expect(finalizationSlice).toContain("validationRemaining");
+  expect(finalizationSlice).toContain("awaitWithinDeadline(");
+});
+
+test("delivery blocks a pending record when active-ready report proof fails", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  const events: string[] = [];
+  const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+    now: () => 10,
+    requireActiveReadyReport: async () => {
+      events.push("report-proof");
+      throw new Error("active finalization failed");
+    },
+    readProtection: async () => {
+      events.push("protection");
+      return { valid: true, log: deliveryCommand("protection") };
+    },
+    readChecks: async () => {
+      events.push("checks");
+      return { state: "passed" as const, log: deliveryCommand("checks") };
+    },
+    readPullRequest: async () => {
+      events.push("pr");
+      return { pr: readyDeliveryPr(), log: deliveryCommand("pr") };
+    },
+    merge: async () => {
+      events.push("merge");
+      return deliveryCommand("merge");
+    },
+    persist: async (record) => {
+      events.push(`persist:${String((record.delivery as { status: string }).status)}`);
+    },
+  });
+
+  expect(result).toMatchObject({ status: "blocked", exitCode: 1 });
+  expect(events).toEqual(["report-proof", "persist:blocked"]);
+});
+
+test("delivery preloads report evidence and persists its blocked mirror after proof failure", async () => {
+  const source = await Bun.file(path).text();
+  const reportRead = source.indexOf(
+    'const activeReadyReport = await readFile(deliveryReportPath, "utf8");',
+  );
+  const continuation = source.indexOf("const outcome = await runDeliveryContinuation(rawRecord, {");
+  const proof = source.indexOf("assertActiveReadyDeliveryReport(", continuation);
+  const recordPersistence = source.indexOf("await persistDeliveryRecordAtomically(", continuation);
+  const reportPersistence = source.indexOf("await persistDeliveryReportEvidence(", continuation);
+
+  expect(reportRead).toBeGreaterThan(-1);
+  expect(continuation).toBeGreaterThan(reportRead);
+  expect(proof).toBeGreaterThan(continuation);
+  expect(recordPersistence).toBeGreaterThan(proof);
+  expect(reportPersistence).toBeGreaterThan(recordPersistence);
+  expect(source.slice(recordPersistence, reportPersistence)).not.toContain(
+    "activeReadyReport !== undefined",
+  );
+});
+
+test("delivery blocks before remote reads when active-ready proof dependency is unavailable", async () => {
+  const source = await Bun.file(path).text();
+  const continuation = loadDeliveryContinuation(source);
+  expect(continuation).toBeFunction();
+  if (continuation === undefined) return;
+
+  const events: string[] = [];
+  const result = await continuation(JSON.stringify(deliveryRecordFixture()), {
+    now: () => 10,
+    readProtection: async () => {
+      events.push("protection");
+      return { valid: true, log: deliveryCommand("protection") };
+    },
+    readChecks: async () => {
+      events.push("checks");
+      return { state: "passed" as const, log: deliveryCommand("checks") };
+    },
+    readPullRequest: async () => {
+      events.push("pr");
+      return { pr: readyDeliveryPr(), log: deliveryCommand("pr") };
+    },
+    merge: async () => {
+      events.push("merge");
+      return deliveryCommand("merge");
+    },
+    persist: async (record) => {
+      events.push(`persist:${String((record.delivery as { status: string }).status)}`);
+    },
+  });
+
+  expect(source).toContain(
+    "readonly requireActiveReadyReport: (record: DeliveryRecordV1) => Promise<void>;",
+  );
+  expect(source).not.toContain("requireActiveReadyReport?:");
+  expect(result).toMatchObject({ status: "blocked", exitCode: 1 });
+  expect(events).toEqual(["persist:blocked"]);
+});
+
+function loadDeliveryReportEvidenceRenderer(
+  source: string,
+): ((rawReport: string, record: Record<string, unknown>, deliveryRecordPath: string) => string) | undefined {
+  const sourceFile = ts.createSourceFile(
+    path,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const declarations = [
+    "parseDeliveryReportEvidence",
+    "renderDeliveryReportEvidence",
+  ].map((name) => functionDeclarationsNamed(sourceFile, name)[0]);
+  if (declarations.some((declaration) => declaration === undefined)) return undefined;
+  const emitted = ts.transpileModule(
+    declarations.map((declaration) => declaration!.getText(sourceFile)).join("\n"),
+    {
+      compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 },
+    },
+  ).outputText;
+  const loaded: unknown = runInNewContext(
+    `${emitted}\nrenderDeliveryReportEvidence;`,
+    { Error, JSON },
+  );
+  return typeof loaded === "function"
+    ? (loaded as (rawReport: string, record: Record<string, unknown>, deliveryRecordPath: string) => string)
+    : undefined;
+}
+
+test("delivery report evidence preserves immutable identity while mirroring terminal status", async () => {
+  const source = await Bun.file(path).text();
+  const render = loadDeliveryReportEvidenceRenderer(source);
+  expect(render).toBeFunction();
+  if (render === undefined) return;
+
+  const record = deliveryRecordFixture();
+  const report = {
+    runId: record.runId,
+    profile: "simple",
+    repository: record.repository,
+    prUrl: record.prUrl,
+    branch: record.branch,
+    matchedHeadSha: record.lockedHeadSha,
+    deliveryRecordPath: ".orca/improvement-loop/runs/20260720-123/delivery.json",
+    activeStatus: "ready",
+    deliveryStatus: "pending",
+    sla: "passed",
+  };
+  const blocked = deliveryRecordFixture({
+    delivery: { status: "blocked", attempts: [] },
+  });
+  const absoluteDeliveryRecordPath = `/tmp/worktree/${String(report.deliveryRecordPath)}`;
+  const rendered = JSON.parse(
+    render(
+      JSON.stringify(report),
+      blocked,
+      absoluteDeliveryRecordPath,
+    ),
+  ) as Record<string, unknown>;
+
+  expect(rendered).toMatchObject({
+    ...report,
+    deliveryStatus: "blocked",
+  });
+  await expect(Promise.resolve().then(() =>
+    render(
+      JSON.stringify({ ...report, matchedHeadSha: "b".repeat(40) }),
+      record,
+      absoluteDeliveryRecordPath,
+    ),
+  )).rejects.toThrow("delivery report locked head SHA does not match record");
+});
+
+test("delivery proof preloads a readable report before status validation so blocked delivery mirrors it", async () => {
+  const source = await Bun.file(path).text();
+  const reportRead = source.indexOf(
+    'const activeReadyReport = await readFile(deliveryReportPath, "utf8");',
+  );
+  const continuation = source.indexOf("const outcome = await runDeliveryContinuation(rawRecord, {");
+  const proofStart = source.indexOf("requireActiveReadyReport: (record) => {");
+  const proofEnd = source.indexOf("        readProtection:", proofStart);
+  expect(reportRead).toBeGreaterThan(-1);
+  expect(continuation).toBeGreaterThan(reportRead);
+  expect(proofStart).toBeGreaterThan(-1);
+  expect(proofEnd).toBeGreaterThan(proofStart);
+  const proof = source.slice(proofStart, proofEnd);
+  expect(proof).not.toContain("readFile(deliveryReportPath");
+  expect(proof).toContain("assertActiveReadyDeliveryReport(\n            activeReadyReport,");
+  expect(proof).toContain("return Promise.resolve();");
+
+  const render = loadDeliveryReportEvidenceRenderer(source);
+  expect(render).toBeFunction();
+  if (render === undefined) return;
+  const pending = deliveryRecordFixture();
+  const blocked = deliveryRecordFixture({
+    delivery: { status: "blocked", attempts: [] },
+  });
+  const report = JSON.stringify({
+    runId: pending.runId,
+    profile: "simple",
+    repository: pending.repository,
+    prUrl: pending.prUrl,
+    branch: pending.branch,
+    matchedHeadSha: pending.lockedHeadSha,
+    deliveryRecordPath: `.orca/improvement-loop/runs/${String(pending.runId)}/delivery.json`,
+    activeStatus: "ready",
+    deliveryStatus: "pending",
+    sla: "passed",
+  });
+  const persisted = JSON.parse(
+    render(
+      report,
+      blocked,
+      `/tmp/worktree/.orca/improvement-loop/runs/${String(pending.runId)}/delivery.json`,
+    ),
+  ) as Record<string, unknown>;
+  expect(persisted.deliveryStatus).toBe("blocked");
+});
+
+test("delivery continuation requires active-ready proof before GitHub reads", async () => {
+  const source = await Bun.file(path).text();
+  const interfaceStart = source.indexOf("interface DeliveryContinuationDependencies {");
+  const interfaceEnd = source.indexOf("interface DeliveryContinuationResult", interfaceStart);
+  const interfaceText = source.slice(interfaceStart, interfaceEnd);
+  expect(interfaceText).toContain("readonly requireActiveReadyReport:");
+  expect(interfaceText).not.toContain("readonly requireActiveReadyReport?:");
+
+  const continuationStart = source.indexOf("async function runDeliveryContinuation(");
+  const continuationEnd = source.indexOf("function isErrnoCode", continuationStart);
+  const continuation = source.slice(continuationStart, continuationEnd);
+  expect(continuation).toContain("await dependencies.requireActiveReadyReport(record);");
+  expect(continuation).not.toContain("requireActiveReadyReport?.");
+});
+
+test("scout scope evidence retains every rendered packet digest", async () => {
+  const source = await Bun.file(path).text();
+  expect(source).toContain("packetSha256: packet.sha256");
+  expect(source).toContain("sha256: packet.sha256");
 });
