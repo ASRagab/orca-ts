@@ -79,10 +79,10 @@ The system SHALL manage the OpenCode server lifecycle lazily, consume HTTP/SSE e
 - **THEN** the driver issues a best-effort abort request for the session to the server before tearing down the stream
 
 ### Requirement: Codex and Pi backends are supported
-The system SHALL support Codex exec JSONL and Pi RPC transports by mapping their native message tables into the same conversation event model. Subprocess-based backends (Codex, Pi) drive a `SubprocessConsumer` that signals completion via an `AbortSignal`. The consumer's `signal` property SHALL be an `AbortSignal` that becomes aborted when the consumer has settled the conversation on a terminal event. The subprocess read loop SHALL treat `consumer.signal.aborted` as the stop condition, kill the child process, and break — identical semantics to the prior `completed` poll flag but expressed as `AbortSignal` for consistency with `conversation.signal`.
+The system SHALL support Codex exec JSONL and Pi RPC transports by mapping their native message tables into the same conversation event model. Codex SHALL use the existing `codex exec --json` subprocess transport by default. Subprocess-based backends (Codex, Pi) drive a `SubprocessConsumer` that signals completion via an `AbortSignal`. The consumer's `signal` property SHALL be an `AbortSignal` that becomes aborted when the consumer has settled the conversation on a terminal event. The subprocess read loop SHALL treat `consumer.signal.aborted` as the stop condition, kill the child process, and break — identical semantics to the prior `completed` poll flag but expressed as `AbortSignal` for consistency with `conversation.signal`.
 
 #### Scenario: Codex JSONL stream completes
-- **WHEN** Codex emits thread, item, and turn completion messages
+- **WHEN** Codex emits thread, item, and turn completion messages through the default subprocess transport
 - **THEN** the runtime emits normalized events and synthesizes the expected final result
 
 #### Scenario: Pi RPC stream completes
@@ -100,21 +100,32 @@ The system SHALL support Codex exec JSONL and Pi RPC transports by mapping their
 - **THEN** `consumer.signal` becomes aborted
 - **THEN** the subprocess read loop kills the persistent Pi process and stops
 
+#### Scenario: Codex ACP remains non-default
+- **WHEN** a caller constructs the `codex` backend without an explicit experimental transport override
+- **THEN** the backend uses the subprocess JSONL transport rather than ACP
 ### Requirement: Claude backend executes autonomous conversations live
-The system SHALL expose a live `LlmBackend<"claude">` accessor that launches the real `claude` process in stream-json mode, feeds its read-path parser into the shared conversation stream, and returns a Claude-branded `LlmResult`. The accessor MUST NOT return an unsupported-backend error. It SHALL support model selection, structured output validated against a supplied schema, and cancellation.
+The system SHALL expose a live `LlmBackend<"claude">` accessor that launches Claude through the ACP transport by default, feeds ACP session updates into the shared conversation stream, and returns a Claude-branded `LlmResult`. The accessor MUST NOT return an unsupported-backend error. It SHALL support model selection where the ACP adapter exposes it, structured output validated against a supplied schema, cancellation, bounded lifecycle, backend-branded failures, and an explicit fallback to the previous stream-json subprocess transport.
 
 #### Scenario: Claude autonomous run returns a branded result
-- **WHEN** a flow starts an autonomous conversation with the `claude` backend and the process emits a valid stream-json response
-- **THEN** the runtime drives the process to completion and `awaitResult()` returns a successful `LlmResult` branded for Claude
+- **WHEN** a flow starts an autonomous conversation with the `claude` backend and the ACP adapter emits a valid prompt response
+- **THEN** the runtime drives the ACP session to completion and `awaitResult()` returns a successful `LlmResult` branded for Claude
 
 #### Scenario: Claude structured output is validated
-- **WHEN** an autonomous Claude conversation requests a structured output schema and the model returns matching JSON
+- **WHEN** an autonomous Claude conversation requests a structured output schema and the ACP-backed model returns matching JSON
 - **THEN** the conversation returns the typed structured result, and on non-matching output returns a typed validation error carrying the raw output
 
 #### Scenario: Claude conversation is cancelled
-- **WHEN** a caller cancels an active Claude conversation
-- **THEN** the `claude` process is signalled and the conversation completes with a cancelled outcome
+- **WHEN** a caller cancels an active Claude ACP conversation
+- **THEN** the driver sends `session/cancel`, waits for ACP prompt cancellation, and force-closes the owned process if the agent does not stop within the configured timeout
+- **THEN** the conversation completes with a cancelled outcome
 
+#### Scenario: Claude stream-json fallback is explicit
+- **WHEN** the operator selects the Claude stream-json fallback
+- **THEN** the `claude` backend uses the previous stream-json subprocess transport without changing the public backend tag or authoring API
+
+#### Scenario: Claude ACP setup failure is backend-branded
+- **WHEN** Claude ACP initialization, session creation, prompt execution, or shutdown fails
+- **THEN** the conversation completes with a `BackendFailed` error naming the failed Claude ACP phase
 ### Requirement: OpenCode backend executes autonomous conversations live
 The system SHALL expose a live `LlmBackend<"opencode">` accessor that drives conversations through the managed OpenCode server (HTTP/SSE) and returns an OpenCode-branded `LlmResult`. The accessor MUST NOT return an unsupported-backend error. It SHALL lazily start and reuse one server across conversations, tear the server down on runtime shutdown, support model selection and structured output, and support cancellation.
 

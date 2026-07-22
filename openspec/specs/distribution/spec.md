@@ -28,11 +28,33 @@ The system SHALL publish a scoped public npm package named `@twelvehart/orcats` 
 - **WHEN** a user adds `@twelvehart/orcats` and `typescript` to a project
 - **THEN** versioned flow files can import the public package surface and pass the CLI typecheck pre-flight when the project has a `tsconfig.json`
 
+### Requirement: Package and binary delegate Agent Skills installation
+The npm package and standalone Orcats binary SHALL expose the same delegated
+`orcats skills` command while keeping skill payloads outside their curated
+distribution artifacts.
+
+#### Scenario: Installed package runs the skills command
+- **WHEN** a user invokes `orcats skills` through an installed
+  `@twelvehart/orcats` package
+- **THEN** the CLI delegates the command to the canonical skills repository
+  without requiring `skills/` to be present in the npm package
+
+#### Scenario: Standalone binary runs the skills command
+- **WHEN** a user invokes `orcats skills` through a standalone Orcats binary
+- **THEN** the command delegates to the canonical skills repository without
+  initializing the embedded runtime fallback
+
+#### Scenario: Package artifact remains curated
+- **WHEN** package artifact validation inspects a release tarball after this
+  change
+- **THEN** the existing runtime-only package allowlist remains unchanged and
+  does not include bundled skill directories
+
 ### Requirement: Npm release uses Trusted Publishing
 The system SHALL publish `@twelvehart/orcats` to npm from the tag-driven GitHub Actions release workflow using npm Trusted Publishing/OIDC, without long-lived npm publish tokens.
 
 #### Scenario: Trusted publisher is configured before release
-- **WHEN** a maintainer prepares the first npm release
+- **WHEN** a maintainer prepares the first renamed npm release
 - **THEN** npm trust is configured for package `@twelvehart/orcats`, repository `ASRagab/orca-ts`, workflow file `release.yml`, and the `npm publish` action
 
 #### Scenario: Release workflow publishes scoped package
