@@ -8,6 +8,7 @@ orcats [--backend <name>] [--no-typecheck] <flow.ts> [-- <task args>]
 orcats run <loop>
 orcats serve <loop>
 orcats loops
+orcats skills [--list] [--skill <name>|--all] [--agent <name>] [--global] [--yes]
 orcats --version
 ```
 
@@ -17,6 +18,7 @@ orcats --version
 | `run <loop>` | Run one loop firing; target is a module path or registered loop name. |
 | `serve <loop>` | Host a loop trigger and spawn one child process per firing. |
 | `loops` | Discover loops from `.orca/loops/` without firing them. |
+| `skills` | Delegate bundled Agent Skills discovery and installation to `npx skills`. |
 
 `orcats run` and served child execution share the same firing contract: event decoding, `defineLoop().run(event)`, sink emission, diagnostics, and stop-reason exit-code mapping. `ORCA_LOOP_EVENT` is the CLI/supervisor envelope for reproducing one firing; custom Source and Sink adapters should not read it directly.
 
@@ -27,6 +29,24 @@ orcats --version
 | `--version`, `-v` | Prints the embedded Orcats version. |
 | `--help`, `-h` | Prints usage. |
 | `-- <task args>` | Passes task input to `flowArgs()`. |
+
+### `skills` options
+
+`skills` requires `npx` from Node.js/npm and runs outside flow typechecking,
+backend setup, and embedded runtime fallback. Without selection options, the
+delegated installer owns interactive selection and scope.
+
+| Option | Meaning |
+| --- | --- |
+| `--list` | List skills from `ASRagab/orca-ts` without installing. |
+| `--skill <name>` | Select one bundled skill. |
+| `--all` | Select all bundled skills; cannot be combined with `--skill`. |
+| `--agent <name>` | Select an agent recognized by the delegated installer. |
+| `--global` | Request user-level rather than project installation. |
+| `--yes` | Skip both `npx` acquisition and installer confirmation prompts. |
+
+See [Agent Skills installation](../../install/agent-skills/) for direct
+`npx skills` equivalents and local-checkout installation.
 
 ## Run output
 

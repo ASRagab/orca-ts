@@ -19,7 +19,8 @@ import {
   withRunReporter,
   type RunReporter,
 } from "../run-output/index.ts";
-import { parseCliArgs, type CliArgs } from "./args.ts";
+import { CliUsageError, parseCliArgs, type CliArgs } from "./args.ts";
+import { runSkills } from "./skills.ts";
 import { ORCA_VERSION } from "./version.ts";
 
 const USAGE = [
@@ -27,6 +28,7 @@ const USAGE = [
   "       orcats run <loop>      run a loop once; exit status reflects the stop reason",
   "       orcats serve <loop>    host a loop's trigger, spawning a child process per firing",
   "       orcats loops           list defined loops with their source and sink",
+  "       orcats skills [--list] [--skill <name>|--all] [--agent <name>] [--global] [--yes]",
   "       orcats --version"
 ].join("\n");
 
@@ -55,7 +57,17 @@ export function deferredDurableError(args: CliArgs): RuntimeError | undefined {
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
-  const args = parseCliArgs(argv);
+  let args: CliArgs;
+  try {
+    args = parseCliArgs(argv);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      process.stderr.write(`${error.message}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    throw error;
+  }
 
   if (args.version) {
     console.log(`orcats ${ORCA_VERSION}`);
@@ -72,6 +84,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 
   if (args.help || (args.command === undefined && args.script === undefined)) {
     console.log(USAGE);
+    return;
+  }
+
+  if (args.command === "skills" && args.skills !== undefined) {
+    process.exitCode = runSkills(args.skills);
     return;
   }
 

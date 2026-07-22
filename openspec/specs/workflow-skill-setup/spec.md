@@ -11,6 +11,15 @@ in any repository.
 
 ## Requirements
 
+### Requirement: Skill is exposed under the Orcats name
+
+The setup skill SHALL be exposed as `orcats-setup` and SHALL NOT require an `orca-ts-setup` compatibility alias.
+
+#### Scenario: User lists bundled skills
+
+- **WHEN** a user lists the bundled skills from the `ASRagab/orca-ts` repository
+- **THEN** the setup skill appears as `orcats-setup`
+
 ### Requirement: Skill installs the Orcats binary
 
 The skill SHALL install or locate the standalone `orcats` binary, preferring an

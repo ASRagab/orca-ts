@@ -12,6 +12,15 @@ TypeScript projects.
 
 ## Requirements
 
+### Requirement: Authoring skill is exposed under the Orcats name
+
+The authoring skill SHALL be exposed as `orcats-author` and SHALL NOT require an `orca-ts-author` compatibility alias.
+
+#### Scenario: User lists bundled skills
+
+- **WHEN** a user lists the bundled skills from the `ASRagab/orca-ts` repository
+- **THEN** the authoring skill appears as `orcats-author`
+
 ### Requirement: Skill discovers the target repository's stack and verification commands
 
 The skill SHALL read the target repository to detect its stack and its real test,

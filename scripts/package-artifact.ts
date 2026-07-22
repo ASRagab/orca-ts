@@ -37,6 +37,10 @@ export interface CommandResult {
   readonly stderr: string;
 }
 
+export interface CommandOptions {
+  readonly env?: NodeJS.ProcessEnv;
+}
+
 const ExpectedFiles = [
   "bin/orcats",
   "dist/**/*.d.ts",
@@ -95,9 +99,15 @@ export function readPackageJson(root = process.cwd()): PackageJson {
   return JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as PackageJson;
 }
 
-export function runCommand(command: string, args: readonly string[], cwd = process.cwd()): CommandResult {
+export function runCommand(
+  command: string,
+  args: readonly string[],
+  cwd = process.cwd(),
+  options: CommandOptions = {},
+): CommandResult {
   const result = spawnSync(command, [...args], {
     cwd,
+    ...(options.env === undefined ? {} : { env: options.env }),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]
   });

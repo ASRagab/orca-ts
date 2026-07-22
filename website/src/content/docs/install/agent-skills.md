@@ -19,18 +19,43 @@ orcats-setup -> orcats-author -> orcats-flow
 
 ## Install from GitHub
 
+`orcats skills` is the preferred convenience command. It requires `npx` from a
+Node.js/npm installation and delegates source retrieval, agent detection,
+destination, prompts, and overwrite policy to the `skills` CLI.
+
 ```bash
-npx skills add ASRagab/orca-ts --list
-npx skills add ASRagab/orca-ts --skill '*' --global
+# Let the delegated installer choose skills and scope interactively.
+orcats skills
+
+# List available skills without installing.
+orcats skills --list
+
+# Install every skill globally without prompts.
+orcats skills --all --global --yes
 ```
 
 Install one skill to one agent:
 
 ```bash
-npx skills add ASRagab/orca-ts --skill orcats-setup --agent claude-code
+orcats skills --skill orcats-setup --agent claude-code
 ```
 
-Before the repository is public, install from a local checkout:
+The command supports `--list`, `--skill <name>`, `--all`, `--agent <name>`,
+`--global`, and `--yes`. `--all` and `--skill` cannot be combined. Without a
+selection option, the delegated installer stays interactive.
+
+## Direct installer fallback
+
+Orcats does not implement agent-directory installation or package the skills in
+npm artifacts. The equivalent direct commands remain available:
+
+```bash
+npx skills add ASRagab/orca-ts --list
+npx skills add ASRagab/orca-ts --skill orcats-setup --agent claude-code
+npx --yes skills add ASRagab/orca-ts --skill '*' --global --yes
+```
+
+Before the repository is public, use a local checkout with the direct installer:
 
 ```bash
 git clone https://github.com/ASRagab/orca-ts.git

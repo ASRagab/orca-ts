@@ -9,6 +9,15 @@ description: What each bundled skill does and when to use it.
 | `orcats-author` | Create a saved workflow or loop. | The artifact is saved, gated, and typechecked when possible. |
 | `orcats-flow` | Run or heal a saved artifact. | The run completes or escalates with classification, evidence, and safe next steps. |
 
+## Installation command
+
+`orcats skills [--list] [--skill <name>|--all] [--agent <name>] [--global] [--yes]`
+delegates to `npx skills add ASRagab/orca-ts`. It requires Node.js/npm, keeps
+the installer interactive when no selection is provided, and does not own
+agent-directory placement, updates, or removal. See the
+[installation guide](../../install/agent-skills/) for examples and direct
+`npx skills` fallback commands.
+
 ## Setup
 
 `orcats-setup` installs or locates the standalone `orcats` binary, asks which backend to enable, runs the bundled doctor, and classifies missing, unauthenticated, or misconfigured CLIs.
