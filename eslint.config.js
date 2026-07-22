@@ -11,6 +11,7 @@ export default tseslint.config(
       "fixtures/**",
       "website/.astro/**",
       "website/dist/**",
+      ".worktrees/**",
       ".orca/**",
       ".superpowers/**",
       "skills/**/assets/templates/**"

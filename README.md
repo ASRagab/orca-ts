@@ -239,19 +239,23 @@ pipeline:
 
 ### Install The Skills
 
-The skills install with the [`skills` CLI](https://github.com/vercel-labs/skills)
-(`npx skills`), which reads the `skills/<name>/` directories in this repo and
-copies each into your coding agent's skills directory:
+Use `orcats skills` (requires `npx`, from Node.js/npm). It delegates to the
+[`skills` CLI](https://github.com/vercel-labs/skills), which reads the
+`skills/<name>/` directories in this repo and copies each into your coding
+agent's skills directory:
 
 ```bash
-# See which skills the repo provides
-npx skills add ASRagab/orca-ts --list
+# Let the delegated installer choose skills and scope interactively
+orcats skills
 
-# Install all three, user-level (works for every detected agent)
-npx skills add ASRagab/orca-ts --skill '*' --global
+# See which skills the repo provides
+orcats skills --list
+
+# Install all three for every detected agent without prompts
+orcats skills --all --global --yes
 
 # Or install one skill to one agent (e.g. Claude Code)
-npx skills add ASRagab/orca-ts --skill orcats-setup --agent claude-code
+orcats skills --skill orcats-setup --agent claude-code
 ```
 
 Without `--global` the skills install into the current repo's agent directory
@@ -259,6 +263,19 @@ Without `--global` the skills install into the current repo's agent directory
 `orcats-setup` → `orcats-author` → `orcats-flow`. Each skill is a
 self-contained directory — its `SKILL.md` plus its own `scripts/`, `reference/`,
 and flow templates — so there is no shared payload to install separately.
+
+`orcats` intentionally delegates installation: it does not publish the skills
+inside its npm package or manage agent directories. To invoke the installer
+directly instead:
+
+```bash
+npx skills add ASRagab/orca-ts --list
+npx skills add ASRagab/orca-ts --skill orcats-setup --agent claude-code
+npx --yes skills add ASRagab/orca-ts --skill '*' --global --yes
+```
+
+See [the in-repo Agent Skills guide](docs/agent-skills.md) for the full command
+mapping and troubleshooting.
 
 Before the repo is public, install from a local checkout instead:
 

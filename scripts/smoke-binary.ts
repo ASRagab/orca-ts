@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { runQuiet, type QuietProcOptions, type QuietProcResult } from "../src/tools/process.ts";
@@ -16,6 +17,30 @@ const version = await mustRun(binary, ["--version"]);
 const expectedVersion = `orcats ${packageJson.version}\n`;
 if (version.stdout !== expectedVersion) {
   throw new Error(`compiled binary version mismatch: expected ${JSON.stringify(expectedVersion)}, got ${JSON.stringify(version.stdout)}`);
+}
+
+const skillsDir = await mkdtemp(join(tmpdir(), "orcats-skills-binary-smoke-"));
+try {
+  const fakeBin = join(skillsDir, "bin");
+  await mkdir(fakeBin);
+  const fakeNpx = join(fakeBin, "npx");
+  await writeFile(fakeNpx, "#!/bin/sh\nprintf 'fake-npx %s\\n' \"$*\"\n");
+  await chmod(fakeNpx, 0o755);
+
+  const skills = await withEnv(
+    { PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+    () => mustRun(binary, ["skills", "--skill", "orcats-setup", "--agent", "claude-code", "--global", "--yes"], { cwd: skillsDir })
+  );
+  expectIncludes(
+    skills.stdout,
+    "fake-npx --yes skills add ASRagab/orca-ts --skill orcats-setup --agent claude-code --global --yes",
+    "compiled binary skills delegation",
+  );
+  if (existsSync(join(skillsDir, "node_modules"))) {
+    throw new Error("compiled binary skills command must not initialize the embedded fallback");
+  }
+} finally {
+  await rm(skillsDir, { recursive: true, force: true });
 }
 
 const repoFlowDir = join(process.cwd(), ".orca", `binary-smoke-${String(Date.now())}`);

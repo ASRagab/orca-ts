@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -100,6 +100,21 @@ void baselineOptions;
   const expectedVersion = `orcats ${packageJson.version ?? ""}\n`;
   if (version.stdout !== expectedVersion) {
     throw new Error(`orcats --version mismatch: expected ${JSON.stringify(expectedVersion)}, got ${JSON.stringify(version.stdout)}`);
+  }
+
+  const fakeBin = join(tempDir, "bin");
+  await mkdir(fakeBin);
+  const fakeNpx = join(fakeBin, "npx");
+  await writeFile(fakeNpx, "#!/bin/sh\nprintf 'fake-npx %s\\n' \"$*\"\n");
+  await chmod(fakeNpx, 0o755);
+  const skills = runCommand(
+    join(projectDir, "node_modules", ".bin", "orcats"),
+    ["skills", "--list"],
+    projectDir,
+    { env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH ?? ""}` } },
+  );
+  if (skills.stdout !== "fake-npx skills add ASRagab/orca-ts --list\n") {
+    throw new Error(`installed package skills delegation mismatch: ${JSON.stringify(skills.stdout)}`);
   }
 } finally {
   await rm(tempDir, { recursive: true, force: true });
