@@ -75,7 +75,7 @@ test. Operator instructions and recovery boundaries also require source review.
 
 | Check | Result |
 | --- | --- |
-| `bun run verify` with ambient preload and live-smoke variables removed | **Passed, exit 0: 549 pass, 1 skip, 0 fail.** Includes lint, typecheck, website build (34 pages), links (61 files), symbols, fixtures, declarations, signatures, facade gate, compiled/installed-release smoke, and final package allowlist validation. |
+| `bun run verify` in the isolated PR worktree, with ambient preload and live-smoke variables removed | **Passed, exit 0: 532 pass, 1 skip, 0 fail.** Includes lint, typecheck, website build (34 pages), links (61 files), symbols, fixtures, declarations, signatures, facade gate, compiled/installed-release smoke, and final package allowlist validation. The original checkout also passed 549 tests; its additional 17 tests are in the ignored local `tests/ai-slop-cleanup-workflow.test.ts` and are outside the PR. |
 | `bun run smoke:package` | **Passed, exit 0.** Packed installation, public imports, CLI version, environment isolation, and size validation. |
 | Direct `bun run scripts/validate-package-artifact.ts` | **Passed, exit 0.** Success is intentionally silent. |
 | CLI preflight regressions | **16 pass, 0 fail.** |
@@ -128,6 +128,7 @@ Ephemeral logs are recorded for this session; the repository tests and scripts
 above are the reproducible checks:
 
 - `/tmp/orca-fixes-final-verify.log`
+- `/tmp/orca-pr-verify.log` (isolated PR worktree)
 - `/tmp/orca-fixes-final-package.log`
 - `/tmp/orca-fixes-final-package-validation.log`
 - `/tmp/orca-fixes-final-openspec.log`

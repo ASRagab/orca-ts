@@ -133,8 +133,9 @@
 ## Current review-fix evidence
 
 Current review-fix evidence: [verification report](verification.md). The seven
-review findings are fixed; the final deterministic gate passes with 549 tests
-passing, one gated live test skipped, and zero failures. Fresh gated live checks
+review findings are fixed; the isolated PR gate passes with 532 tests passing,
+one gated live test skipped, and zero failures. The original checkout also
+passes its 17 additional ignored local tests. Fresh gated live checks
 pass through both Claude transports, and the compiled clean-consumer rehearsal
 passes all eight criteria in one launch. The report records the intermittent
 extra artifact-harness timeout and its passing isolated rerun.
