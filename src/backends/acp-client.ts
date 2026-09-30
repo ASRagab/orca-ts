@@ -268,6 +268,12 @@ export function spawnAcpProcess(
   const exit = Promise.withResolvers<number | null>();
   child.on("error", exit.reject);
   child.on("close", exit.resolve);
+  child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+    // A closed input pipe still settles through child exit and ACP diagnostics.
+    if (error.code !== "EPIPE") {
+      exit.reject(error);
+    }
+  });
 
   return {
     stdout: child.stdout,

@@ -133,9 +133,10 @@
 ## Current review-fix evidence
 
 Current review-fix evidence: [verification report](verification.md). The seven
-review findings are fixed; the isolated PR gate passes with 532 tests passing,
-one gated live test skipped, and zero failures. The original checkout also
-passes its 17 additional ignored local tests. Fresh gated live checks
+review findings and the first CI stdin failure are fixed; the isolated PR gate
+passes with 534 tests passing, one gated live test skipped, and zero failures.
+The shared driver regressions also pass on Linux with CI's Bun 1.4.2.
+Fresh gated live checks
 pass through both Claude transports, and the compiled clean-consumer rehearsal
 passes all eight criteria in one launch. The report records the intermittent
 extra artifact-harness timeout and its passing isolated rerun.

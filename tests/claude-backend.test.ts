@@ -7,8 +7,44 @@ import {
   type ClaudeProcess
 } from "../src/index.ts";
 import { type AcpId, type AcpProcess, type AcpRequestMessage } from "../src/backends/acp-client.ts";
+import { expectExitZero, runCliProcess } from "./helpers/cli-process.ts";
 
 describe("Claude live backend constructor", () => {
+  test.skipIf(process.platform === "win32")("preserves early-exit diagnostics when the child closes prompt stdin", async () => {
+    const backendUrl = new URL("../src/backends/claude-run.ts", import.meta.url).href;
+    const subprocessUrl = new URL("../src/backends/subprocess-run.ts", import.meta.url).href;
+    const result = await runCliProcess(process.execPath, ["-e", `
+      const { claude } = await import(${JSON.stringify(backendUrl)});
+      const { spawnSubprocess } = await import(${JSON.stringify(subprocessUrl)});
+      const backend = claude({
+        transport: "stream-json",
+        inactivityTimeoutMs: 1_000,
+        wallClockTimeoutMs: 2_000,
+        spawnProcess: (_command, _args, options) => spawnSubprocess(
+          "/bin/sh",
+          ["-c", "exec 0<&-; printf 'prompt input closed' >&2; exit 17"],
+          options
+        )
+      });
+      console.log(JSON.stringify(await backend.autonomous({
+        prompt: "x".repeat(2 * 1024 * 1024)
+      }).awaitResult()));
+    `], { timeoutMs: 5_000 });
+
+    expectExitZero(result);
+    const outcome = JSON.parse(result.stdout) as { error: { message: string } };
+    expect(outcome).toMatchObject({
+      type: "failed",
+      error: {
+        _tag: "BackendFailed",
+        transport: "stream-json",
+        phase: "turn"
+      }
+    });
+    expect(outcome.error.message).toContain("17");
+    expect(outcome.error.message).toContain("prompt input closed");
+  });
+
   test("defaults to the Claude stream-json transport when none is selected", async () => {
     let acpStarted = false;
     let streamCommand = "";

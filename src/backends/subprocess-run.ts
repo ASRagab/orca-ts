@@ -568,6 +568,13 @@ export function spawnSubprocess(
   const leaderExit = Promise.withResolvers<number | null>();
   child.on("error", leaderExit.reject);
   child.on("close", leaderExit.resolve);
+  child.stdin?.on("error", (error: NodeJS.ErrnoException) => {
+    // Early exit can close prompt input before write/end completes. Keep the
+    // child's exit code and stderr as the failure diagnosis in that case.
+    if (error.code !== "EPIPE") {
+      leaderExit.reject(error);
+    }
+  });
   const processGroupExit =
     useProcessGroup && child.pid !== undefined
       ? waitForProcessGroupExit(child.pid, leaderExit.promise)

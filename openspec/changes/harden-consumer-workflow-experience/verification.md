@@ -2,7 +2,8 @@
 
 Review date: 2026-09-29 (America/Los_Angeles).
 
-The seven findings from the review against `main` are fixed. The final
+The seven findings from the review against `main` and the first CI failure are
+fixed. The final
 deterministic gate passes, both gated Claude transports pass, and the compiled
 consumer rehearsal passes in one launch. No critical implementation gaps were
 found in the selected change. The intermittent extra workflow-harness timeout
@@ -11,7 +12,7 @@ and the remaining validation boundaries are recorded below.
 ## Scope and completeness
 
 - Base: `47bb7bcbc22aa1c465508ec24391d0be4cf71607`. A fresh fetch confirmed
-  local `main`, `HEAD`, and `origin/main` agree at that commit.
+  local `main` and `origin/main` agreed at that commit before PR creation.
 - Schema: `spec-driven`; proposal, design, seven delta specifications, and
   tasks exist. Strict OpenSpec validation passes.
 - Parsed artifacts: **19 requirements, 77 scenarios, 41 completed tasks,
@@ -38,6 +39,16 @@ Additional narrow fixes preserve non-JSON thrown values in diagnostics and
 forward post-`--` task arguments to served children. The process-harness kill
 test launches its plain hung fixture directly through Bun so its short deadline
 tests escalation without racing CLI module loading.
+
+The first Linux CI run exposed an unhandled stdin `EPIPE` when a Claude child
+exited before reading its prompt. Both shared subprocess and ACP drivers now
+handle stdin errors: `EPIPE` preserves normal child exit/stderr settlement;
+other errors reject the existing exit promise. Two real-pipe regressions send
+large input to a child that closes stdin and exits 17. They failed before the
+repair and now verify typed failures, exit diagnostics, and stderr without
+requiring exact diagnostic wording. The four-file suite also passes on Linux
+with CI's Bun 1.4.2. Initial failing run:
+[36679057427](https://github.com/ASRagab/orca-ts/actions/runs/36679057427).
 
 ## Correctness and scenario evidence
 
@@ -75,11 +86,12 @@ test. Operator instructions and recovery boundaries also require source review.
 
 | Check | Result |
 | --- | --- |
-| `bun run verify` in the isolated PR worktree, with ambient preload and live-smoke variables removed | **Passed, exit 0: 532 pass, 1 skip, 0 fail.** Includes lint, typecheck, website build (34 pages), links (61 files), symbols, fixtures, declarations, signatures, facade gate, compiled/installed-release smoke, and final package allowlist validation. The original checkout also passed 549 tests; its additional 17 tests are in the ignored local `tests/ai-slop-cleanup-workflow.test.ts` and are outside the PR. |
+| `bun run verify` in the isolated PR worktree, with ambient preload and live-smoke variables removed | **Passed, exit 0: 534 pass, 1 skip, 0 fail.** Includes lint, typecheck, website build (34 pages), links (61 files), symbols, fixtures, declarations, signatures, facade gate, compiled/installed-release smoke, and final package allowlist validation. Subsequent assertion refinements passed the focused suite, scoped lint, and typecheck. Before the stdin repair, the original checkout passed 549 tests; its additional 17 tests are in the ignored local `tests/ai-slop-cleanup-workflow.test.ts` and are outside the PR. |
 | `bun run smoke:package` | **Passed, exit 0.** Packed installation, public imports, CLI version, environment isolation, and size validation. |
 | Direct `bun run scripts/validate-package-artifact.ts` | **Passed, exit 0.** Success is intentionally silent. |
 | CLI preflight regressions | **16 pass, 0 fail.** |
 | Backend-focused checks | **39 pass**, scoped lint/typecheck/docs pass. |
+| Final ACP/Claude/selector/Pi regressions | **49 pass, 0 fail** locally and on Linux arm64 with Bun **1.4.2 (744846f84)**. Shared driver review suite: **94 pass**; final scoped lint and typecheck pass. |
 | Skill consumer behavior | **4 pass**; selected-transport readiness and author checker behavior. |
 | Git safety behavior | **2 cases, 34 assertions pass**; actual exclude helper and template staging. |
 | Monitor/template checks | **23 pass**; cleanup/revert/eval checks **13 pass**, plus four extracted cleanup lifecycle scenarios. |
@@ -93,9 +105,9 @@ It was run separately with explicit gates:
 
 | Live check | Result |
 | --- | --- |
-| Claude default stream-json | **Passed**, 49,958 ms, 13 events. |
-| Claude explicit ACP | **Passed**, 39,210 ms, 11 events; reported input 9/output 238 tokens. |
-| Compiled-release clean consumer rehearsal | **Passed**, exit 0, 49,399 ms, all eight criteria: poisoned preload isolated, offline default preflight, no target TypeScript project, no target dependencies, live selected-transport readiness, honest no-op, clean Git tree, and one successful terminal monitor with backend/transport/stage/end time. |
+| Claude default stream-json standalone smoke before stdin repair | **Passed**, 49,958 ms, 13 events; refreshed after repair through the compiled consumer below. |
+| Claude explicit ACP after stdin repair | **Passed**, 24,970 ms, 18 events; reported input 9/output 323 tokens. |
+| Compiled-release clean consumer rehearsal after stdin repair | **Passed**, exit 0, 15,154 ms, all eight criteria: poisoned preload isolated, offline default preflight, no target TypeScript project, no target dependencies, live selected-transport readiness, honest no-op, clean Git tree, and one successful terminal monitor with backend/transport/stage/end time. |
 
 Installed versions: Claude **2.1.285**;
 `@agentclientprotocol/claude-agent-acp` **0.39.0**. These successful turns do not
@@ -110,8 +122,9 @@ opt-in status.
   tested launcher/ledger/test paths have no diff, but that alone does not prove
   baseline equivalence. No product or timeout change was made to hide it.
 - The committed size budgets cover the npm compressed and installed payloads.
-  Final measurements: 7,904,330 compressed bytes versus an 8,694,784-byte
-  maximum; 40,998,789 installed bytes versus a 45,096,960-byte maximum.
+  Final isolated-worktree measurements: 7,890,458 compressed bytes versus an
+  8,694,784-byte maximum; 40,849,544 installed bytes versus a 45,096,960-byte
+  maximum. Budgets remain unchanged.
   Host release installation is exercised; per-target compiled-binary budgets
   and execution on other OS/architecture combinations are not established by
   this local run.
@@ -129,6 +142,14 @@ above are the reproducible checks:
 
 - `/tmp/orca-fixes-final-verify.log`
 - `/tmp/orca-pr-verify.log` (isolated PR worktree)
+- `/tmp/orca-pr-final-verify.log` (534-test gate after stdin repair)
+- `/tmp/orca-pr-final-backend.log` (refined diagnostic assertions)
+- `/tmp/orca-pr-final-package.log`
+- `/tmp/orca-pr-final-package-size.json`
+- `/tmp/orca-pr-final-live-acp.log`
+- `/tmp/orca-pr-final-consumer.log`
+- `/tmp/orca-pr-consumer-evidence.json`
+- `/tmp/orca-pr45-ci-failed.log` (initial Linux failure)
 - `/tmp/orca-fixes-final-package.log`
 - `/tmp/orca-fixes-final-package-validation.log`
 - `/tmp/orca-fixes-final-openspec.log`
