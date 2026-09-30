@@ -29,6 +29,6 @@ Use Orcats when you want repeatable automation around a coding agent: implement 
 
 ## Supported boundaries
 
-The current package version is `0.3.0`. The normal install path is `npm i @twelvehart/orcats`.
+The current package version is `0.4.0`. The normal install path is `npm i @twelvehart/orcats`.
 
 Supported live backend tags are `claude`, `codex`, `opencode`, and `pi`. Snapshot and sqlite loop state stores are available.
