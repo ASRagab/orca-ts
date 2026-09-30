@@ -15,7 +15,7 @@ type RuntimeError =
   | { _tag: "CommandFailed"; command: string; exitCode: number | null; stdout: string; stderr: string }
   | { _tag: "StructuredOutputValidationFailed"; issues: readonly string[]; raw: unknown }
   | { _tag: "UnsupportedFeature"; feature: string; reason: string }
-  | { _tag: "BackendFailed"; backend: BackendTag; message: string }
+  | { _tag: "BackendFailed"; backend: BackendTag; message: string; transport?: string; phase?: string; artifactPath?: string; recovery?: string }
   | { _tag: "TypecheckFailed"; stdout: string; stderr: string; exitCode: number | null }
   | { _tag: "FileSystemError"; path: string; message: string }
   | { _tag: "IoFailed"; seam: "source" | "sink" | "tool"; kind: string; message: string };
@@ -23,11 +23,15 @@ type RuntimeError =
 
 ## Constructors
 
-Five variants have dedicated constructor functions in `src/model/errors.ts`. The remaining five (`NothingToCommit`, `BranchAlreadyExists`, `PushRejected`, `TypecheckFailed`, `FileSystemError`) are constructed inline at their call sites as tagged object literals.
+Five variants have dedicated constructor functions in `src/model/errors.ts`. The remaining five (`NothingToCommit`, `BranchAlreadyExists`, `PushRejected`, `TypecheckFailed`, `FileSystemError`) are constructed inline at their call sites as tagged object literals. `backendFailed()` also accepts an optional context object (`transport`, `phase`, `artifactPath`, `recovery`) that carries transport-aware failure detail; `describeRuntimeError()` renders any variant into one diagnostic line.
 
 ```ts
 export function unsupportedFeature(feature: string, reason: string): RuntimeError;
-export function backendFailed(backend: BackendTag, message: string): RuntimeError;
+export function backendFailed(
+  backend: BackendTag,
+  message: string,
+  context?: { transport?: string; phase?: string; artifactPath?: string; recovery?: string }
+): RuntimeError;
 export function commandFailed(args: {
   command: string;
   exitCode: number | null;
@@ -39,6 +43,10 @@ export function structuredOutputValidationFailed(args: {
   raw: unknown;
 }): RuntimeError;
 export function ioFailed(seam: "source" | "sink" | "tool", kind: string, message: string): RuntimeError;
+
+// Not a constructor — renders any RuntimeError into one human-readable
+// diagnostic line, leading with backend/transport/phase/artifact context.
+export function describeRuntimeError(error: unknown): string;
 ```
 
 ## Which operations produce which tags

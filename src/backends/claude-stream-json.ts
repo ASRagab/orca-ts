@@ -4,6 +4,7 @@ import {
   parseStructuredOutput,
   sessionId,
   structuredOutputValidationFailed,
+  type BackendFailureContext,
   type RuntimeError
 } from "../model/index.ts";
 import {
@@ -53,6 +54,7 @@ export type ClaudeParseResult = ConversationCapture<"claude">;
 
 export interface ClaudeStreamOptions<Output = unknown> {
   readonly schema?: z.ZodType<Output>;
+  readonly failureContext?: Omit<BackendFailureContext, "phase">;
 }
 
 export async function collectClaudeStreamJson(lines: readonly string[]): Promise<ClaudeParseResult> {
@@ -107,7 +109,7 @@ export function createClaudeStreamConsumer<Output = unknown>(
       } catch (error) {
         controller.abort();
         const message = error instanceof Error ? error.message : String(error);
-        conversation.fail(backendFailed("claude", `invalid claude stream-json: ${message}`));
+        conversation.fail(claudeStreamFailure(`invalid claude stream-json: ${message}`, "turn", options));
         return;
       }
 
@@ -123,7 +125,7 @@ export function createClaudeStreamConsumer<Output = unknown>(
       }
       controller.abort();
       conversation.fail(
-        backendFailed("claude", "claude exited cleanly but never sent a result message")
+        claudeStreamFailure("claude exited cleanly but never sent a result message", "turn", options)
       );
     }
   };
@@ -233,7 +235,17 @@ async function consumeResult<Output>(
     code: "backend_failed",
     message: "session failed (see message above)"
   });
-  conversation.fail(backendFailed("claude", `claude session failed: ${output}`));
+  conversation.fail(claudeStreamFailure(`claude session failed: ${output}`, "turn", options));
+}
+
+function claudeStreamFailure<Output>(
+  message: string,
+  phase: string,
+  options: ClaudeStreamOptions<Output>
+): RuntimeError {
+  return options.failureContext === undefined
+    ? backendFailed("claude", message)
+    : backendFailed("claude", message, { ...options.failureContext, phase });
 }
 
 function parseClaudeStructuredOutput<Output>(

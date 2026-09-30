@@ -150,6 +150,18 @@
         },
         "message": {
           "type": "string"
+        },
+        "transport": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "artifactPath": {
+          "type": "string"
+        },
+        "recovery": {
+          "type": "string"
         }
       },
       "required": [

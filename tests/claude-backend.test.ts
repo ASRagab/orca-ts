@@ -7,13 +7,72 @@ import {
   type ClaudeProcess
 } from "../src/index.ts";
 import { type AcpId, type AcpProcess, type AcpRequestMessage } from "../src/backends/acp-client.ts";
+import { expectExitZero, runCliProcess } from "./helpers/cli-process.ts";
 
 describe("Claude live backend constructor", () => {
-  test("defaults to Claude ACP and returns a branded result", async () => {
+  test.skipIf(process.platform === "win32")("preserves early-exit diagnostics when the child closes prompt stdin", async () => {
+    const backendUrl = new URL("../src/backends/claude-run.ts", import.meta.url).href;
+    const subprocessUrl = new URL("../src/backends/subprocess-run.ts", import.meta.url).href;
+    const result = await runCliProcess(process.execPath, ["-e", `
+      const { claude } = await import(${JSON.stringify(backendUrl)});
+      const { spawnSubprocess } = await import(${JSON.stringify(subprocessUrl)});
+      const backend = claude({
+        transport: "stream-json",
+        inactivityTimeoutMs: 1_000,
+        wallClockTimeoutMs: 2_000,
+        spawnProcess: (_command, _args, options) => spawnSubprocess(
+          "/bin/sh",
+          ["-c", "exec 0<&-; printf 'prompt input closed' >&2; exit 17"],
+          options
+        )
+      });
+      console.log(JSON.stringify(await backend.autonomous({
+        prompt: "x".repeat(2 * 1024 * 1024)
+      }).awaitResult()));
+    `], { timeoutMs: 5_000 });
+
+    expectExitZero(result);
+    const outcome = JSON.parse(result.stdout) as { error: { message: string } };
+    expect(outcome).toMatchObject({
+      type: "failed",
+      error: {
+        _tag: "BackendFailed",
+        transport: "stream-json",
+        phase: "turn"
+      }
+    });
+    expect(outcome.error.message).toContain("17");
+    expect(outcome.error.message).toContain("prompt input closed");
+  });
+
+  test("defaults to the Claude stream-json transport when none is selected", async () => {
+    let acpStarted = false;
+    let streamCommand = "";
+    const backend = claude({
+      spawnAcpProcess: () => {
+        acpStarted = true;
+        throw new Error("ACP must not start when no transport is selected");
+      },
+      spawnProcess: (actualCommand) => {
+        streamCommand = actualCommand;
+        return fakeProcess([
+          { type: "result", subtype: "success", session_id: "claude-default", result: "done" }
+        ]);
+      }
+    });
+
+    const outcome = await backend.autonomous({ prompt: "run" }).awaitResult();
+
+    expect(acpStarted).toBe(false);
+    expect(streamCommand).toBe("claude");
+    expect(outcome.type).toBe("success");
+  });
+  test("uses Claude ACP when explicitly selected and returns a branded result", async () => {
     let command = "";
     let args: readonly string[] = [];
     let writes: Record<string, unknown>[] = [];
     const backend = claude({
+      transport: "acp",
       cwd: "/tmp/orca-acp",
       config: { systemPrompt: "Prefer short answers." },
       spawnAcpProcess: (actualCommand, actualArgs) => {
@@ -80,7 +139,7 @@ describe("Claude live backend constructor", () => {
     });
   });
 
-  test("routes Claude model overrides through stream-json fallback", async () => {
+  test("uses stream-json for Claude model overrides", async () => {
     let command = "";
     let args: readonly string[] = [];
     const backend = claude({
@@ -106,9 +165,45 @@ describe("Claude live backend constructor", () => {
     expect(outcome.type).toBe("success");
   });
 
+  test("rejects unsupported ACP model and resume config before either transport starts", async () => {
+    const cases = [
+      { options: { model: "claude-opus-4-8" }, request: undefined },
+      { options: { resumeSessionId: sessionId("claude", "previous-session") }, request: undefined },
+      { options: undefined, request: { model: "claude-opus-4-8" } },
+      { options: undefined, request: { resumeSessionId: sessionId("claude", "previous-session") } }
+    ];
+    for (const config of cases) {
+      let spawned = false;
+      const spawn = () => {
+        spawned = true;
+        throw new Error("unsupported ACP config must not start a transport");
+      };
+      const backend = claude({
+        transport: "acp",
+        ...(config.options === undefined ? {} : { config: config.options }),
+        spawnAcpProcess: spawn,
+        spawnProcess: spawn
+      });
+      const outcome = await backend.autonomous({
+        prompt: "continue",
+        ...(config.request === undefined ? {} : { config: config.request })
+      }).awaitResult();
+
+      expect(spawned).toBe(false);
+      expect(outcome).toMatchObject({
+        type: "failed",
+        error: { _tag: "BackendFailed", backend: "claude", transport: "acp", phase: "initialization" }
+      });
+      if (outcome.type === "failed" && outcome.error._tag === "BackendFailed") {
+        expect(outcome.error.message).toContain("stream-json");
+      }
+    }
+  });
+
   test("validates Claude ACP structured output", async () => {
     let promptPayload = "";
     const backend = claude({
+      transport: "acp",
       spawnAcpProcess: () =>
         fakeAcpProcess((message, push) => {
           if (message.method === "initialize") {
@@ -154,6 +249,7 @@ describe("Claude live backend constructor", () => {
 
   test("validates Claude ACP structured output from backend config", async () => {
     const backend = claude({
+      transport: "acp",
       config: { structuredOutput: { schema: z.object({ answer: z.string() }) } },
       spawnAcpProcess: () => fakeSuccessfulAcpProcess("claude-acp-config-structured", "Note:\n{\"answer\":\"yes\"}")
     });
@@ -173,9 +269,11 @@ describe("Claude live backend constructor", () => {
 
   test("reports Claude ACP structured output validation failures", async () => {
     const invalidJson = claude({
+      transport: "acp",
       spawnAcpProcess: () => fakeSuccessfulAcpProcess("claude-acp-invalid-json", "not json")
     });
     const schemaMismatch = claude({
+      transport: "acp",
       spawnAcpProcess: () => fakeSuccessfulAcpProcess("claude-acp-schema-mismatch", "{\"answer\":42}")
     });
 
@@ -205,6 +303,7 @@ describe("Claude live backend constructor", () => {
 
     for (const [phase, failedMethod, shouldFail] of cases) {
       const backend = claude({
+      transport: "acp",
         spawnAcpProcess: () =>
           fakeAcpProcess((message, push) => {
             if (shouldFail(message)) {
@@ -222,7 +321,7 @@ describe("Claude live backend constructor", () => {
 
       const outcome = await backend.autonomous({ prompt: "run" }).awaitResult();
 
-      expect(outcome).toEqual({
+      expect(outcome).toMatchObject({
         type: "failed",
         error: {
           _tag: "BackendFailed",
@@ -235,6 +334,7 @@ describe("Claude live backend constructor", () => {
 
   test("brands Claude ACP setup failures", async () => {
     const backend = claude({
+      transport: "acp",
       spawnAcpProcess: () => {
         throw new Error("missing acp adapter");
       }
@@ -242,7 +342,7 @@ describe("Claude live backend constructor", () => {
 
     const outcome = await backend.autonomous({ prompt: "run" }).awaitResult();
 
-    expect(outcome).toEqual({
+    expect(outcome).toMatchObject({
       type: "failed",
       error: {
         _tag: "BackendFailed",
@@ -254,6 +354,7 @@ describe("Claude live backend constructor", () => {
 
   test("brands Claude ACP shutdown failures", async () => {
     const backend = claude({
+      transport: "acp",
       spawnAcpProcess: () =>
         fakeAcpProcess((message, push, pushRaw) => {
           if (message.method === "initialize") {
@@ -287,6 +388,7 @@ describe("Claude live backend constructor", () => {
     let writes: Record<string, unknown>[] = [];
     const cwd = process.cwd();
     const backend = claude({
+      transport: "acp",
       cwd,
       config: { readOnly: true },
       spawnAcpProcess: () => {
@@ -335,6 +437,7 @@ describe("Claude live backend constructor", () => {
 
   test("fails Claude ACP prompts with non-terminal stop reasons", async () => {
     const backend = claude({
+      transport: "acp",
       spawnAcpProcess: () =>
         fakeAcpProcess((message, push) => {
           if (message.method === "initialize") {
@@ -364,6 +467,7 @@ describe("Claude live backend constructor", () => {
   test("sends Claude ACP cancellation and force-closes on timeout", async () => {
     let process: FakeAcpProcess | undefined;
     const backend = claude({
+      transport: "acp",
       acpCancelTimeoutMs: 5,
       spawnAcpProcess: () => {
         process = fakeAcpProcess((message, push) => {
@@ -395,6 +499,7 @@ describe("Claude live backend constructor", () => {
     let process: FakeAcpProcess | undefined;
     let promptId: AcpId | undefined;
     const backend = claude({
+      transport: "acp",
       acpCancelTimeoutMs: 1,
       spawnAcpProcess: () => {
         process = fakeAcpProcess((message, push) => {
@@ -450,6 +555,7 @@ describe("Claude live backend constructor", () => {
   test("fails and force-closes a silent Claude ACP prompt on inactivity timeout", async () => {
     let process: FakeAcpProcess | undefined;
     const backend = claude({
+      transport: "acp",
       inactivityTimeoutMs: 5,
       wallClockTimeoutMs: 1_000,
       spawnAcpProcess: () => {
@@ -468,7 +574,7 @@ describe("Claude live backend constructor", () => {
     const outcome = await backend.autonomous({ prompt: "run" }).awaitResult();
 
     expect(process?.signals).toContain("SIGKILL");
-    expect(outcome).toEqual({
+    expect(outcome).toMatchObject({
       type: "failed",
       error: {
         _tag: "BackendFailed",
@@ -481,6 +587,7 @@ describe("Claude live backend constructor", () => {
   test("does not spawn Claude ACP after immediate cancellation", async () => {
     let spawned = false;
     const backend = claude({
+      transport: "acp",
       spawnAcpProcess: () => {
         spawned = true;
         return fakeSuccessfulAcpProcess("claude-acp-late", "done");
@@ -654,7 +761,7 @@ describe("Claude live backend constructor", () => {
         throw new Error("claude missing");
       }
     });
-    expect(await failing.autonomous({ prompt: "run" }).awaitResult()).toEqual({
+    expect(await failing.autonomous({ prompt: "run" }).awaitResult()).toMatchObject({
       type: "failed",
       error: { _tag: "BackendFailed", backend: "claude", message: "claude missing" }
     });
@@ -669,7 +776,7 @@ describe("Claude live backend constructor", () => {
     });
 
     const outcome = await backend.autonomous({ prompt: "run" }).awaitResult();
-    expect(outcome).toEqual({
+    expect(outcome).toMatchObject({
       type: "failed",
       error: {
         _tag: "BackendFailed",

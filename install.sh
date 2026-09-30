@@ -40,6 +40,8 @@ fi
 workdir="$(mktemp -d)"
 cleanup() {
   rm -rf "$workdir"
+  [[ -z "${launcher_tmp:-}" ]] || rm -f "$launcher_tmp"
+  [[ -z "${runtime_tmp:-}" ]] || rm -f "$runtime_tmp"
 }
 trap cleanup EXIT
 
@@ -66,7 +68,13 @@ grep "  $asset$" "$workdir/SHA256SUMS.txt" > "$workdir/SHA256SUMS.check" || {
 tar -xzf "$workdir/$asset" -C "$workdir"
 install_dir="${ORCA_INSTALL_DIR:-$HOME/.local/bin}"
 install -d "$install_dir"
-install -m 0755 "$workdir/orcats" "$install_dir/orcats"
+launcher_tmp="$install_dir/.orcats.$$"
+runtime_tmp="$install_dir/.orcats-runtime.$$"
+install -m 0755 "$workdir/orcats-runtime" "$runtime_tmp"
+install -m 0755 "$workdir/orcats" "$launcher_tmp"
+cp -R "$workdir/checker" "$install_dir/"
+mv -f "$runtime_tmp" "$install_dir/orcats-runtime"
+mv -f "$launcher_tmp" "$install_dir/orcats"
 
 case ":$PATH:" in
   *":$install_dir:"*) ;;

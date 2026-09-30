@@ -56,6 +56,7 @@ export default defineConfig({
             { label: "Errors and Results", slug: "reference/errors-and-results" },
             { label: "Runtime Errors", slug: "reference/runtime-errors" },
             { label: "Backend Matrix", slug: "reference/backends" },
+            { label: "Environment Variables", slug: "reference/environment" },
             { label: "Loop API", slug: "reference/loop-api" },
             { label: "State Stores", slug: "reference/state-stores" },
             { label: "Tools", slug: "reference/tools" },

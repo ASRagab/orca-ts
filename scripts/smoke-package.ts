@@ -13,7 +13,7 @@ import {
 const root = process.cwd();
 const packageJson = readPackageJson(root);
 
-runCommand("bun", ["run", "build:types"], root);
+runCommand("bun", ["run", "validate:release"], root);
 
 const tempDir = await mkdtemp(join(tmpdir(), "orca-package-smoke-"));
 try {
@@ -92,6 +92,12 @@ void fakeBackend;
 void baselineOptions;
 `
   );
+  await writeFile(
+    join(projectDir, "src", "launcher-probe.ts"),
+    `const child = Bun.spawnSync(["sh", "-c", 'test -z "$BUN_OPTIONS" && printf "%s:unset" "$ORCATS_TEST_MARKER"'], { env: process.env });
+console.log(\`launcher-env \${process.env.ORCATS_TEST_MARKER}:\${process.env.BUN_OPTIONS ?? "unset"} child=\${child.stdout.toString()}\`);
+`
+  );
 
   runCommand("npm", ["install", "--ignore-scripts", "--no-audit", "--fund=false"], projectDir);
   runCommand("npx", ["--no-install", "tsc", "--noEmit"], projectDir);
@@ -100,6 +106,22 @@ void baselineOptions;
   const expectedVersion = `orcats ${packageJson.version ?? ""}\n`;
   if (version.stdout !== expectedVersion) {
     throw new Error(`orcats --version mismatch: expected ${JSON.stringify(expectedVersion)}, got ${JSON.stringify(version.stdout)}`);
+  }
+
+  const poisoned = runCommand(
+    join(projectDir, "node_modules", ".bin", "orcats"),
+    ["--no-typecheck", join(projectDir, "src", "launcher-probe.ts")],
+    projectDir,
+    {
+      env: {
+        ...process.env,
+        BUN_OPTIONS: "--preload=/definitely/missing/orcats-preload.ts",
+        ORCATS_TEST_MARKER: "preserved"
+      }
+    }
+  );
+  if (!poisoned.stdout.includes("launcher-env preserved:unset child=preserved:unset")) {
+    throw new Error(`npm launcher did not isolate BUN_OPTIONS: ${JSON.stringify(poisoned)}`);
   }
 
   const fakeBin = join(tempDir, "bin");

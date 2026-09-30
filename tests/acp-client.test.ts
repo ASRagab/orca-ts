@@ -8,8 +8,44 @@ import {
   type AcpIncomingMessage,
   type AcpRequestMessage
 } from "../src/backends/acp-client.ts";
+import { expectExitZero, runCliProcess } from "./helpers/cli-process.ts";
 
 describe("ACP client seam", () => {
+  test.skipIf(process.platform === "win32")("rejects pending requests with child diagnostics when prompt stdin closes", async () => {
+    const clientUrl = new URL("../src/backends/acp-client.ts", import.meta.url).href;
+    const result = await runCliProcess(process.execPath, ["-e", `
+      const { createAcpClient } = await import(${JSON.stringify(clientUrl)});
+      const client = createAcpClient({
+        command: "/bin/sh",
+        args: ["-c", "exec 0<&-; printf 'prompt input closed' >&2; exit 17"],
+        requestTimeoutMs: 1_000
+      });
+      const done = client.done.catch(error => error.message);
+      const request = client.request("initialize", {
+        payload: "x".repeat(2 * 1024 * 1024)
+      }).catch(error => error.message);
+      client.process.endStdin();
+      console.log(JSON.stringify({
+        requestError: await request,
+        doneError: await done,
+        stderr: await client.stderr,
+        exit: await client.process.exit
+      }));
+    `], { timeoutMs: 5_000 });
+
+    expectExitZero(result);
+    const diagnostics = JSON.parse(result.stdout) as {
+      exit: number;
+      requestError: string;
+      doneError: string;
+      stderr: string;
+    };
+    expect(diagnostics.exit).toBe(17);
+    expect(diagnostics.requestError).toContain("17");
+    expect(diagnostics.doneError).toContain("17");
+    expect(diagnostics.stderr).toContain("prompt input closed");
+  });
+
   test("spawns a process with piped stdin, stdout, and stderr", async () => {
     const process = spawnAcpProcess(
       globalThis.process.execPath,

@@ -13,7 +13,7 @@ type BackendTag = "claude" | "codex" | "opencode" | "pi";
 
 | Backend | Tag | Constructor | Returns | Runtime |
 | --- | --- | --- | --- | --- |
-| Claude | `claude` | `claude(options?)` | `LlmBackend<"claude">` | ACP JSON-RPC over `claude-agent-acp` by default; stream-json fallback via `ORCA_CLAUDE_TRANSPORT=stream-json`. |
+| Claude | `claude` | `claude(options?)` | `LlmBackend<"claude">` | `claude` stream-json subprocess by default; ACP is explicit opt-in. |
 | Codex | `codex` | `codex(options?)` | `LlmBackend<"codex">` | Subprocess JSONL over `codex exec --json`. |
 | OpenCode | `opencode` | `opencode(options?)` | `OpenCodeBackend` | Managed `opencode serve` over HTTP/SSE. |
 | Pi | `pi` | `pi(options?)` | `LlmBackend<"pi">` | Subprocess RPC JSONL over the `pi` CLI. |
@@ -36,7 +36,17 @@ Codex ACP path does not expose this setting.
 
 Orcats forwards all six declared values to Codex without a local model catalog. Actual acceptance depends on the selected model and Codex CLI version. Unsupported combinations return a backend failure.
 
-`claude()` uses `claude-agent-acp` by default. Set `ORCA_CLAUDE_ACP_COMMAND` to point at a different ACP adapter command, or set `ORCA_CLAUDE_TRANSPORT=stream-json` / `claude({ transport: "stream-json" })` to use the previous `claude --print --input-format stream-json` subprocess path. Model-pinned and resumed Claude runs use the stream-json fallback automatically because the ACP adapter does not expose equivalent stable fields yet.
+`claude()` uses the authenticated `claude` CLI through stream-json by default.
+Select ACP explicitly with `ORCA_CLAUDE_TRANSPORT=acp` or
+`claude({ transport: "acp" })`; `ORCA_CLAUDE_ACP_COMMAND` overrides its adapter
+executable. Constructor selection wins over the environment. Orcats does not
+automatically retry another transport after failure because the prompt may
+already have caused side effects. ACP remains opt-in pending installed-version
+compatibility proof. See [Environment Variables](../environment/).
+
+Stream-json supports model selection and session resume. Explicit ACP with
+either setting returns a transport-aware `BackendFailed` before spawning a
+process; select stream-json for those runs.
 
 ## The `LlmBackend<B>` contract
 
@@ -110,6 +120,9 @@ export function selectBackend(options: SelectBackendOptions): SelectedBackend;
 ```
 
 `selectBackend` resolves the backend **synchronously** and **throws** on an invalid `ORCA_BACKEND`. The chosen tag is `process.env.ORCA_BACKEND` when set, otherwise `options.default`. An unrecognized value throws `Unsupported backend "<value>" (expected one of: claude, codex, opencode, pi)` — wrap the call if you prefer a `Result`-style boundary.
+
+The optional `env` supplies selector values and Claude transport overrides.
+Claude child processes inherit `process.env` with those overrides applied.
 
 ```ts
 import { selectBackend } from "@twelvehart/orcats";

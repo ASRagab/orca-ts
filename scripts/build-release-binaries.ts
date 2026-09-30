@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runQuiet, type QuietProcResult } from "../src/tools/process.ts";
 import { parseReleaseBuildOptions } from "./release-build-options.ts";
@@ -15,10 +15,13 @@ if (options.replaceReleaseDir) {
 const checksums: string[] = [];
 const assets: string[] = [];
 
+await mustRun("bun", ["run", "validate:release"]);
+
 for (const target of options.targets) {
   const asset = target.replace(/^bun-/, "orcats-");
   const outDir = join(releaseDir, asset);
-  const outFile = join(outDir, "orcats");
+  const launcher = join(outDir, "orcats");
+  const runtime = join(outDir, "orcats-runtime");
   const tarball = join(releaseDir, `${asset}.tar.gz`);
 
   await mkdir(outDir, { recursive: true });
@@ -28,9 +31,12 @@ for (const target of options.targets) {
     "--compile",
     "--compile-autoload-package-json",
     `--target=${target}`,
-    `--outfile=${outFile}`,
+    `--outfile=${runtime}`,
   ]);
-  await mustRun("tar", ["-czf", tarball, "-C", outDir, "orcats"]);
+  await copyFile("bin/orcats", launcher);
+  await cp("dist/checker", join(outDir, "checker"), { recursive: true });
+  await chmod(launcher, 0o755);
+  await mustRun("tar", ["-czf", tarball, "-C", outDir, "orcats", "orcats-runtime", "checker"]);
 
   const hash = new Bun.CryptoHasher("sha256");
   hash.update(await readFile(tarball));

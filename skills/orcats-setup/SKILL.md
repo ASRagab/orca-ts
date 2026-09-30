@@ -1,6 +1,6 @@
 ---
 name: orcats-setup
-description: "Install the Orcats `orcats` binary and verify at least one coding-agent backend (claude/codex/opencode/pi) is on PATH, authenticated, and usable. Asks which backend(s) to enable, runs a non-spending readiness probe, and troubleshoots install/auth/config failures. Re-runnable as a doctor. Use first, before authoring or running an Orcats workflow or loop module, or whenever a backend stops working. Triggers on \"install orcats\", \"set up orcats\", \"orcats setup\", \"verify orcats backend\", \"orcats backend not working\", \"orcats doctor\"."
+description: "Install the Orcats `orcats` binary and prove at least one selected coding-agent backend transport is usable. Static CLI/auth checks remain unverified; a consent-gated bounded live turn is required for ready. Re-runnable as a doctor."
 compatibility: "Host-agnostic (any coding agent) and stack-agnostic (any git-backed repo). Binary-only use needs neither Bun, Node, nor a JVM. Verifying a backend needs that backend's CLI installed and authenticated. Bundled scripts locate every CLI at runtime — never hardcoded."
 metadata:
   author: "Ahmad Ragab"
@@ -55,36 +55,42 @@ You only need **one** to pass, but verify every backend the user names.
 
 ## 3. Verify with the doctor
 
-Run the shared doctor for the chosen backend(s). It probes each for CLI-on-PATH,
-a non-spending readiness check, and auth, then classifies the result:
+Run the shared doctor for the chosen backend(s). It resolves the active
+transport first, checks that transport's executables and available static auth
+evidence, and reports those facts without claiming the transport was exercised:
 
 ```bash
 bash skills/orcats-setup/scripts/orca-doctor.sh --backend codex --backend claude
 # or: --all  to probe every backend
+# explicit Claude ACP selection:
+bash skills/orcats-setup/scripts/orca-doctor.sh --backend claude --transport acp
 ```
 
 Per-backend status:
 
 | Status | Meaning |
 |---|---|
-| `ready` | CLI present, `--version` ok, auth confirmed (codex/opencode) or credentials found (claude/pi) |
-| `unverified` | CLI + version ok, but auth can't be cheaply proven (claude/pi) — probably fine; confirm with `--smoke` |
+| `ready` | A bounded live turn succeeded over the reported selected transport |
+| `unverified` | Required executables and available static auth evidence passed, but the selected transport has not completed a turn |
 | `unauth` | CLI present but not authenticated |
 | `missing` | CLI not on `PATH` |
 | `misconfig` | CLI present but `--version` failed (broken install) |
 
-The doctor exits `0` iff at least one chosen backend is `ready` or `unverified`.
-**Do not declare setup complete until that holds.**
+The doctor exits `0` only when at least one chosen backend/transport is `ready`.
+Static checks normally exit `1` with `unverified`; that is incomplete setup,
+not a broken CLI.
 
-Optional definitive auth proof for claude/pi (spends a few tokens — gated):
+Before the live proof, tell the user it spends a small number of tokens and ask
+for consent. Only after consent run:
 
 ```bash
 bash skills/orcats-setup/scripts/orca-doctor.sh --backend claude --smoke
 # or set ORCA_REAL_BACKEND_SMOKE=1 in the environment
 ```
 
-The smoke runs one cheap real turn through the `orcats` binary; it is the only way
-to *prove* auth for backends with no non-spending status check.
+The smoke runs one bounded turn through the installed `orcats` entry point and
+the reported transport. Declining leaves the backend `unverified`; do not call
+it usable or setup complete.
 
 ## 4. Troubleshoot by failure class
 
@@ -99,6 +105,11 @@ Map the doctor's status to a concrete next step — never hand back a raw error.
   Re-run the doctor after.
 - **`misconfig`** → the CLI is on `PATH` but `--version` failed; the install is
   broken. Reinstall the CLI and confirm it runs outside Orcats.
+- **Claude `stream-json` failure** → keep `stream-json` selected, verify `claude
+  --version` and login, then rerun the same smoke.
+- **Claude `acp` failure** → verify `claude-agent-acp` (or
+  `ORCA_CLAUDE_ACP_COMMAND`) and Claude auth, then rerun with `--transport acp`.
+  Never replay the turn through another transport without explicit user intent.
 - **Installer `checksum`/`network` failure** (from `orca-setup.sh`) → the script
   prints the manual fallback: download the tarball + `SHA256SUMS.txt` from the
   releases page, `shasum -a 256 -c SHA256SUMS.txt`, move `orcats` onto `PATH`.
@@ -112,7 +123,8 @@ or auth error — `orcats-flow` does exactly this during healing.
 ## Done when
 
 - `orcats --version` succeeds, and
-- the doctor reports at least one chosen backend `ready`/`unverified` and exits 0.
+- the doctor reports at least one chosen backend/transport `ready` after the
+  user-consented smoke and exits 0.
 
 Report the resolved binary version and the per-backend status table, then point
 the user to `orcats-author` to create a workflow.

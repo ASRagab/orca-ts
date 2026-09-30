@@ -64,6 +64,18 @@ npx skills add ./orca-ts --skill '*' --global
 
 Each skill is self-contained. Its `SKILL.md`, `scripts/`, references, and templates are installed together.
 
+Setup separates CLI presence, static authentication evidence, selected
+transport, and live readiness. It asks before the bounded readiness smoke
+because the smoke sends a prompt and spends tokens; declining leaves the
+backend unverified. Claude readiness exercises default `stream-json` unless the
+operator explicitly selected ACP.
+
+Authoring requires offline `orcats check` before handoff, even when the target
+has no TypeScript project. Flow execution uses stderr/heartbeat, plan, loop
+state, and Git for live progress, then trusts terminal monitoring JSON for the
+final outcome. See [Agent Skills Reference](../../reference/agent-skills/) and
+[Environment Variables](../../reference/environment/).
+
 Generated mutating artifacts default to baseline policy `repair`. Use
 `--baseline=strict`, `--baseline=accept-dirty`, or `ORCA_BASELINE_POLICY` only
 when you want to override that per run.

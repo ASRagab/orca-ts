@@ -19,6 +19,7 @@
   "types": "./dist/index.d.ts",
   "files": [
     "bin/orcats",
+    "dist/checker/**",
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
     "src/**/*.ts",
@@ -55,6 +56,7 @@
     "build": "bun build src/cli/main.ts --target bun --outfile dist/orcats",
     "build:binary": "bun build src/cli/main.ts --compile --compile-autoload-package-json --outfile dist/orcats",
     "build:types": "tsc -p tsconfig.build.json",
+    "build:checker": "bun run build:types && bun run scripts/build-checker-assets.ts",
     "build:release": "bun run scripts/build-release-binaries.ts",
     "lint": "bun run docs:site:prepare && eslint .",
     "test": "bun test",
@@ -69,15 +71,16 @@
     "check:facade-gate": "bun run scripts/check-facade-gate.ts",
     "test:integration:real": "ORCA_REAL_BACKEND_SMOKE=1 bun test tests/integration/real-backend-smoke.test.ts",
     "validate:fixtures": "bun run scripts/validate-fixtures.ts && bun run scripts/validate-adr-matrix.ts",
-    "validate:release": "bun run scripts/validate-release.ts",
-    "validate:package": "bun run build:types && bun run scripts/validate-package-artifact.ts",
+    "validate:release": "bun run build:checker && bun run scripts/validate-release.ts",
+    "validate:package": "bun run validate:release && bun run scripts/validate-package-artifact.ts",
     "smoke:package": "bun run scripts/smoke-package.ts",
     "smoke:binary": "bun run scripts/smoke-binary.ts",
-    "verify": "bun run lint && bun run typecheck && bun test && bun run docs:site:build && bun run docs:check && bun run docs:symbols && bun run validate:fixtures && bun run validate:release && bun run build:types && bun run docs:signatures && bun run check:facade-gate && bun run smoke:binary"
+    "verify": "bun run lint && bun run typecheck && bun test && bun run docs:site:build && bun run docs:check && bun run docs:symbols && bun run validate:fixtures && bun run build:types && bun run docs:signatures && bun run check:facade-gate && bun run smoke:binary && bun run scripts/validate-package-artifact.ts"
   },
   "dependencies": {
     "effect": "^3.21.2",
     "neverthrow": "^8.2.0",
+    "typescript": "^5.9.3",
     "zod": "^4.1.13"
   },
   "devDependencies": {
@@ -85,7 +88,6 @@
     "@types/bun": "^1.3.3",
     "eslint": "^9.39.1",
     "eslint-plugin-boundaries": "^6.0.2",
-    "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.4"
   },
   "engines": {

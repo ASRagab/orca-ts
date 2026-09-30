@@ -11,6 +11,7 @@ export interface QuietProcResult {
 
 export interface QuietProcOptions {
   readonly cwd?: string;
+  readonly env?: NodeJS.ProcessEnv;
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
 }
@@ -53,6 +54,7 @@ export async function runQuiet(
   const rendered = [command, ...args].join(" ");
   const child = spawn(command, [...args], {
     cwd: options.cwd,
+    env: options.env,
     signal: options.signal,
     stdio: ["ignore", "pipe", "pipe"]
   });

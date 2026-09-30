@@ -13,7 +13,7 @@ one-shot workflow script or a reusable loop module that re-runs the same shape
 and gates mutating output on the target repo's real tests and linters.
 
 Flow: **read the repo → interview → generate from a template → enforce
-verification gates → typecheck (when reachable) → save to `.orca/workflows/` or
+verification gates → run offline `orcats check` → save to `.orca/workflows/` or
 `.orca/loops/`.**
 
 > Author from the shared cookbook, in this order: `skills/orcats-author/reference/recipes.md`
@@ -87,21 +87,19 @@ accept a bare answer. Never dump all axes at once.
    `fixLoop` are used instead of internal `executeLoop`; Zod tolerant for
    pi/OpenCode.
 
-## 4. Typecheck the flow (when a TS toolchain is reachable)
+## 4. Check the artifact offline (mandatory)
 
 ```bash
-bash skills/orcats-author/scripts/orca-typecheck-flow.sh .orca/workflows/<name>.ts
-bash skills/orcats-author/scripts/orca-typecheck-flow.sh .orca/loops/<name>.ts
+orcats check .orca/workflows/<name>.ts
+orcats check .orca/loops/<name>.ts
 ```
 
-- **OK** → the flow typechecks against `@twelvehart/orcats`; proceed.
-- **FAILED** → read the error, fix per `gotchas.md`, re-run (bounded retries).
-  **Never hand back a flow that fails typecheck.**
-- **SKIPPED** (no `tsconfig.json`/`@twelvehart/orcats` dep in the target — the common
-  non-TS case) → you cannot locally typecheck. Run the **self-audit checklist**
-  at the end of `gotchas.md` instead, and record the skipped-typecheck note in
-  the runbook (§6). The bundled templates are CI-typecheck-gated, so a careful
-  slot-fill is high-confidence even without a local gate.
+The standalone checker carries its compiler, standard library, and Orcats
+declarations. It does not use the target repo's `tsconfig.json`, package manager,
+dependencies, or network. On failure, fix per `gotchas.md` and retry within a
+bound. Never hand back an unchecked artifact or accept a skipped check. The
+bundled `orca-typecheck-flow.sh` is only a compatibility wrapper for this same
+command.
 
 ## 5. Enforce verification gates (non-negotiable)
 
@@ -125,7 +123,16 @@ a productized workflow. Do not save ungated mutating code.
 ## 6. Save — stack-agnostic and re-runnable
 
 Confirm the target directory (default: the user's current repo root, so the
-flow's `git`/`gh` tools act on the right repo) **before writing**. Then write:
+flow's `git`/`gh` tools act on the right repo) **before writing**. Install the
+canonical runtime-only excludes without changing tracked `.gitignore`:
+
+```bash
+bash skills/orcats-author/scripts/orca-git-exclude.sh <target-repo>
+```
+
+The helper resolves `info/exclude` with `git rev-parse --git-path`, preserves
+existing content, is idempotent, and leaves `.orca/workflows/`, `.orca/loops/`,
+and their runbooks committable. Then write:
 
 For a workflow script, write:
 
@@ -139,8 +146,7 @@ For a workflow script, write:
      `orcats .orca/workflows/<name>.ts --backend <tag> -- --baseline=strict` and
      `orcats .orca/workflows/<name>.ts --backend <tag> -- --baseline=accept-dirty`;
    - the verification commands it gates on;
-   - **for non-TS targets**: the note that the binary skips its typecheck guard
-     in a repo with no `tsconfig.json` (it warns and runs anyway);
+   - the exact successful `orcats check .orca/workflows/<name>.ts` command;
    - resume notes for the persistent-multitask archetype (re-running recovers
      `.orca/plan-*.md`).
 3. *(optional)* **`.orca/workflows/<name>.sh`** — a thin POSIX wrapper that pins

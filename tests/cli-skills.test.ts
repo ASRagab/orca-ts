@@ -86,7 +86,7 @@ test("skills bypasses flow preflight and embedded fallback", () => {
     chmodSync(fakeNpx, 0o755);
 
     const result = Bun.spawnSync(
-      [process.execPath, cliPath, "skills", "--all", "--yes"],
+      [cliPath, "skills", "--all", "--yes"],
       {
         cwd: root,
         env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH ?? ""}` },

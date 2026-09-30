@@ -185,7 +185,7 @@ await flow()(() => {
     );
 
     try {
-      const okResult = await runQuiet("bun", ["./bin/orcats", "--no-typecheck", okFlow], {
+      const okResult = await runQuiet(join(process.cwd(), "bin", "orcats"), ["--no-typecheck", okFlow], {
         cwd: process.cwd(),
       });
       const okProc = okResult._unsafeUnwrap();
@@ -194,7 +194,7 @@ await flow()(() => {
       expect(okProc.stderr).toContain("orcats | stage inspect started\n");
       expect(okProc.stderr).toContain(`orcats | done: ${okFlow} completed\n`);
 
-      const failedResult = await runQuiet("bun", ["./bin/orcats", "--no-typecheck", failingFlow], {
+      const failedResult = await runQuiet(join(process.cwd(), "bin", "orcats"), ["--no-typecheck", failingFlow], {
         cwd: process.cwd(),
       });
       const failed = failedResult._unsafeUnwrapErr();
@@ -233,7 +233,7 @@ export default defineLoop({
     );
 
     try {
-      const result = await runQuiet("bun", ["./bin/orcats", "run", "--no-typecheck", loopPath], {
+      const result = await runQuiet(join(process.cwd(), "bin", "orcats"), ["run", "--no-typecheck", loopPath], {
         cwd: process.cwd(),
       });
       const proc = result._unsafeUnwrap();

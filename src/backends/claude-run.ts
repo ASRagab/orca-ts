@@ -18,6 +18,7 @@ import { terminateSubprocess } from "./subprocess-termination.ts";
 import type { AutonomousRequest, LlmBackend } from "./types.ts";
 import { StreamConversation } from "../conversation/index.ts";
 import { backendFailed, jsonSchemaFromZod, type BackendConfig } from "../model/index.ts";
+import { activeArtifactPath, backendRecovery } from "./diagnostics.ts";
 
 export type ClaudeProcess = SubprocessProcess;
 export type ClaudeProcessSpawner = SubprocessSpawner;
@@ -75,7 +76,8 @@ export async function runClaudeConversation<Output>(
   request: AutonomousRequest<Output, "claude">,
   options: ClaudeBackendOptions,
   conversation: StreamConversation<"claude">,
-  setProcess: (process: ClaudeProcess) => void
+  setProcess: (process: ClaudeProcess) => void,
+  artifactPath = activeArtifactPath(options.cwd)
 ): Promise<void> {
   const command = options.command ?? "claude";
   const config = resolveClaudeConfig(request, options);
@@ -83,7 +85,14 @@ export async function runClaudeConversation<Output>(
   try {
     const args = claudeStreamJsonArgs(config);
     const consumerOptions: ClaudeStreamOptions<Output> =
-      config.schema === undefined ? {} : { schema: config.schema };
+      {
+        ...(config.schema === undefined ? {} : { schema: config.schema }),
+        failureContext: {
+          transport: "stream-json",
+          artifactPath,
+          recovery: backendRecovery("claude", "stream-json")
+        }
+      };
 
     await runSubprocessConversation({
       backend: "claude",
@@ -97,6 +106,11 @@ export async function runClaudeConversation<Output>(
       ...(options.spawnProcess === undefined ? {} : { spawnProcess: options.spawnProcess }),
       ...(options.inactivityTimeoutMs === undefined ? {} : { inactivityTimeoutMs: options.inactivityTimeoutMs }),
       ...(options.wallClockTimeoutMs === undefined ? {} : { wallClockTimeoutMs: options.wallClockTimeoutMs }),
+      failureContext: {
+        transport: "stream-json",
+        artifactPath,
+        recovery: backendRecovery("claude", "stream-json")
+      },
       onStart: (process) => {
         process.write?.(`${userTurnLine(composeBackendPrompt(request.prompt, config))}\n`);
         process.endStdin?.();
@@ -105,7 +119,12 @@ export async function runClaudeConversation<Output>(
     });
   } catch (error) {
     if (!conversation.signal.aborted) {
-      conversation.fail(backendFailed("claude", errorMessage(error)));
+      conversation.fail(backendFailed("claude", errorMessage(error), {
+        transport: "stream-json",
+        phase: "initialization",
+        artifactPath,
+        recovery: backendRecovery("claude", "stream-json")
+      }));
     }
   }
 }
@@ -144,7 +163,8 @@ export function claude(options: ClaudeBackendOptions = {}): LlmBackend<"claude">
       let child: ClaudeProcess | undefined;
       let cancelAcp: (() => Promise<void>) | undefined;
       const config = resolveClaudeConfig(request, options);
-      const transport = resolveClaudeTransport(options, config);
+      const transport = resolveClaudeTransport(options);
+      const artifactPath = activeArtifactPath(options.cwd);
       const useAcp = transport === "acp";
       const conversation = new StreamConversation({
         backend: "claude",
@@ -167,6 +187,24 @@ export function claude(options: ClaudeBackendOptions = {}): LlmBackend<"claude">
         }
       });
 
+      if (useAcp && (
+        config.model !== undefined ||
+        config.resumeSessionId !== undefined ||
+        options.config?.resumeSessionId !== undefined
+      )) {
+        conversation.fail(backendFailed(
+          "claude",
+          "Claude ACP does not support model selection or session resume; select stream-json",
+          {
+            transport: "acp",
+            phase: "initialization",
+            artifactPath,
+            recovery: backendRecovery("claude", "acp")
+          }
+        ));
+        return conversation;
+      }
+
       queueMicrotask(() => {
         if (conversation.signal.aborted) {
           return;
@@ -186,6 +224,11 @@ export function claude(options: ClaudeBackendOptions = {}): LlmBackend<"claude">
               ...(options.acpCancelTimeoutMs === undefined ? {} : { cancelTimeoutMs: options.acpCancelTimeoutMs }),
               ...(options.wallClockTimeoutMs === undefined ? {} : { requestTimeoutMs: options.wallClockTimeoutMs }),
               ...(options.inactivityTimeoutMs === undefined ? {} : { inactivityTimeoutMs: options.inactivityTimeoutMs }),
+              failureContext: {
+                transport: "acp",
+                artifactPath,
+                recovery: backendRecovery("claude", "acp")
+              },
               setProcess: (process) => {
                 child = process;
                 if (conversation.signal.aborted) {
@@ -205,7 +248,7 @@ export function claude(options: ClaudeBackendOptions = {}): LlmBackend<"claude">
           if (conversation.signal.aborted) {
             process.kill("SIGTERM");
           }
-        });
+        }, artifactPath);
       });
 
       return conversation;
@@ -213,19 +256,13 @@ export function claude(options: ClaudeBackendOptions = {}): LlmBackend<"claude">
   };
 }
 
-function resolveClaudeTransport<Output>(
-  options: ClaudeBackendOptions,
-  config: ResolvedClaudeConfig<Output>
-): ClaudeTransport {
-  const transport = options.transport ?? process.env.ORCA_CLAUDE_TRANSPORT;
-  if (transport === "stream-json") {
-    return "stream-json";
+function resolveClaudeTransport(options: ClaudeBackendOptions): ClaudeTransport {
+  const transport = options.transport ?? (options.env ?? process.env).ORCA_CLAUDE_TRANSPORT;
+  if (transport === "acp") {
+    return "acp";
   }
-  if (transport !== undefined && transport !== "acp") {
+  if (transport !== undefined && transport !== "stream-json") {
     throw new Error(`unsupported Claude transport ${transport}`);
   }
-  if (config.model !== undefined || config.resumeSessionId !== undefined) {
-    return "stream-json";
-  }
-  return "acp";
+  return "stream-json";
 }

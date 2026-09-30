@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as ts from "typescript";
 import {
   codex,
@@ -23,6 +25,7 @@ import {
   type RegressedReason,
   type Usage,
   type VerificationCommand,
+  type WorkflowFinalization,
 } from "@twelvehart/orcats";
 import {
   assertCurrentBranch,
@@ -1116,6 +1119,10 @@ await flow(flowArgs())(async () => {
     process.env.ORCA_IMPROVEMENT_RUN_ID?.trim() ||
     `uninitialized-${String(startedAtMs)}`;
   const monitor = new WorkflowMonitor(requestedBackend, {
+    transport: process.env.ORCA_EXPERIMENTAL_ACP_BACKENDS === "1" ||
+      process.env.ORCA_EXPERIMENTAL_ACP_BACKENDS?.split(",").some((tag) => tag.trim() === "codex")
+      ? "acp"
+      : "subprocess",
     writeStatus: createWorkflowStatusWriter(
       (text) => void process.stderr.write(text),
     ),
@@ -1154,6 +1161,7 @@ await flow(flowArgs())(async () => {
   let validatedPaths: string[] = [];
   let verifiedContentManifest: readonly GitManifestEntry[] | undefined;
   let bodyFailed = false;
+  let finalization: WorkflowFinalization = { status: "succeeded" };
   let pendingIssue: RunIssue | undefined;
   let deliveryRecord: DeliveryRecordV1 | undefined;
   let deliveryRecordPublished = false;
@@ -1296,6 +1304,7 @@ await flow(flowArgs())(async () => {
             );
           });
           if (outcome.type !== "success") {
+            if (outcome.type === "failed") throw outcome.error;
             throw new Error(
               `baseline repair failed: ${describeOutcome(outcome)}`,
             );
@@ -1567,6 +1576,7 @@ await flow(flowArgs())(async () => {
                   ),
                 );
                 if (outcome.type !== "success") {
+                  if (outcome.type === "failed") throw outcome.error;
                   throw new Error(`${label} failed: ${describeOutcome(outcome)}`);
                 }
                 scopedUsage.set(scopeIndex, outcome.result.usage);
@@ -1737,6 +1747,7 @@ await flow(flowArgs())(async () => {
             ),
         );
         if (outcome.type !== "success") {
+          if (outcome.type === "failed") throw outcome.error;
           throw new Error(`${label} failed: ${describeOutcome(outcome)}`);
         }
         recordUsage(outcome.result.usage);
@@ -1823,6 +1834,7 @@ await flow(flowArgs())(async () => {
               );
               const outcome = reproduceResult.outcome;
               if (outcome.type !== "success") {
+                if (outcome.type === "failed") throw outcome.error;
                 throw new Error(`reproduce failed: ${describeOutcome(outcome)}`);
               }
               recordUsage(outcome.result.usage);
@@ -2042,6 +2054,7 @@ await flow(flowArgs())(async () => {
         );
       });
       if (outcome.type !== "success") {
+        if (outcome.type === "failed") throw outcome.error;
         throw new Error(`implement failed: ${describeOutcome(outcome)}`);
       }
       recordUsage(outcome.result.usage);
@@ -2082,6 +2095,7 @@ await flow(flowArgs())(async () => {
             );
           });
           if (outcome.type !== "success") {
+            if (outcome.type === "failed") throw outcome.error;
             throw new Error(
               `targeted repair failed: ${describeOutcome(outcome)}`,
             );
@@ -2137,6 +2151,7 @@ await flow(flowArgs())(async () => {
         recordUsage,
       );
       if (outcome.type !== "success") {
+        if (outcome.type === "failed") throw outcome.error;
         throw new Error(`${label} failed: ${describeOutcome(outcome)}`);
       }
       recordUsage(outcome.result.usage);
@@ -2191,6 +2206,7 @@ await flow(flowArgs())(async () => {
         );
       });
       if (outcome.type !== "success") {
+        if (outcome.type === "failed") throw outcome.error;
         throw new Error(`review repair failed: ${describeOutcome(outcome)}`);
       }
       recordUsage(outcome.result.usage);
@@ -2507,6 +2523,7 @@ await flow(flowArgs())(async () => {
     report.deliveryStatus = deliveryRecord.delivery.status;
   } catch (error) {
     bodyFailed = true;
+    finalization = { status: "failed", error };
     report.stopReason = normalizeFailure(error);
     report.activeStatus = "failed";
     report.sla = "failed";
@@ -2597,6 +2614,23 @@ await flow(flowArgs())(async () => {
           },
         },
       ],
+      terminal: {
+        label: "terminal monitor",
+        run: async (context) => {
+          const stagingDir = await mkdtemp(join(tmpdir(), "orcats-terminal-monitor-"));
+          try {
+            await monitor.finalize(stagingDir, finalization);
+            return await publishFinalizationText(
+              `${MONITOR_DIR}/${monitor.runId}.json`,
+              await readFile(join(stagingDir, `${monitor.runId}.json`), "utf8"),
+              runId,
+              context,
+            );
+          } finally {
+            await rm(stagingDir, { recursive: true, force: true });
+          }
+        },
+      },
       failureArtifactReserveMs: 2_000,
       report: {
         label: "report",
@@ -2628,6 +2662,7 @@ await flow(flowArgs())(async () => {
           .map((error) => error.message)
           .join("; ")}`;
         const finalizationError = new AggregateError(errors, stopReason);
+        finalization = { status: "failed", error: finalizationError };
         report.finishedAtMs = finishedAtMs;
         report.elapsedMs = finishedAtMs - startedAtMs;
         report.stage = "finalize";

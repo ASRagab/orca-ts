@@ -52,7 +52,7 @@ export function selectBackend(options: SelectBackendOptions): SelectedBackend {
     case "claude":
       return {
         tag,
-        backend: claude({ config }),
+        backend: claude({ config, env: { ...process.env, ...env } }),
         ...(model === undefined ? {} : { model })
       };
     case "codex":

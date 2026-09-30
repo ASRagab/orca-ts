@@ -57,7 +57,8 @@ void manual;
 void BackendTagSchema;
 
 await flow()(async () => {
-  console.log(\`orcats-binary-repo-self-smoke-ok typescript=\${ts.version}\`);
+  const child = Bun.spawnSync(["sh", "-c", 'test -z "$BUN_OPTIONS" && printf "%s:unset" "$ORCATS_TEST_MARKER"'], { env: process.env });
+  console.log(\`orcats-binary-repo-self-smoke-ok typescript=\${ts.version} env=\${process.env.ORCATS_TEST_MARKER ?? "unset"}:\${process.env.BUN_OPTIONS ?? "unset"} child=\${child.stdout.toString()}\`);
 });
 `
   );
@@ -81,16 +82,62 @@ await flow()(async () => {
       `--only-target=${target}`,
       `--release-dir=${releaseDir}`,
     ]);
-    const asset = target.replace(/^bun-/, "orcats-");
-    const releaseBinary = resolve(releaseDir, asset, "orcats");
-    const releaseFlow = await mustRun(releaseBinary, [
-      "--no-typecheck",
-      join(repoFlowDir, "flow.ts"),
-    ]);
+    const curl = Bun.which("curl");
+    if (curl === null) throw new Error("installer smoke requires curl");
+    const downloadBin = join(releaseParent, "download-bin");
+    const installDir = join(releaseParent, "installed");
+    await mkdir(downloadBin);
+    await writeFile(
+      join(downloadBin, "curl"),
+      '#!/bin/sh\nexec "$ORCATS_SMOKE_CURL" "$1" "$2" "file://$ORCATS_SMOKE_RELEASE_DIR/${3##*/}"\n',
+    );
+    await chmod(join(downloadBin, "curl"), 0o755);
+    await withEnv(
+      {
+        PATH: `${downloadBin}:${process.env.PATH ?? ""}`,
+        ORCA_INSTALL_DIR: installDir,
+        ORCA_VERSION: packageJson.version,
+        ORCATS_SMOKE_CURL: curl,
+        ORCATS_SMOKE_RELEASE_DIR: releaseDir,
+        BUN_OPTIONS: "--preload=/definitely/missing/orcats-preload.ts",
+      },
+      () => mustRun("bash", [resolve("install.sh")], { cwd: releaseParent }),
+    );
+    const releaseBinary = join(installDir, "orcats");
+    const installedFlow = join(releaseParent, "flow.ts");
+    await writeFile(join(releaseParent, "helper.ts"), 'export const marker = "orcats-installed-smoke-ok";\n');
+    await writeFile(
+      installedFlow,
+      `import { flow } from "@twelvehart/orcats";
+import { marker } from "./helper.ts";
+await flow()(async () => {
+  const child = Bun.spawnSync(["sh", "-c", 'test -z "$BUN_OPTIONS" && printf "%s:unset" "$ORCATS_TEST_MARKER"'], { env: process.env });
+  console.log(\`\${marker} env=\${process.env.ORCATS_TEST_MARKER ?? "unset"}:\${process.env.BUN_OPTIONS ?? "unset"} child=\${child.stdout.toString()}\`);
+});
+`,
+    );
+    const checked = await withEnv(
+      { ORCA_CHECKER_ASSETS: "" },
+      () => mustRun(releaseBinary, ["check", installedFlow], { cwd: releaseParent }),
+    );
+    expectIncludes(checked.stdout, "orcats check: ok", "installed offline artifact check");
+    const releaseFlow = await withEnv(
+      {
+        BUN_OPTIONS: "--preload=/definitely/missing/orcats-preload.ts",
+        ORCA_CHECKER_ASSETS: "",
+        ORCATS_TEST_MARKER: "preserved"
+      },
+      () => mustRun(releaseBinary, [installedFlow], { cwd: releaseParent })
+    );
     expectIncludes(
       releaseFlow.stdout,
-      "orcats-binary-repo-self-smoke-ok typescript=",
-      "release binary repository workflow output with a project package import",
+      "orcats-installed-smoke-ok",
+      "installed release workflow with the embedded public package",
+    );
+    expectIncludes(
+      releaseFlow.stdout,
+      "env=preserved:unset child=preserved:unset",
+      "release launcher environment isolation",
     );
   } finally {
     await rm(releaseParent, { recursive: true, force: true });
@@ -118,7 +165,7 @@ await flow()(async () => {
 
   const flow = await mustRun(binary, ["flow.ts"], { cwd: tempDir });
   expectIncludes(flow.stdout, "orcats-binary-smoke-ok", "compiled binary flow output");
-  expectIncludes(flow.stderr, "missing project typecheck setup", "compiled binary typecheck warning");
+  expectIncludes(flow.stderr, "preflight typecheck passed", "compiled binary artifact check");
 
   // Regression guard: a stale ORCA_EMBEDDED_RESPAWNED leaked into the environment must NOT
   // make a fresh invocation skip the bootstrap + respawn. The handshake is validated against
@@ -127,7 +174,25 @@ await flow()(async () => {
     mustRun(binary, ["flow.ts"], { cwd: tempDir })
   );
   expectIncludes(poisoned.stdout, "orcats-binary-smoke-ok", "compiled binary flow output under stale respawn handshake");
-  expectIncludes(poisoned.stderr, "missing project typecheck setup", "compiled binary typecheck warning under stale respawn handshake");
+  expectIncludes(poisoned.stderr, "preflight typecheck passed", "compiled binary artifact check under stale respawn handshake");
+
+  const loopDir = join(tempDir, ".orca", "loops");
+  await mkdir(loopDir, { recursive: true });
+  await writeFile(join(loopDir, "different-filename.ts"), `
+import { defineLoop, flowArgs, loop, manual, stdout } from "@twelvehart/orcats";
+export default defineLoop({
+  name: "named-smoke",
+  source: manual(),
+  sink: stdout(),
+  async onTrigger() {
+    const result = await loop<number>("finish").step("finish", () => 0).measure((state) => state).run(1);
+    return result.map((outcome) => ({ outcome, output: "named-smoke " + flowArgs().join(" ") }));
+  }
+});
+`);
+  const namedLoop = await mustRun(binary, ["run", "named-smoke", "--", "task", "two words"], { cwd: tempDir });
+  expectIncludes(namedLoop.stdout, "named-smoke task two words", "compiled binary named loop and task arguments");
+  expectIncludes(namedLoop.stderr, "preflight typecheck passed", "compiled binary named loop preflight");
 } finally {
   await rm(tempDir, { recursive: true, force: true });
 }

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import {
   backendFailed,
+  type BackendFailureContext,
   type BackendTag
 } from "../model/index.ts";
 import type { StreamConversation } from "../conversation/index.ts";
@@ -79,6 +80,7 @@ export interface RunSubprocessOptions<B extends BackendTag> {
   /** Runs right after spawn (before the read loop) — claude/pi write the opening
    * user turn to stdin and close it here. */
   readonly onStart?: (process: SubprocessProcess) => void | Promise<void>;
+  readonly failureContext?: Omit<BackendFailureContext, "phase">;
 }
 
 type SubprocessTimeoutKind = "inactivity" | "wallclock";
@@ -192,13 +194,22 @@ export async function runSubprocessConversation<B extends BackendTag>(
     ) {
       return;
     }
-    conversation.fail(backendFailed(backend, errorMessage(error)));
+    conversation.fail(subprocessBackendFailed(backend, errorMessage(error), "shutdown", options.failureContext));
   };
   const settleSubprocessTimeout = (settlement: SubprocessTimeoutSettlement): void => {
     if (settlement.type === "termination_failed") {
-      conversation.fail(backendFailed(backend, errorMessage(settlement.error)));
+      conversation.fail(
+        subprocessBackendFailed(backend, errorMessage(settlement.error), "shutdown", options.failureContext)
+      );
     } else {
-      failSubprocessTimeout(conversation, backend, settlement.kind, inactivityMs, wallClockMs);
+      failSubprocessTimeout(
+        conversation,
+        backend,
+        settlement.kind,
+        inactivityMs,
+        wallClockMs,
+        options.failureContext
+      );
     }
     releaseTimeoutSettlement?.();
   };
@@ -474,9 +485,11 @@ export async function runSubprocessConversation<B extends BackendTag>(
     if (terminal.exit !== 0) {
       const exitCodeText = terminal.exit === null ? "unknown" : String(terminal.exit);
       conversation.fail(
-        backendFailed(
+        subprocessBackendFailed(
           backend,
-          `${backend} exited with code ${exitCodeText}${stderrText ? `: ${stderrText}` : ""}`
+          `${backend} exited with code ${exitCodeText}${stderrText ? `: ${stderrText}` : ""}`,
+          "turn",
+          options.failureContext
         )
       );
       return;
@@ -555,6 +568,13 @@ export function spawnSubprocess(
   const leaderExit = Promise.withResolvers<number | null>();
   child.on("error", leaderExit.reject);
   child.on("close", leaderExit.resolve);
+  child.stdin?.on("error", (error: NodeJS.ErrnoException) => {
+    // Early exit can close prompt input before write/end completes. Keep the
+    // child's exit code and stderr as the failure diagnosis in that case.
+    if (error.code !== "EPIPE") {
+      leaderExit.reject(error);
+    }
+  });
   const processGroupExit =
     useProcessGroup && child.pid !== undefined
       ? waitForProcessGroupExit(child.pid, leaderExit.promise)
@@ -764,7 +784,8 @@ function failSubprocessTimeout<B extends BackendTag>(
   backend: B,
   kind: SubprocessTimeoutKind,
   inactivityMs: number,
-  wallClockMs: number
+  wallClockMs: number,
+  context?: Omit<BackendFailureContext, "phase">
 ): void {
   if (conversation.signal.aborted) {
     return;
@@ -773,7 +794,18 @@ function failSubprocessTimeout<B extends BackendTag>(
     kind === "inactivity"
       ? `${backend} emitted no stdout for ${String(inactivityMs)}ms; treating the turn as stalled`
       : `${backend} turn exceeded ${String(wallClockMs)}ms wall-clock limit`;
-  conversation.fail(backendFailed(backend, message));
+  conversation.fail(subprocessBackendFailed(backend, message, "turn", context));
+}
+
+function subprocessBackendFailed(
+  backend: BackendTag,
+  message: string,
+  phase: string,
+  context: Omit<BackendFailureContext, "phase"> | undefined
+): ReturnType<typeof backendFailed> {
+  return context === undefined
+    ? backendFailed(backend, message)
+    : backendFailed(backend, message, { ...context, phase });
 }
 
 export function errorMessage(error: unknown): string {

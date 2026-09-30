@@ -3,6 +3,7 @@ import type { Result } from "neverthrow";
 
 import type { LoopOutcome, LoopRunError, LoopStopReason } from "./builder/index.ts";
 import type { LoopDefinition } from "./serve.ts";
+import { extractFlowArgs } from "../flow/args.ts";
 import { withRunReporter, type RunReporter } from "../run-output/index.ts";
 
 export const LOOP_EVENT_ENV = "ORCA_LOOP_EVENT";
@@ -86,11 +87,12 @@ export function buildChildProcessSpec(
 ): ChildProcessSpec {
   const argv = options.argv ?? process.argv;
   const entry = childEntrypoint(argv);
+  const taskArgs = extractFlowArgs(argv);
   const args =
     entry === undefined ? ["run", "--no-typecheck", spec.loop] : [entry, "run", "--no-typecheck", spec.loop];
   return {
     command: options.execPath ?? process.execPath,
-    args,
+    args: taskArgs.length === 0 ? args : [...args, "--", ...taskArgs],
     env: { ...(options.env ?? process.env), [LOOP_EVENT_ENV]: encodeLoopEvent(spec.event) },
   };
 }

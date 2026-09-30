@@ -47,13 +47,13 @@ describe("CLI args", () => {
     });
   });
   test("bin shim invokes the CLI", async () => {
-    const result = await runQuiet("bun", ["./bin/orcats", "--help"], { cwd: process.cwd() });
+    const result = await runQuiet("./bin/orcats", [ "--help"], { cwd: process.cwd() });
 
     expect(result._unsafeUnwrap().stdout).toContain("Usage: orcats");
   });
 
   test("bin shim prints the version", async () => {
-    const result = await runQuiet("bun", ["./bin/orcats", "--version"], { cwd: process.cwd() });
+    const result = await runQuiet("./bin/orcats", [ "--version"], { cwd: process.cwd() });
 
     expect(result._unsafeUnwrap().stdout).toStartWith("orcats ");
   });

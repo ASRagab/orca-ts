@@ -1,9 +1,9 @@
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { realpathSync } from "node:fs";
-import { runTypecheck } from "../runner/index.ts";
+import { checkArtifact } from "../runner/index.ts";
 import { FLOW_ARGS_ENV } from "../flow/args.ts";
-import { unsupportedFeature, type RuntimeError } from "../model/index.ts";
+import { describeRuntimeError, unsupportedFeature, type RuntimeError } from "../model/index.ts";
 import {
   discoverLoops,
   formatLoopListing,
@@ -25,6 +25,7 @@ import { ORCA_VERSION } from "./version.ts";
 
 const USAGE = [
   "Usage: orcats [--backend <name>] [--no-typecheck] <flow.ts> [-- <task args>]",
+  "       orcats check <artifact.ts>  typecheck one workflow or loop offline",
   "       orcats run <loop>      run a loop once; exit status reflects the stop reason",
   "       orcats serve <loop>    host a loop's trigger, spawning a child process per firing",
   "       orcats loops           list defined loops with their source and sink",
@@ -98,6 +99,16 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return;
   }
 
+  if (args.command === "check") {
+    if (args.artifact === undefined) {
+      process.stderr.write("orcats: check requires an <artifact.ts>\n");
+      process.exitCode = 1;
+      return;
+    }
+    await runCheck(args.artifact);
+    return;
+  }
+
   const reporter = createCliReporter();
 
   if (!(await preflight(args, reporter))) {
@@ -112,11 +123,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return;
   }
   if (args.command === "run" && args.loop !== undefined) {
-    await runLoop(args.loop, reporter);
+    await runLoop(args.loop, reporter, args.skipTypecheck);
     return;
   }
   if (args.command === "serve" && args.loop !== undefined) {
-    await runServe(args.loop);
+    await runServe(args.loop, reporter, args.skipTypecheck);
     return;
   }
   if (args.script !== undefined) {
@@ -124,49 +135,61 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   }
 }
 
-/** Shared preflight for every command: typecheck (unless skipped) + backend/flow-arg env wiring. */
+/** Shared preflight for executable artifacts: offline check unless explicitly skipped. */
 async function preflight(args: CliArgs, reporter: RunReporter): Promise<boolean> {
   if (isEmbeddedRespawnChild()) {
-    return true; // the spawning parent already ran preflight; the child inherits its env
-  }
-
-  reporter.emit({ type: "preflight", name: "typecheck", status: "started" });
-  const typecheck = await runTypecheck({ cwd: process.cwd(), skip: args.skipTypecheck });
-  if (typecheck.isErr()) {
-    const error = typecheck.error;
-    reporter.emit({ type: "preflight", name: "typecheck", status: "failed", reason: describeError(error) });
-    if (error._tag === "TypecheckFailed") {
-      process.stderr.write(error.stdout);
-      process.stderr.write(error.stderr);
-    } else {
-      process.stderr.write(`${JSON.stringify(error)}\n`);
-    }
-    process.exitCode = 1;
-    return false;
-  }
-
-  if (typecheck.value.skipped) {
-    reporter.emit({
-      type: "preflight",
-      name: "typecheck",
-      status: "skipped",
-      ...(typecheck.value.reason === undefined ? {} : { reason: typecheck.value.reason }),
-    });
-    if (typecheck.value.reason === "tsc-not-found") {
-      process.stderr.write(
-        "orcats: missing project typecheck setup; skipping typecheck. Add typescript, tsconfig.json, and a local @twelvehart/orcats package dependency to enable it.\n"
-      );
-    }
-    process.env.ORCA_TYPECHECK_SKIPPED = "1";
-  } else {
-    reporter.emit({ type: "preflight", name: "typecheck", status: "passed" });
+    return true;
   }
 
   if (args.backend) {
     process.env.ORCA_BACKEND = args.backend;
   }
   process.env[FLOW_ARGS_ENV] = JSON.stringify(args.flowArgs);
+  return args.script === undefined || await checkBeforeExecution(args.script, reporter, args.skipTypecheck);
+}
+
+async function checkBeforeExecution(
+  artifact: string,
+  reporter: RunReporter,
+  skipTypecheck: boolean
+): Promise<boolean> {
+  reporter.emit({ type: "preflight", name: "typecheck", status: "started" });
+  if (skipTypecheck) {
+    reporter.emit({ type: "preflight", name: "typecheck", status: "skipped", reason: "flag" });
+    process.env.ORCA_TYPECHECK_SKIPPED = "1";
+  } else {
+    const typecheck = await checkArtifact(artifact, { cwd: process.cwd() });
+    if (typecheck.isErr()) {
+      const error = typecheck.error;
+      reporter.emit({ type: "preflight", name: "typecheck", status: "failed", reason: describeError(error) });
+      if (error._tag === "TypecheckFailed") {
+        process.stderr.write(error.stdout);
+        process.stderr.write(error.stderr);
+      } else {
+        process.stderr.write(`${JSON.stringify(error)}\n`);
+      }
+      process.exitCode = 1;
+      return false;
+    }
+    reporter.emit({ type: "preflight", name: "typecheck", status: "passed" });
+  }
+
   return true;
+}
+
+async function runCheck(artifact: string): Promise<void> {
+  const result = await checkArtifact(artifact, { cwd: process.cwd() });
+  if (result.isErr()) {
+    const error = result.error;
+    if (error._tag === "TypecheckFailed") {
+      process.stderr.write(error.stderr);
+    } else {
+      process.stderr.write(`orcats check: ${describeError(error)}\n`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`orcats check: ok ${resolve(artifact)}`);
 }
 
 /** `orcats loops`: discover and list defined loops without firing any Source / backend / Sink. */
@@ -182,8 +205,8 @@ async function runLoops(): Promise<void> {
 }
 
 /** `orcats run <loop>`: resolve the loop, run it once, exit with a status reflecting the stop reason. */
-async function runLoop(target: string, reporter: RunReporter): Promise<void> {
-  const importLoop = await loopImporter();
+async function runLoop(target: string, reporter: RunReporter, skipTypecheck: boolean): Promise<void> {
+  const importLoop = await loopImporter(reporter, skipTypecheck);
   const loaded = await loadDefinition(target, { cwd: process.cwd(), import: importLoop });
   if (loaded.isErr()) {
     process.stderr.write(`orcats: ${describeError(loaded.error)}\n`);
@@ -196,8 +219,8 @@ async function runLoop(target: string, reporter: RunReporter): Promise<void> {
 }
 
 /** `orcats serve <loop>`: a thin supervisor owning the trigger, spawning a child per firing (D8). */
-async function runServe(target: string): Promise<void> {
-  const importLoop = await loopImporter();
+async function runServe(target: string, reporter: RunReporter, skipTypecheck: boolean): Promise<void> {
+  const importLoop = await loopImporter(reporter, skipTypecheck);
   const loaded = await loadDefinition(target, { cwd: process.cwd(), import: importLoop });
   if (loaded.isErr()) {
     process.stderr.write(`orcats: ${describeError(loaded.error)}\n`);
@@ -239,9 +262,12 @@ async function runFlowScript(script: string, argv: readonly string[], reporter: 
 }
 
 /** An embedded-aware importer: register the standalone package fallback, then import the module. */
-async function loopImporter(): Promise<ModuleImporter> {
+async function loopImporter(reporter?: RunReporter, skipTypecheck = false): Promise<ModuleImporter> {
   const { ensureOrcaResolvable } = await import("./embedded.ts");
   return async (absolutePath) => {
+    if (reporter !== undefined && !(await checkBeforeExecution(absolutePath, reporter, skipTypecheck))) {
+      throw new Error(`artifact typecheck failed: ${absolutePath}`);
+    }
     ensureOrcaResolvable(absolutePath);
     const module: unknown = await import(pathToFileURL(absolutePath).href);
     return module as Record<string, unknown>;
@@ -331,18 +357,7 @@ function createCliReporter(): RunReporter {
 }
 
 function describeError(error: unknown): string {
-  if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
-    return error.message;
-  }
-  if (typeof error === "object" && error !== null && "reason" in error && typeof error.reason === "string") {
-    return error.reason;
-  }
-  try {
-    const serialized = JSON.stringify(error) as string | undefined;
-    return serialized ?? String(error);
-  } catch {
-    return String(error);
-  }
+  return describeRuntimeError(error);
 }
 
 if (import.meta.main) {

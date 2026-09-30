@@ -5,6 +5,7 @@ description: Commands, flags, and task-argument behavior.
 
 ```bash
 orcats [--backend <name>] [--no-typecheck] <flow.ts> [-- <task args>]
+orcats check <workflow-or-loop.ts>
 orcats run <loop>
 orcats serve <loop>
 orcats loops
@@ -15,6 +16,7 @@ orcats --version
 | Command | Meaning |
 | --- | --- |
 | `<flow.ts>` | Import and run a self-executing flow script. |
+| `check <artifact.ts>` | Typecheck one workflow or loop offline without importing or firing it. |
 | `run <loop>` | Run one loop firing; target is a module path or registered loop name. |
 | `serve <loop>` | Host a loop trigger and spawn one child process per firing. |
 | `loops` | Discover loops from `.orca/loops/` without firing them. |
@@ -25,7 +27,7 @@ orcats --version
 | Option | Meaning |
 | --- | --- |
 | `--backend <name>` | Validates the backend tag and sets `ORCA_BACKEND`. |
-| `--no-typecheck` | Skips the `tsc --noEmit` preflight and sets `ORCA_TYPECHECK_SKIPPED=1`. |
+| `--no-typecheck` | Explicitly skips the self-contained artifact preflight. |
 | `--version`, `-v` | Prints the embedded Orcats version. |
 | `--help`, `-h` | Prints usage. |
 | `-- <task args>` | Passes task input to `flowArgs()`. |
@@ -55,6 +57,18 @@ See [Agent Skills installation](../../install/agent-skills/) for direct
 Stdout is reserved for explicit flow output and loop sink payloads. A `stdout()` sink or `console.log()` in a flow should not be mixed with progress diagnostics.
 
 Valid backend tags are `claude`, `codex`, `opencode`, and `pi`.
+
+## Artifact checking
+
+`orcats check <artifact.ts>` uses the packaged TypeScript compiler, standard
+library, and public Orcats declarations. It needs no target `tsconfig.json`,
+dependency, package manager, or network access; it cleans its temporary compiler
+project on success and failure. Diagnostics exit nonzero and normal execution
+uses the same check before any backend starts.
+
+Sibling imports resolve from the original artifact and are checked too. For
+registered loop names, `run` and `serve` check every discovered module before
+importing it; names do not need to match filenames.
 
 ## Loop exit codes
 

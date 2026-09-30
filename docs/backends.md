@@ -4,7 +4,7 @@ The v1 contract is backend-neutral: every backend maps native transport messages
 
 Supported target backends are Claude, OpenCode, Codex, and Pi, each shipping a live autonomous driver (`claude()`, `opencode()`, `codex()`, `pi()`) behind the same SPI. Gemini is cut: its CLI is being deprecated by Google in favor of the Antigravity CLI (`agy`), and it never shipped a live streaming driver. Future Google support will be a new `agy` backend tag, not a revived Gemini backend.
 
-Codex and Pi are subprocess-stream backends: they share one `runSubprocessConversation` helper (`subprocess-run.ts`) that owns process spawn, stdout line-splitting, stderr capture, non-zero-exit failure, cancellation, a 120s inactivity watchdog, and a 600s wall-clock cap by default. Claude uses an ACP JSON-RPC adapter by default and keeps the previous stream-json subprocess path as an explicit fallback. OpenCode uses a long-lived `opencode serve` process driven over HTTP/SSE through a shared server manager, with its own 120s inactivity watchdog, 600s wall-clock cap, 30s startup timeout, and abortable POSTs.
+Codex and Pi are subprocess-stream backends: they share one `runSubprocessConversation` helper (`subprocess-run.ts`) that owns process spawn, stdout line-splitting, stderr capture, non-zero-exit failure, cancellation, a 120s inactivity watchdog, and a 600s wall-clock cap by default. Claude uses its stream-json subprocess transport by default; ACP JSON-RPC remains explicit opt-in pending installed-version compatibility proof. OpenCode uses a long-lived `opencode serve` process driven over HTTP/SSE through a shared server manager, with its own 120s inactivity watchdog, 600s wall-clock cap, 30s startup timeout, and abortable POSTs.
 
 A backend timeout stops the transport and resolves `awaitResult()` to `{ type: "failed", error }`; it does not abort the conversation's `signal`. The signal aborts only when `cancel()` is requested.
 
@@ -40,11 +40,18 @@ Codex parity status:
 
 ## Claude
 
-The Claude backend starts `claude-agent-acp` by default, or `ORCA_CLAUDE_ACP_COMMAND` when set, and maps ACP `session/update` JSON-RPC messages into the shared conversation stream. Set `ORCA_CLAUDE_TRANSPORT=stream-json` or `claude({ transport: "stream-json" })` to roll back to the previous `claude --print --input-format stream-json --output-format stream-json --verbose --include-partial-messages` subprocess path. Model-pinned and resumed Claude runs use that stream-json fallback automatically because the ACP adapter does not expose equivalent stable fields yet. Parity notes:
+The Claude backend uses the authenticated `claude` CLI through
+`--print --input-format stream-json --output-format stream-json --verbose
+--include-partial-messages` by default. Select ACP explicitly with
+`ORCA_CLAUDE_TRANSPORT=acp` or `claude({ transport: "acp" })`; it starts
+`claude-agent-acp`, or `ORCA_CLAUDE_ACP_COMMAND` when set, and maps ACP
+`session/update` JSON-RPC messages into the shared conversation stream. There
+is no automatic transport fallback because a timed-out turn may already have
+caused side effects. Parity notes:
 
-- Backend config: system prompt / git policy / retry are composed into the ACP prompt. Model selection and resume use the stream-json fallback.
+- Backend config: stream-json supports model selection and resume. Explicit ACP with either setting returns a transport-aware `BackendFailed` before spawning a process. ACP composes system prompt / git policy / retry into its prompt but does not expose equivalent stable model/resume fields.
 - Structured output: the final ACP text is validated against the Zod schema and returns a typed validation error (with raw output) on mismatch.
-- Sessions/resume: fresh ACP runs let Claude mint the session id. Resume remains supported by the stream-json fallback.
+- Sessions/resume: stream-json supports resume; fresh ACP runs let Claude mint the session id.
 - Cancellation: `session/cancel`, then forced process close after the cancellation timeout; the conversation completes cancelled.
 - `ask_user`: autonomous only (`canAskUser=false`); the MCP ask-user bridge is intentionally not ported.
 
@@ -87,6 +94,9 @@ Resolution order:
 3. `perBackend[tag]` overrides shared config for one backend.
 4. `ORCA_BACKEND_MODEL` overrides `perBackend[tag].model` and `config.model`.
 
+The optional `env` supplies selector values and Claude transport overrides.
+Claude child processes inherit `process.env` with those overrides applied.
+
 Invalid backend tags throw before a live backend process starts. OpenCode returns `shutdown`, and flow owners must call it when done because `opencode serve` is a managed process.
 
 ## Live backend smoke
@@ -101,9 +111,15 @@ ORCA_REAL_BACKEND_SMOKE=1 ORCA_REAL_BACKEND=codex bun test tests/integration/rea
 
 ## Monitoring and current dogfood baseline
 
-`workflows/ai-slop-cleanup.ts --monitor` writes `.orca/monitoring/<runId>.json` with stage timing, per-file outcomes, validation command durations, repair counts, failure categories, changed paths, dirty-baseline snapshot paths when available, and backend usage/tokens when emitted. `bun run scripts/summarize-run.ts` summarizes those logs by backend, stage, file, repairs, failures, and usage.
+`workflows/ai-slop-cleanup.ts --monitor` writes `.orca/monitoring/<runId>.json`
+with terminal `status`, `endedAt`, current/failed stage, backend, transport,
+terminal error, stage timing, outcomes, and usage. `bun run
+scripts/summarize-run.ts` summarizes completed logs.
 
-The monitor records durable JSON first; when a run reporter is active, those same stage, outcome, failure, cycle, heartbeat, and log-artifact facts also feed the human CLI progress stream on stderr.
+Terminal JSON is the durable authoritative final outcome, including when wrapper
+exit text disagrees. During a run, use stderr, heartbeat/stage events, persistent
+plan, loop state, and Git progress as live signals; the final JSON need not exist
+until the run terminates.
 
 Observed on 2026-06-12 using clean disposable repositories with `--no-publish --monitor --max-files=1` against `src/conversation/ask-user.ts`:
 
