@@ -153,10 +153,14 @@ biased the plan toward the latest merged work.
 ### emit-monitoring-json (any mutating archetype)
 This is required for long-running mutating artifacts and already present in the
 persistent-multitask template. For another archetype, instantiate
-`new WorkflowMonitor(selected.tag)`, wrap meaningful steps with
+`new WorkflowMonitor(backendTag, { transport })` before initialization, wrap meaningful steps with
 `monitor.stage(...)`, call `recordOutcome`/`recordFailure` per unit of work, and
-`await monitor.writeLog(".orca/monitoring")` in the `finally`. `orcats-flow`
-reads these logs and `scripts/summarize-run.ts` summarizes them. Note
+`await monitor.finalize(logDir, finalization)` in the `finally`, after backend
+shutdown. Capture `{ status: "failed", error }` in the catch and rethrow the
+original error; initialize the finalization to `{ status: "succeeded" }`.
+See [Monitoring](dsl.md#monitoring) for the complete pattern. `orcats-flow`
+follows live process/stage progress, then reads terminal logs;
+`scripts/summarize-run.ts` summarizes them. Note
 `exactOptionalPropertyTypes`: build optional fields with a conditional spread
 (`...(cond ? { iterations } : {})`) rather than passing `undefined`.
 

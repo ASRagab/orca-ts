@@ -17,7 +17,7 @@
  * Run: `bun run scripts/check-doc-symbols.ts`
  * Exits non-zero with a per-contract diff on any mismatch.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
@@ -27,6 +27,37 @@ const WEB = join(ROOT, "website", "src", "content", "docs");
 
 function read(path: string): string {
   return readFileSync(path, "utf8");
+}
+
+function filesUnder(path: string): string[] {
+  return readdirSync(path, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name));
+}
+
+function sourceEnvironmentVariables(path: string): string[] {
+  const text = read(path);
+  const names = new Set<string>();
+  for (const match of text.matchAll(/(?:process\.)?env\.((?:ORCA_)[A-Z0-9_]+)/g)) {
+    if (match[1] !== undefined) names.add(match[1]);
+  }
+  for (const match of text.matchAll(/(?:process\.)?env\[["']((?:ORCA_)[A-Z0-9_]+)["']\]/g)) {
+    if (match[1] !== undefined) names.add(match[1]);
+  }
+  for (const match of text.matchAll(/\$(?:\{)?((?:ORCA_)[A-Z0-9_]+)/g)) {
+    if (match[1] !== undefined) names.add(match[1]);
+  }
+  for (const match of text.matchAll(
+    /(?:export\s+)?const\s+(\w+)\s*=\s*["']((?:ORCA_)[A-Z0-9_]+)["']/g,
+  )) {
+    const constant = match[1];
+    const name = match[2];
+    if (constant !== undefined && name !== undefined) {
+      const escaped = constant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (new RegExp(`(?:process\\.)?env\\[${escaped}\\]`).test(text)) names.add(name);
+    }
+  }
+  return [...names];
 }
 
 /** Extract every `"literal"` (or `'literal'`) from a span of source text. */
@@ -117,9 +148,6 @@ const sinkIo = read(join(SRC, "loop", "io", "sink.ts"));
 const firing = read(join(SRC, "loop", "firing.ts"));
 const accessors = read(join(SRC, "flow", "accessors.ts"));
 const reviewers = read(join(SRC, "review", "reviewers.ts"));
-const select = read(join(SRC, "backends", "select.ts"));
-const persistent = read(join(SRC, "plan", "persistent.ts"));
-const baseline = read(join(SRC, "baseline", "index.ts"));
 
 // RuntimeError _tag variants: every `_tag: z.literal("X")` in schemas.ts.
 const runtimeErrorTags = cap1(/_tag:\s*z\.literal\("([A-Za-z]+)"\)/g, schemas);
@@ -155,13 +183,46 @@ const reviewerIds = [...reviewers.matchAll(/ReviewerIds\s*=\s*\[([\s\S]*?)\]/g)]
 const defaultReviewers = [...reviewers.matchAll(/DefaultReviewers\s*=\s*\[([\s\S]*?)\]/g)]
   .flatMap((m) => literals(m[1] ?? ""));
 
-// Env vars the docs must document. Canonical = present in src.
-const envVars = [
-  { name: "ORCA_BACKEND", inSrc: select.includes("ORCA_BACKEND") },
-  { name: "ORCA_BASELINE_POLICY", inSrc: baseline.includes("ORCA_BASELINE_POLICY") },
-  { name: "ORCA_LOOP_EVENT", inSrc: firing.includes("ORCA_LOOP_EVENT") },
-  { name: "ORCA_DEP_LOOP_COLLAPSE", inSrc: persistent.includes("ORCA_DEP_LOOP_COLLAPSE") },
-];
+type EnvironmentVariableClass = "public" | "diagnostic" | "internal";
+
+const environmentVariableClasses = {
+  ORCA_ACP_BENCHMARK_LIVE: "diagnostic",
+  ORCA_ACP_CAPTURE_LIVE: "diagnostic",
+  ORCA_BACKEND: "public",
+  ORCA_BACKEND_MODEL: "public",
+  ORCA_BASELINE_POLICY: "public",
+  ORCA_CHECKER_ASSETS: "internal",
+  ORCA_CLAUDE_ACP_COMMAND: "diagnostic",
+  ORCA_CLAUDE_TRANSPORT: "public",
+  ORCA_CODEX_ACP_COMMAND: "diagnostic",
+  ORCA_EMBEDDED_RESPAWNED: "internal",
+  ORCA_EXPERIMENTAL_ACP_BACKENDS: "diagnostic",
+  ORCA_FACADE_GATE_ROOT: "internal",
+  ORCA_FLOW_ARGS: "internal",
+  ORCA_INSTALL_DIR: "public",
+  ORCA_LOOP_EVENT: "public",
+  ORCA_MONITOR_DIR: "public",
+  ORCA_REAL_BACKEND: "diagnostic",
+  ORCA_REAL_BACKEND_SMOKE: "diagnostic",
+  ORCA_TYPECHECK_SKIPPED: "internal",
+  ORCA_VERSION: "public",
+} as const satisfies Record<string, EnvironmentVariableClass>;
+
+const environmentSourceFiles = [
+  ...filesUnder(SRC),
+  ...filesUnder(join(ROOT, "bin")),
+  ...filesUnder(join(ROOT, "scripts")).filter((path) => path !== import.meta.path),
+  ...filesUnder(join(ROOT, "skills")).filter((path) => path.includes("/scripts/")),
+  join(ROOT, "install.sh"),
+  join(ROOT, "tests", "integration", "real-backend-smoke.test.ts"),
+].filter((path) => /\.(?:ts|sh)$/.test(path));
+const discoveredEnvironmentVariables = dedupeSorted(
+  environmentSourceFiles.flatMap(sourceEnvironmentVariables),
+);
+const classifiedEnvironmentVariables = Object.keys(environmentVariableClasses).sort();
+const documentedEnvironmentVariables = classifiedEnvironmentVariables.filter(
+  (name) => environmentVariableClasses[name as keyof typeof environmentVariableClasses] !== "internal",
+);
 
 // ---------------------------------------------------------------------------
 // Contract registry. Each contract maps a canonical (src-derived) set to the
@@ -258,18 +319,17 @@ const contracts: Contract[] = [
   },
   {
     name: "Environment variables",
-    canonical: envVars.filter((e) => e.inSrc).map((e) => e.name),
-    docFiles: [
-      webRef("backends.md"),
-      webRef("cli.md"),
-      webRef("agent-skills.md"),
-      webGuide("saved-workflow.md"),
-      webGuide("served-loops.md"),
-      join(DOCS, "plans.md"),
-      join(DOCS, "review.md"),
-    ],
+    canonical: documentedEnvironmentVariables,
+    docFiles: [join(DOCS, "environment.md")],
     mode: "present",
-    hint: "Every ORCA_* env var read in src must be documented somewhere.",
+    hint: "Every public or diagnostic ORCA_* variable must appear in docs/environment.md.",
+  },
+  {
+    name: "Published environment variables",
+    canonical: documentedEnvironmentVariables,
+    docFiles: [webRef("environment.md")],
+    mode: "present",
+    hint: "Every public or diagnostic ORCA_* variable must appear in the canonical website reference.",
   },
 ];
 
@@ -407,6 +467,28 @@ for (const [name, set] of sanityChecks) {
   if (set.length === 0) {
     fail(`SANITY: ${name}`, "    src extraction returned an empty set — regex is broken");
   }
+}
+
+const unclassifiedEnvironmentVariables = missing(
+  discoveredEnvironmentVariables,
+  classifiedEnvironmentVariables,
+);
+const staleEnvironmentVariables = missing(
+  classifiedEnvironmentVariables,
+  discoveredEnvironmentVariables,
+);
+if (unclassifiedEnvironmentVariables.length > 0 || staleEnvironmentVariables.length > 0) {
+  fail(
+    "Environment variable classification",
+    (unclassifiedEnvironmentVariables.length > 0
+      ? `    unclassified source variables: ${unclassifiedEnvironmentVariables.join(", ")}\n`
+      : "") +
+      (staleEnvironmentVariables.length > 0
+        ? `    classified but not source-derived: ${staleEnvironmentVariables.join(", ")}`
+        : ""),
+  );
+} else {
+  pass("Environment variable classification");
 }
 
 // ---------------------------------------------------------------------------

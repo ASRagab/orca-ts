@@ -5,6 +5,7 @@ import {
   ConversationEventSchema,
   RuntimeErrorSchema,
   canonicalJsonSchemas,
+  describeRuntimeError,
   orThrow,
   parseStructuredOutput,
   sessionId
@@ -33,6 +34,15 @@ describe("canonical model", () => {
     expect(RuntimeErrorSchema.parse({ _tag: "NothingToCommit" })).toEqual({
       _tag: "NothingToCommit"
     });
+  });
+
+  test("renders thrown values that JSON cannot serialize as readable strings", () => {
+    for (const error of [undefined, Symbol("lost diagnostic"), () => {}, { toJSON: () => undefined }]) {
+      const message = describeRuntimeError(error);
+      expect(message).toBeTypeOf("string");
+      expect(message.length).toBeGreaterThan(0);
+    }
+    expect(describeRuntimeError(Symbol("lost diagnostic"))).toContain("lost diagnostic");
   });
 
   test("exports canonical JSON schemas", () => {

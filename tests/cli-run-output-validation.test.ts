@@ -17,6 +17,7 @@ import {
 const repoRoot = process.cwd();
 const apiPath = join(repoRoot, "src", "index.ts");
 const repoHealthLoopPath = join(repoRoot, "tests", "fixtures", "repo-health-loop.ts");
+const orcatsBin = join(repoRoot, "bin", "orcats");
 
 async function createDisposableTargetRepo(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "orca-output-target-"));
@@ -58,7 +59,7 @@ async function runCliWithThrownValue(expression: string) {
   await writeFile(flowPath, `throw ${expression};\n`);
 
   try {
-    return await runCliProcess("bun", ["./bin/orcats", "--no-typecheck", flowPath], {
+    return await runCliProcess(orcatsBin, ["--no-typecheck", flowPath], {
       cwd: repoRoot,
       timeoutMs: 5_000,
     });
@@ -124,7 +125,8 @@ await new Promise(() => undefined);
     );
 
     try {
-      const result = await runCliProcess("bun", ["./bin/orcats", "--no-typecheck", flowPath], {
+      // Exercise escalation without racing the CLI's module-loading startup.
+      const result = await runCliProcess("bun", [flowPath], {
         cwd: repoRoot,
         forceKillAfterMs: 50,
         timeoutMs: 500,
@@ -162,7 +164,7 @@ export default defineLoop({
     );
 
     try {
-      const result = await runCliProcess("bun", ["./bin/orcats", "run", "--no-typecheck", loopPath], {
+      const result = await runCliProcess(orcatsBin, ["run", "--no-typecheck", loopPath], {
         cwd: repoRoot,
         timeoutMs: 5_000,
       });
@@ -182,7 +184,7 @@ export default defineLoop({
     const before = await gitStatus(target);
 
     try {
-      const result = await runCliProcess("bun", ["./bin/orcats", "run", "--no-typecheck", repoHealthLoopPath], {
+      const result = await runCliProcess(orcatsBin, ["run", "--no-typecheck", repoHealthLoopPath], {
         cwd: repoRoot,
         env: { ORCA_VALIDATE_TARGET_REPO: target },
         timeoutMs: 10_000,
@@ -221,7 +223,7 @@ export default defineLoop({
     const before = await gitStatus(target);
 
     try {
-      const result = await runCliProcess("bun", ["./bin/orcats", "serve", "--no-typecheck", repoHealthLoopPath], {
+      const result = await runCliProcess(orcatsBin, ["serve", "--no-typecheck", repoHealthLoopPath], {
         cwd: repoRoot,
         env: { ORCA_VALIDATE_TARGET_REPO: target },
         shutdownAfter: { stream: "stdout", pattern: /"checkedAt": "deterministic"/, signal: "SIGINT" },

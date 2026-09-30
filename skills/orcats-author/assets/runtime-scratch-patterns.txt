@@ -1,0 +1,8 @@
+.orca/monitoring/**
+.orca/plan-*.md
+.orca/state-*.json
+.orca/state-*.json.*
+.orca/*.sqlite
+.orca/*.sqlite-*
+.orca/context/**
+.orca/*-body.md

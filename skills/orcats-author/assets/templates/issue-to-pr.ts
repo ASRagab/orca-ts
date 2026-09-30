@@ -29,6 +29,17 @@ import {
   selectBackend,
 } from "@twelvehart/orcats";
 
+const RUNTIME_SCRATCH_PATTERNS = [
+  ".orca/monitoring/**",
+  ".orca/plan-*.md",
+  ".orca/state-*.json",
+  ".orca/state-*.json.*",
+  ".orca/*.sqlite",
+  ".orca/*.sqlite-*",
+  ".orca/context/**",
+  ".orca/*-body.md",
+] as const;
+
 interface Cmd {
   readonly command: string;
   readonly args: readonly string[];
@@ -111,7 +122,16 @@ await flow(flowArgs())(async () => {
       throw new Error(`gate did not converge (${why}); not opening a PR`);
     }
 
-    await runRequired({ command: "git", args: ["add", "-A"] });
+    await runRequired({
+      command: "git",
+      args: [
+        "add",
+        "-A",
+        "--",
+        ".",
+        ...RUNTIME_SCRATCH_PATTERNS.map((pattern) => `:(exclude,glob)${pattern}`),
+      ],
+    });
     await runRequired({ command: "git", args: ["commit", "-m", PR_TITLE] });
     await runRequired({ command: "git", args: ["push", "-u", "origin", "HEAD"] });
 

@@ -16,6 +16,7 @@ import {
   type OutcomeVerdict,
   type RegressedReason,
   type Usage,
+  type WorkflowFinalization,
   WorkflowMonitor,
 } from "../src/index.ts";
 
@@ -520,23 +521,47 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
 }
 
 async function runCleanupWorkflow(args: WorkflowArgs): Promise<void> {
-  const selected = selectBackend({
-    default: "codex",
-    perBackend: {
-      codex: { approvalPolicy: "never" },
-      opencode: { model: "openai/gpt-5.5" }
-    }
-  });
-  console.log(`Cleanup backend: ${selected.tag}${selected.model ? ` (${selected.model})` : ""}`);
+  const backend = process.env.ORCA_BACKEND || "codex";
   // Eval mode always records a verdict log — it is the run's only deliverable.
-  const monitor = args.monitor || args.evalMode ? new WorkflowMonitor(selected.tag) : undefined;
+  const monitor = args.monitor || args.evalMode ? new WorkflowMonitor(backend, {
+    transport: backend === "claude"
+      ? (process.env.ORCA_CLAUDE_TRANSPORT ?? "stream-json")
+      : backend === "opencode"
+        ? "http-sse"
+        : backend === "codex" && (process.env.ORCA_EXPERIMENTAL_ACP_BACKENDS === "1" ||
+          process.env.ORCA_EXPERIMENTAL_ACP_BACKENDS?.split(",").some((tag) => tag.trim() === "codex"))
+          ? "acp"
+          : "subprocess",
+  }) : undefined;
+  let selected: SelectedBackend | undefined;
+  let finalization: WorkflowFinalization = { status: "succeeded" };
   try {
-    await runCleanupWithBackend(args, selected, monitor);
+    try {
+      selected = await monitored(monitor, "initialize", () => Promise.resolve(selectBackend({
+        default: "codex",
+        perBackend: {
+          codex: { approvalPolicy: "never" },
+          opencode: { model: "openai/gpt-5.5" }
+        }
+      })));
+      console.log(`Cleanup backend: ${selected.tag}${selected.model ? ` (${selected.model})` : ""}`);
+      await runCleanupWithBackend(args, selected, monitor);
+    } catch (error) {
+      finalization = { status: "failed", error };
+      throw error;
+    } finally {
+      await selected?.shutdown?.();
+    }
+  } catch (error) {
+    if (finalization.status === "failed") {
+      throw finalization.error;
+    }
+    finalization = { status: "failed", error };
+    throw error;
   } finally {
-    await selected.shutdown?.();
     if (monitor) {
       const logDir = process.env.ORCA_MONITOR_DIR ?? join(process.cwd(), ".orca", "monitoring");
-      await monitor.writeLog(logDir);
+      await monitor.finalize(logDir, finalization);
       console.log(`Monitor log written to ${logDir}/${monitor.runId}.json`);
     }
   }
@@ -936,6 +961,9 @@ async function askAgentForCleanup(
   const outcome = await conversation.awaitResult();
 
   if (outcome.type !== "success") {
+    // RuntimeError is a tagged object; retain its transport and recovery context.
+    // eslint-disable-next-line @typescript-eslint/only-throw-error
+    if (outcome.type === "failed") throw outcome.error;
     throw new Error(`${selected.tag} cleanup failed for ${args.filePath}: ${JSON.stringify(outcome)}`);
   }
 

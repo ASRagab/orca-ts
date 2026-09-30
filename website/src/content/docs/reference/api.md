@@ -58,7 +58,14 @@ The full tool interfaces (`FsTool`, `GitTool`, `GitHubTool`, `LinearTool`, `Comm
 
 ## Monitoring
 
-`WorkflowMonitor` records a `WorkflowRunLog` (stages, outcomes, failures, summary, progress) and writes it with `writeLog(logDir)`. The log schema and `OutcomeVerdict` values are documented in the [Monitoring And Recovery guide](../../guides/monitoring-recovery/).
+`WorkflowMonitor` records a `WorkflowRunLog` (stages, outcomes, failures, summary,
+progress). Construct it before backend initialization with the intended backend
+tag and selected `transport`. `finalize(logDir, { status: "succeeded" })` or
+`finalize(logDir, { status: "failed", error })` persists terminal state atomically;
+duplicate finalization calls share the first result. `writeLog(logDir)` writes
+an interim snapshot without ending the run. The log schema, lifecycle pattern,
+and `OutcomeVerdict` values are documented in the
+[Monitoring And Recovery guide](../../guides/monitoring-recovery/).
 
 ## Results and schemas
 

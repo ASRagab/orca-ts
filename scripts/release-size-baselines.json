@@ -1,0 +1,19 @@
+{
+  "note": "Distribution size budgets. Each maximum is capped at 110% of the measured baseline, rounded up to the next KiB (see scripts/validate-release.ts). Updating a baseline requires refreshing measuredVersion and the rationale.",
+  "artifacts": [
+    {
+      "artifact": "npm-package:compressed",
+      "baselineBytes": 7903988,
+      "maxBytes": 8694784,
+      "measuredVersion": "0.3.0",
+      "rationale": "Compressed `npm pack` tarball. Dominated by the bundled offline checker payload under dist/checker; 110% headroom absorbs declaration and dependency drift before a deliberate baseline bump is required."
+    },
+    {
+      "artifact": "npm-package:installed",
+      "baselineBytes": 40997225,
+      "maxBytes": 45096960,
+      "measuredVersion": "0.3.0",
+      "rationale": "Unpacked install size reported by `npm pack --dry-run`. The self-contained TypeScript checker inputs are the largest contributor; the budget guards against unbounded growth of dist/checker."
+    }
+  ]
+}

@@ -30,6 +30,8 @@ import {
   type FixLoopStop,
   type PlanTask,
   type RegressedReason,
+  type SelectedBackend,
+  type WorkflowFinalization,
 } from "@twelvehart/orcats";
 
 interface Cmd {
@@ -50,7 +52,7 @@ const GATE: readonly Cmd[] = [
 
 const OBJECTIVE = "REPLACE_WITH_OBJECTIVE";
 
-const MONITOR_DIR = ".orca/monitoring";
+const MONITOR_DIR = process.env.ORCA_MONITOR_DIR ?? ".orca/monitoring";
 
 const PlanSchema = z.object({
   tasks: z.array(z.object({ id: z.string(), description: z.string() })),
@@ -62,112 +64,142 @@ interface GateIssue {
 }
 
 await flow(flowArgs())(async () => {
-  const selected = selectBackend({ default: "claude" });
-  const baseline = resolveBaselinePolicy({ args: flowArgs() });
+  const backend = process.env.ORCA_BACKEND || "claude";
   const cwd = process.cwd();
   const planPath = defaultPlanPath(cwd, OBJECTIVE);
-  const monitor = new WorkflowMonitor(selected.tag);
+  const monitor = new WorkflowMonitor(backend, {
+    transport:
+      backend === "claude"
+        ? (process.env.ORCA_CLAUDE_TRANSPORT ?? "stream-json")
+        : backend === "opencode"
+          ? "http-sse"
+          : backend === "codex" && (process.env.ORCA_EXPERIMENTAL_ACP_BACKENDS === "1" ||
+            process.env.ORCA_EXPERIMENTAL_ACP_BACKENDS?.split(",").some((tag) => tag.trim() === "codex"))
+            ? "acp"
+            : "subprocess",
+  });
+  let shutdown: SelectedBackend["shutdown"];
+  let finalization: WorkflowFinalization = { status: "succeeded" };
 
   try {
-    await runBaselineGate({
-      policy: baseline.policy,
-      commands: GATE,
-      monitor,
-      repair: async (issues) => {
-        const repair = await llm()
-          .autonomous(selected.backend, {
-            prompt: `The baseline verification gate failed before task planning:\n${issues
-              .map((i) => i.message)
-              .join("\n")}\nFix the baseline. Do not weaken the gate.`,
-          })
-          .awaitResult();
-        if (repair.type !== "success") throw new Error(`baseline repair failed: ${describeOutcome(repair)}`);
-        return { usage: repair.result.usage };
-      },
-    });
-
-    const tasks = await loadOrPlanTasks(selected.backend, cwd);
-    const pending = tasks.filter((task) => !task.done);
-    console.log(
-      `Plan: ${String(tasks.length)} task(s), ${String(pending.length)} pending -> ${planPath}`,
-    );
-
-    let completedThisRun = 0;
-    for (const task of pending) {
-      console.log(`▶ ${task.id}: ${task.description}`);
-      const taskStart = Date.now();
-      const impl = await llm()
-        .autonomous(selected.backend, { prompt: `Implement this task:\n${task.description}` })
-        .awaitResult();
-      if (impl.type !== "success") {
-        monitor.recordFailure({
-          file: task.id,
-          error: `implementation failed: ${describeOutcome(impl)}`,
-          durationMs: Date.now() - taskStart,
-          category: "environment",
-        });
-        throw new Error(`${task.id} implementation failed: ${describeOutcome(impl)}`);
-      }
-
-      const seen = new Set<string>();
-      const loop = await fixLoop<GateIssue>(
-        async () => {
-          const failure = await runGate(GATE);
-          return ok(failure ? [{ message: failure, fixable: true as const }] : []);
-        },
-        async (issues) => {
+    try {
+      const selected = await monitor.stage("initialize", async () => selectBackend({ default: "claude" }));
+      shutdown = selected.shutdown;
+      const baseline = resolveBaselinePolicy({ args: flowArgs() });
+      await runBaselineGate({
+        policy: baseline.policy,
+        commands: GATE,
+        monitor,
+        repair: async (issues) => {
           const repair = await llm()
             .autonomous(selected.backend, {
-              prompt: `Task "${task.description}" failed the gate:\n${issues
+              prompt: `The baseline verification gate failed before task planning:\n${issues
                 .map((i) => i.message)
-                .join("\n")}\nFix it without weakening the gate.`,
+                .join("\n")}\nFix the baseline. Do not weaken the gate.`,
             })
             .awaitResult();
-          if (repair.type !== "success") throw new Error(`repair failed: ${describeOutcome(repair)}`);
-          return ok(undefined);
+          if (repair.type === "failed") throw repair.error;
+          if (repair.type !== "success") throw new Error(`baseline repair failed: ${describeOutcome(repair)}`);
+          return { usage: repair.result.usage };
         },
-        { maxIterations: 8, wallClockMs: 10 * 60_000, stalled: (i) => stalled(seen, i) },
+      });
+
+      const tasks = await monitor.stage("plan", () => loadOrPlanTasks(selected.backend, cwd));
+      const pending = tasks.filter((task) => !task.done);
+      console.log(
+        `Plan: ${String(tasks.length)} task(s), ${String(pending.length)} pending -> ${planPath}`,
       );
 
-      if (loop.isErr() || !loop.value.converged) {
-        const why = loop.isErr() ? JSON.stringify(loop.error) : loop.value.stop;
-        monitor.recordOutcome({
-          file: task.id,
-          verdict: "regressed",
-          durationMs: Date.now() - taskStart,
-          smellsRemoved: [],
-          reason: why,
-          ...(loop.isOk()
-            ? { iterations: loop.value.iterations, regressedReason: regressedReasonFor(loop.value.stop) }
-            : {}),
+      let completedThisRun = 0;
+      for (const task of pending) {
+        await monitor.stage(`task:${task.id}`, async () => {
+          console.log(`▶ ${task.id}: ${task.description}`);
+          const taskStart = Date.now();
+          const impl = await llm()
+            .autonomous(selected.backend, { prompt: `Implement this task:\n${task.description}` })
+            .awaitResult();
+          if (impl.type !== "success") {
+            monitor.recordFailure({
+              file: task.id,
+              error: impl.type === "failed" ? impl.error : `implementation failed: ${describeOutcome(impl)}`,
+              durationMs: Date.now() - taskStart,
+              category: "environment",
+            });
+            if (impl.type === "failed") throw impl.error;
+            throw new Error(`${task.id} implementation failed: ${describeOutcome(impl)}`);
+          }
+
+          const seen = new Set<string>();
+          const loop = await fixLoop<GateIssue>(
+            async () => {
+              const failure = await runGate(GATE);
+              return ok(failure ? [{ message: failure, fixable: true as const }] : []);
+            },
+            async (issues) => {
+              const repair = await llm()
+                .autonomous(selected.backend, {
+                  prompt: `Task "${task.description}" failed the gate:\n${issues
+                    .map((i) => i.message)
+                    .join("\n")}\nFix it without weakening the gate.`,
+                })
+                .awaitResult();
+              if (repair.type === "failed") throw repair.error;
+              if (repair.type !== "success") throw new Error(`repair failed: ${describeOutcome(repair)}`);
+              return ok(undefined);
+            },
+            { maxIterations: 8, wallClockMs: 10 * 60_000, stalled: (i) => stalled(seen, i) },
+          );
+
+          if (loop.isErr() || !loop.value.converged) {
+            const why = loop.isErr() ? JSON.stringify(loop.error) : loop.value.stop;
+            monitor.recordOutcome({
+              file: task.id,
+              verdict: "regressed",
+              durationMs: Date.now() - taskStart,
+              smellsRemoved: [],
+              reason: why,
+              ...(loop.isOk()
+                ? { iterations: loop.value.iterations, regressedReason: regressedReasonFor(loop.value.stop) }
+                : {}),
+            });
+            if (loop.isErr()) throw loop.error;
+            throw new Error(`${task.id} did not converge: ${why}`);
+          }
+
+          // Persist progress: check this task off so a crash/re-run skips it.
+          markDone(tasks, task.id);
+          const written = await writePlan(cwd, OBJECTIVE, renderPlanMarkdown(tasks));
+          if (written.isErr()) {
+            throw new Error(`failed to persist plan: ${JSON.stringify(written.error)}`);
+          }
+          monitor.recordOutcome({
+            file: task.id,
+            verdict: loop.value.iterations === 0 ? "clean" : "repaired",
+            durationMs: Date.now() - taskStart,
+            smellsRemoved: [],
+            iterations: loop.value.iterations,
+          });
+          completedThisRun += 1;
         });
-        throw new Error(`${task.id} did not converge: ${why}`);
       }
 
-      // Persist progress: check this task off so a crash/re-run skips it.
-      markDone(tasks, task.id);
-      const written = await writePlan(cwd, OBJECTIVE, renderPlanMarkdown(tasks));
-      if (written.isErr()) {
-        throw new Error(`failed to persist plan: ${JSON.stringify(written.error)}`);
-      }
-      monitor.recordOutcome({
-        file: task.id,
-        verdict: loop.value.iterations === 0 ? "clean" : "repaired",
-        durationMs: Date.now() - taskStart,
-        smellsRemoved: [],
-        iterations: loop.value.iterations,
-      });
-      completedThisRun += 1;
+      const completed = tasks.filter((task) => task.done).length;
+      console.log(
+        `Completed ${String(completedThisRun)} task(s) this run; ${String(completed)}/${String(tasks.length)} total.`,
+      );
+    } catch (error) {
+      finalization = { status: "failed", error };
+      throw error;
+    } finally {
+      await shutdown?.();
     }
-
-    const completed = tasks.filter((task) => task.done).length;
-    console.log(
-      `Completed ${String(completedThisRun)} task(s) this run; ${String(completed)}/${String(tasks.length)} total.`,
-    );
+  } catch (error) {
+    if (finalization.status === "failed") throw finalization.error;
+    finalization = { status: "failed", error };
+    throw error;
   } finally {
-    await monitor.writeLog(MONITOR_DIR);
+    await monitor.finalize(MONITOR_DIR, finalization);
     console.log(`▶ monitor log: ${MONITOR_DIR}/${monitor.runId}.json`);
-    await selected.shutdown?.();
   }
 });
 
@@ -192,6 +224,7 @@ async function loadOrPlanTasks(
     })
     .awaitResult();
   if (outcome.type !== "success") {
+    if (outcome.type === "failed") throw outcome.error;
     throw new Error(`planning failed: ${describeOutcome(outcome)}`);
   }
   if (!outcome.result.structured) {

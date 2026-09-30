@@ -163,7 +163,11 @@ export const UnsupportedFeatureErrorSchema = z.object({
 export const BackendFailedErrorSchema = z.object({
   _tag: z.literal("BackendFailed"),
   backend: BackendTagSchema,
-  message: z.string()
+  message: z.string(),
+  transport: z.string().optional(),
+  phase: z.string().optional(),
+  artifactPath: z.string().optional(),
+  recovery: z.string().optional()
 });
 
 export const TypecheckFailedErrorSchema = z.object({

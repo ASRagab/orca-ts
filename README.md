@@ -14,7 +14,9 @@ The package is version `0.3.0`. Install the public npm package for normal projec
 npm i @twelvehart/orcats
 ```
 
-The package provides the TypeScript authoring API and the Bun-backed `orcats` CLI shim. GitHub Release binaries remain available when you need a standalone executable with no project `node_modules`.
+The package provides the TypeScript authoring API and an `orcats` launcher that
+clears ambient `BUN_OPTIONS` before entering Bun. GitHub Release binaries remain
+available when you need a standalone executable with no project `node_modules`.
 
 Canonical repository: <https://github.com/ASRagab/orca-ts>
 
@@ -38,7 +40,8 @@ npm i -D typescript
 bunx -p @twelvehart/orcats orcats --version
 ```
 
-`typescript` is only needed for editor feedback and the CLI typecheck preflight. Bun `>=1.3.0` must be on `PATH` because the npm CLI shim runs with Bun.
+`typescript` is only needed for editor feedback. The CLI carries its own offline
+artifact checker. Bun `>=1.3.0` must be on `PATH` for npm and source-checkout use.
 
 Flow files import from `@twelvehart/orcats`:
 
@@ -77,6 +80,7 @@ Use this for contributing to Orca itself.
 git clone https://github.com/ASRagab/orca-ts.git
 cd orca-ts
 bun install --frozen-lockfile
+./bin/orcats --version
 bun run verify
 ```
 
@@ -122,7 +126,7 @@ Orca normalizes backend output into one `Conversation` model, but each backend s
 
 | Backend | Flow constructor | Runtime requirement |
 | --- | --- | --- |
-| Claude | `claude()` | `claude-agent-acp` on `PATH`, or `ORCA_CLAUDE_ACP_COMMAND` set; use `ORCA_CLAUDE_TRANSPORT=stream-json` to fall back to the authenticated `claude` CLI |
+| Claude | `claude()` | Authenticated `claude` CLI for default `stream-json`; set `ORCA_CLAUDE_TRANSPORT=acp` for explicit ACP use |
 | Codex | `codex()` | `codex` CLI on `PATH` and authenticated |
 | OpenCode | `opencode()` | `opencode` CLI on `PATH` and authenticated; Orca manages `opencode serve` |
 | Pi | `pi()` | `pi` CLI on `PATH` and authenticated |
@@ -148,6 +152,11 @@ Precedence:
 1. `ORCA_BACKEND` overrides `default`.
 2. `ORCA_BACKEND_MODEL` overrides `perBackend[tag].model` and `config.model`.
 3. Flow code that calls `claude()`, `codex()`, `opencode()`, or `pi()` directly pins the backend and ignores `--backend`.
+
+Static CLI and auth checks do not prove a backend usable. The setup doctor marks
+the selected transport usable only after a consent-gated live readiness turn.
+See the canonical [environment reference](https://ASRagab.github.io/orca-ts/reference/environment/)
+for every supported `ORCA_*` setting and live-spending gate.
 
 ## Loops
 
@@ -176,6 +185,7 @@ Start with the full guide: [Loops](docs/loops.md). It covers the first-loop tuto
 
 ```bash
 orcats [--backend <name>] [--no-typecheck] <flow.ts> [-- <task args>]
+orcats check <workflow-or-loop.ts>
 orcats run <loop>      # run a loop once; exit status reflects the stop reason
 orcats serve <loop>    # host a loop's trigger, spawning a child process per firing
 orcats loops           # list defined loops with their source and sink
@@ -185,6 +195,7 @@ orcats --version
 | Command | Meaning |
 | --- | --- |
 | `<flow.ts>` | Legacy script path: import and run a flow file (unchanged behavior) |
+| `check <artifact.ts>` | Typecheck one workflow or loop offline without importing it or using target-repository dependencies |
 | `run <loop>` | Run a loop once. `<loop>` is a loop module path or a registered loop name; exit code reflects the stop reason |
 | `serve <loop>` | Run a thin supervisor that owns the loop's trigger `Source` and spawns one isolated child process per firing through the shared firing contract |
 | `loops` | Discover and list loops from `.orca/loops/` without firing any trigger, backend, or sink |
@@ -192,12 +203,17 @@ orcats --version
 | Option | Meaning |
 | --- | --- |
 | `--backend <name>` | Validates the tag and sets `ORCA_BACKEND`, which `selectBackend()` reads |
-| `--no-typecheck` | Skips the `tsc --noEmit` pre-flight and sets `ORCA_TYPECHECK_SKIPPED=1` |
+| `--no-typecheck` | Explicitly skips the self-contained artifact preflight |
 | `--version`, `-v` | Prints `orcats <version>` |
 | `--help`, `-h` | Prints usage |
 | `-- <task args>` | Everything after `--` is the flow/loop task input, read via `flowArgs()` |
 
-Loop verbs and the legacy script path share one preflight: the typecheck guard, `--backend`, and the `--` task-arg channel apply to all of them. By default, the CLI typechecks the current project before importing when it can find project typecheck setup: `typescript`, `tsconfig.json`, and a local `@twelvehart/orcats` package dependency. A standalone binary flow in a zero-project directory without `tsconfig.json` skips this guard. Use `--no-typecheck` only when you intentionally want to skip it.
+Loop verbs and the legacy script path share one preflight: the self-contained
+artifact check, `--backend`, and the `--` task-arg channel apply to all of them.
+`orcats check <artifact.ts>` uses bundled TypeScript and Orcats declarations,
+needs no target `tsconfig.json`, package dependency, or network, and never
+imports or fires the artifact. A failed check blocks backend startup. Use
+`--no-typecheck` only for an acknowledged checker blocker.
 
 During a run, Orcats writes synthesized progress diagnostics to stderr from structured run-output events. Stdout stays reserved for explicit flow output and loop sink payloads.
 
@@ -233,9 +249,9 @@ pipeline:
 
 | Skill | Purpose |
 | --- | --- |
-| `skills/orcats-setup` | Install or verify the `orcats` CLI and verify at least one backend (claude/codex/opencode/pi) is authenticated; re-runnable as a doctor |
-| `skills/orcats-author` | Detect the target repo's real test/lint commands, interview for the workflow or loop shape, generate an artifact that typechecks, and respect the loop execution/source/sink contracts |
-| `skills/orcats-flow` | Run a saved workflow or loop with monitoring, detect stalls from progress/context-pressure evidence rather than slowness, and heal backend/auth/non-convergence failures within safety bounds |
+| `skills/orcats-setup` | Install or verify `orcats`, then prove at least one selected backend transport with a consent-gated readiness turn |
+| `skills/orcats-author` | Detect real gates, interview for workflow shape, generate an artifact, and require `orcats check` even outside TypeScript repositories |
+| `skills/orcats-flow` | Run a saved artifact, follow live stderr/heartbeat/plan/state/git progress, and trust terminal JSON for the final outcome |
 
 ### Install The Skills
 
@@ -390,7 +406,7 @@ ORCA_REAL_BACKEND_SMOKE=1 ORCA_REAL_BACKEND=pi bun test tests/integration/real-b
 | `bun` is missing or too old | Install Bun `>=1.3.0` for source/project workflows; standalone binaries do not need Bun |
 | CLI prints typecheck errors | Run `bun run typecheck`, fix the TypeScript errors, then rerun the flow |
 | `orcats` is not found after npm install | Run it through the local package bin with `bunx -p @twelvehart/orcats orcats`, or add `node_modules/.bin` to your script path |
-| `orcats: missing project typecheck setup` warning | Add `typescript`, `tsconfig.json`, and a local `@twelvehart/orcats` package dependency in the flow project to restore the typecheck guard |
+| Artifact check fails | Run `orcats check <artifact.ts>`, fix its diagnostics, and rerun; no target TypeScript setup or network is required |
 | Live flow cannot start a backend | Confirm the backend CLI or adapter is on `PATH`, authenticated, and usable outside Orcats |
 | `--backend` seems to do nothing | The flow must call `selectBackend()`; direct `claude()`/`codex()` calls pin the backend |
 | Installer fails on checksum | Re-run; if persistent, download the tarball and `SHA256SUMS.txt` from the release page manually |

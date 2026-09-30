@@ -12,7 +12,8 @@
 # flow opts into monitoring itself (the persistent-multitask template uses
 # WorkflowMonitor to write .orca/monitoring/<runId>.json). orcats writes progress
 # diagnostics to stderr and preserves stdout for payloads; this wrapper adds the
-# exit line and, only when the run produced a NEW monitor log, points at it.
+# exit line and, only when the run produced a NEW terminal monitor log, reports
+# its authoritative final status and path.
 set -uo pipefail
 
 [ $# -lt 1 ] && { echo "usage: orca-run.sh <flow.ts> [orcats/flow args...]" >&2; exit 2; }
@@ -40,6 +41,8 @@ if [ -d "$monitor_dir" ]; then
   latest="$(ls -t "$monitor_dir"/*.json 2>/dev/null | head -1 || true)"
   if [ -n "$latest" ] && [ "$latest" != "$before" ]; then
     echo "▶ monitor log: $latest" >&2
+    status="$(sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$latest" | head -1)"
+    [ -z "$status" ] || echo "▶ monitor final status=$status (authoritative)" >&2
   fi
 fi
 exit $ec

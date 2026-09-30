@@ -941,6 +941,7 @@ interface FinalizeWorkflowEvidenceOptions {
   readonly shutdown: FinalizationAction;
   readonly artifacts: readonly FinalizationAction[];
   readonly report: FinalizationAction;
+  readonly terminal?: FinalizationAction;
   readonly failureArtifactReserveMs?: number;
   readonly enterFailureState: (errors: readonly Error[]) => void;
 }
@@ -1099,6 +1100,14 @@ export async function finalizeWorkflowEvidence(
         )),
       );
     }
+  }
+
+  if (options.terminal !== undefined) {
+    const terminalErrors = await runFinalizationActions(
+      [options.terminal], options.remainingMs, 1, generation,
+    );
+    errors.push(...terminalErrors);
+    if (terminalErrors.length > 0) enterFailureState();
   }
 
   return errors;

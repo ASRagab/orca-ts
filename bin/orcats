@@ -1,4 +1,22 @@
-#!/usr/bin/env bun
-import { main } from "../src/cli/main.ts";
+#!/bin/sh
+set -eu
 
-await main();
+launcher=$0
+while [ -L "$launcher" ]; do
+  launcher_dir=$(CDPATH= cd -- "$(dirname -- "$launcher")" && pwd)
+  target=$(readlink "$launcher")
+  case "$target" in
+    /*) launcher=$target ;;
+    *) launcher=$launcher_dir/$target ;;
+  esac
+done
+launcher_dir=$(CDPATH= cd -- "$(dirname -- "$launcher")" && pwd)
+
+unset BUN_OPTIONS
+if [ -x "$launcher_dir/orcats-runtime" ]; then
+  if [ -d "$launcher_dir/checker" ]; then
+    export ORCA_CHECKER_ASSETS="$launcher_dir/checker"
+  fi
+  exec "$launcher_dir/orcats-runtime" "$@"
+fi
+exec bun "$launcher_dir/../src/cli/main.ts" "$@"

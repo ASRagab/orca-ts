@@ -5,6 +5,10 @@ modules live under `.orca/loops/<name>.ts`. The `orcats-author` skill generates
 mutating artifacts from checked templates and wires them to the target repo's
 confirmed test and lint commands.
 
+Before handoff, authoring runs `orcats check <artifact.ts>`. The check is
+self-contained and offline, so a missing target `tsconfig.json`, TypeScript
+installation, or Orcats dependency is never a reason to skip it.
+
 ## Baseline Policy
 
 Generated mutating artifacts default to `repair`:
@@ -47,3 +51,22 @@ running its main stage.
 When a `WorkflowMonitor` is attached, baseline outcomes record validation logs,
 repair iterations, usage when the backend reports it, convergence reason on
 failure, and `snapshotPath` when a dirty baseline snapshot exists.
+
+While a run is active, follow stderr/heartbeat, persistent plan, loop state,
+and Git progress. Terminal monitoring JSON is written as the durable final
+summary: its `status`, stage, backend, transport, and `terminalError` override
+ambiguous wrapper exit text. Missing terminal JSON during an active run is not
+failure evidence.
+
+Create `WorkflowMonitor` before backend initialization with the intended backend
+tag and `{ transport }`. Wrap meaningful work in `monitor.stage(...)`, then call
+`monitor.finalize(logDir, { status: "succeeded" })` or
+`monitor.finalize(logDir, { status: "failed", error })` after backend shutdown.
+Preserve the primary failure if shutdown also fails. Finalization writes
+atomically and repeated calls share its first result; `writeLog(logDir)` writes
+an interim snapshot without ending the run.
+
+Runtime monitoring, plan, state, and snapshot files belong in the repository's
+local exclude file from `git rev-parse --git-path info/exclude`, not a tracked
+`.gitignore`. Saved `.orca/workflows/` and `.orca/loops/` source remains
+committable.

@@ -51,7 +51,7 @@ if ! curl -fsSL "$INSTALL_URL" | bash; then
   echo "  1. Download the tarball + SHA256SUMS.txt for your platform from" >&2
   echo "     https://github.com/ASRagab/orca-ts/releases" >&2
   echo "  2. Verify: shasum -a 256 -c SHA256SUMS.txt" >&2
-  echo "  3. Move the extracted 'orcats' onto your PATH" >&2
+  echo "  3. Keep extracted 'orcats', 'orcats-runtime', and 'checker/' together on your PATH" >&2
   exit 1
 fi
 

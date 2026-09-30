@@ -43,6 +43,7 @@ export interface CommandOptions {
 
 const ExpectedFiles = [
   "bin/orcats",
+  "dist/checker/**",
   "dist/**/*.d.ts",
   "dist/**/*.d.ts.map",
   "src/**/*.ts",
@@ -76,7 +77,9 @@ const RequiredPackedFiles = [
   "dist/model/index.d.ts",
   "dist/model/index.d.ts.map",
   "dist/test-utils/index.d.ts",
-  "dist/test-utils/index.d.ts.map"
+  "dist/test-utils/index.d.ts.map",
+  "dist/checker/node_modules/typescript/package.json",
+  "dist/checker/node_modules/@twelvehart/orcats/dist/index.d.ts"
 ] as const;
 
 const ForbiddenPackedPathPatterns: ReadonlyArray<readonly [RegExp, string]> = [
@@ -90,7 +93,7 @@ const ForbiddenPackedPathPatterns: ReadonlyArray<readonly [RegExp, string]> = [
   [/^dist\/orcats$/, "compiled release binary must not publish through npm"],
   [/\.tar\.gz$/, "release tarballs must not publish"],
   [/\.tgz$/, "package tarballs must not publish"],
-  [/(^|\/)node_modules\//, "node_modules must not publish"],
+  [/^(?!dist\/checker\/).*node_modules\//, "node_modules must not publish"],
   [/(^|\/)\.tsbuildinfo$/, "TypeScript build info must not publish"],
   [/(^|\/)\.DS_Store$/, "macOS metadata must not publish"]
 ];

@@ -272,7 +272,7 @@ export default defineLoop({
     const previous = process.env[LOOP_EVENT_ENV];
     process.env[LOOP_EVENT_ENV] = JSON.stringify({ issueId: "LIN-123" });
     try {
-      const result = await runQuiet("bun", ["./bin/orcats", "run", "--no-typecheck", loopPath], {
+      const result = await runQuiet("./bin/orcats", ["run", "--no-typecheck", loopPath], {
         cwd: process.cwd()
       });
 

@@ -15,6 +15,7 @@ import { expect, test } from "bun:test";
 import {
   WorkflowMonitor,
   type ConversationEvent,
+  type WorkflowFinalization,
 } from "@twelvehart/orcats";
 import {
   assertPositiveControlEvidence,
@@ -30,6 +31,7 @@ import {
   finalizeWorkflowEvidence,
   hasConfirmedExpectedFileChange,
   InvalidReproductionProofError,
+  publishFinalizationText,
   rethrowAfterFinalizationCleanup,
   runTargetAfterPositiveControl,
 } from "./codebase-improvement-runtime.ts";
@@ -4815,6 +4817,73 @@ test("terminal report failure republishes the failure issue and monitor", async 
   expect(errors.map((error) => error.message)).toEqual([
     "report failed: disk full",
   ]);
+});
+
+test("terminal monitor finalizes once after report failure is known", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orcats-terminal-monitor-"));
+  const monitor = new WorkflowMonitor("codex", { transport: "subprocess", statusIntervalMs: 0 });
+  let finalization: WorkflowFinalization = { status: "succeeded" };
+  let terminalCalls = 0;
+  try {
+    const errors = await finalizeWorkflowEvidence({
+      bodyFailed: false,
+      remainingMs: () => 1_000,
+      shutdown: { label: "shutdown", run: async () => {} },
+      artifacts: [],
+      report: { label: "report", run: async () => { throw new Error("disk full"); } },
+      enterFailureState: (failures) => {
+        finalization = { status: "failed", error: new AggregateError(failures, "report publication failed") };
+      },
+      terminal: {
+        label: "terminal monitor",
+        run: async () => {
+          terminalCalls += 1;
+          await monitor.finalize(root, finalization);
+        },
+      },
+    });
+    expect(terminalCalls).toBe(1);
+    expect(errors).toHaveLength(1);
+    const log = await Bun.file(join(root, `${monitor.runId}.json`)).json();
+    expect(log.status).toBe("failed");
+    expect(log.terminalError.message).toBe("report publication failed");
+    expect(await readdir(root)).toEqual([`${monitor.runId}.json`]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("terminal monitor publication honors its deadline after staging", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orcats-terminal-monitor-"));
+  const stagingDir = join(root, "staging");
+  const destination = join(root, "terminal.json");
+  const monitor = new WorkflowMonitor("codex", { transport: "subprocess", statusIntervalMs: 0 });
+  let remainingMs = 1_000;
+  try {
+    const errors = await finalizeWorkflowEvidence({
+      bodyFailed: false,
+      remainingMs: () => remainingMs,
+      shutdown: { label: "shutdown", run: async () => {} },
+      artifacts: [],
+      report: { label: "report", run: async () => {} },
+      enterFailureState: () => {},
+      terminal: {
+        label: "terminal monitor",
+        run: async (context) => {
+          await monitor.finalize(stagingDir, { status: "succeeded" });
+          const log = await Bun.file(join(stagingDir, `${monitor.runId}.json`)).text();
+          remainingMs = 0;
+          return await publishFinalizationText(destination, log, context);
+        },
+      },
+    });
+    expect(errors).toHaveLength(1);
+    expect(await Bun.file(destination).exists()).toBe(false);
+    expect(await readdir(root)).toEqual(["staging"]);
+    expect(await readdir(stagingDir)).toEqual([`${monitor.runId}.json`]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("failed body attempts each artifact and terminal report once", async () => {

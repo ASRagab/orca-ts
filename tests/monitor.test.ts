@@ -1,8 +1,105 @@
 import { describe, expect, test } from "bun:test";
-import { WorkflowMonitor, type WorkflowRunLog } from "../src/index.ts";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { backendFailed, describeRuntimeError, WorkflowMonitor, type WorkflowRunLog } from "../src/index.ts";
 import { summarizeLogs } from "../scripts/summarize-run.ts";
 
 describe("workflow monitor", () => {
+  test("atomically finalizes success once without losing outcomes or usage", async () => {
+    const logDir = await mkdtemp(join(tmpdir(), "orcats-monitor-"));
+    try {
+      const monitor = new WorkflowMonitor("claude", { transport: "stream-json", statusIntervalMs: 0 });
+      await monitor.stage("implement", () => Promise.resolve());
+      monitor.recordOutcome({
+        file: "src/a.ts", verdict: "repaired", durationMs: 1, smellsRemoved: [],
+        usage: { input: 3, output: 4 },
+      });
+      monitor.recordCycle({ iteration: 1, measure: 0, usage: { input: 3, output: 4 } });
+
+      const finalization = monitor.finalize(logDir, { status: "succeeded" });
+      expect(monitor.finalize(logDir, { status: "failed", error: new Error("late failure") })).toBe(finalization);
+      await finalization;
+
+      const path = join(logDir, `${monitor.runId}.json`);
+      const log = JSON.parse(await readFile(path, "utf8")) as WorkflowRunLog;
+      expect(log).toMatchObject({
+        status: "succeeded", backend: "claude", transport: "stream-json",
+        currentStage: "implement", finalStage: "implement",
+      });
+      expect(Date.parse(log.endedAt ?? "")).toBeGreaterThanOrEqual(Date.parse(log.startedAt));
+      expect(log.terminalError).toBeUndefined();
+      expect(log.failedStage).toBeUndefined();
+      expect(log.outcomes[0]?.usage).toEqual({ input: 3, output: 4 });
+      expect(log.progress[0]?.cumulativeUsage).toEqual({ kind: "known", total: 7 });
+      expect(await readdir(logDir)).toEqual([`${monitor.runId}.json`]);
+    } finally {
+      await rm(logDir, { recursive: true, force: true });
+    }
+  });
+
+  test("persists typed stage failure before it propagates", async () => {
+    const logDir = await mkdtemp(join(tmpdir(), "orcats-monitor-"));
+    const error = backendFailed("claude", "turn stalled", {
+      transport: "acp", phase: "turn", artifactPath: ".orca/workflows/example.ts",
+      recovery: "ORCA_CLAUDE_TRANSPORT=acp orcats doctor claude --smoke",
+    });
+    const monitor = new WorkflowMonitor("claude", { transport: "acp", statusIntervalMs: 0 });
+    const run = async (): Promise<void> => {
+      try {
+        // RuntimeError is a tagged object, not an Error instance.
+        // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+        await monitor.stage("agent turn", () => Promise.reject(error));
+      } catch (failure) {
+        await monitor.finalize(logDir, { status: "failed", error: failure });
+        throw failure;
+      }
+    };
+    try {
+      let propagated: unknown;
+      try {
+        await run();
+      } catch (failure) {
+        propagated = failure;
+      }
+      expect(propagated).toBe(error);
+      const log = JSON.parse(await readFile(join(logDir, `${monitor.runId}.json`), "utf8")) as WorkflowRunLog;
+      expect(log).toMatchObject({ status: "failed", currentStage: "agent turn", failedStage: "agent turn" });
+      expect(log.terminalError).toMatchObject({
+        _tag: "BackendFailed", backend: "claude", transport: "acp", phase: "turn",
+        artifactPath: ".orca/workflows/example.ts", recovery: "ORCA_CLAUDE_TRANSPORT=acp orcats doctor claude --smoke",
+      });
+      expect(log.terminalError?.message).toBe(describeRuntimeError(error));
+      expect(log.endedAt).toBeDefined();
+    } finally {
+      await rm(logDir, { recursive: true, force: true });
+    }
+  });
+
+  test("records initialization failures and arbitrary thrown values", async () => {
+    const logDir = await mkdtemp(join(tmpdir(), "orcats-monitor-"));
+    const circular: { self?: unknown } = {};
+    circular.self = circular;
+    try {
+      for (const error of [undefined, null, false, 0, 1n, "failed", new Error("initialize failed"), circular]) {
+        const monitor = new WorkflowMonitor("codex", { transport: "subprocess", statusIntervalMs: 0 });
+        monitor.recordFailure({ file: "initialize", error, durationMs: 0 });
+        await monitor.finalize(logDir, { status: "failed", error });
+        const log = JSON.parse(await readFile(join(logDir, `${monitor.runId}.json`), "utf8")) as WorkflowRunLog;
+        expect(log).toMatchObject({
+          status: "failed", currentStage: "initialize", failedStage: "initialize",
+          backend: "codex", transport: "subprocess",
+        });
+        expect(typeof log.terminalError?.message).toBe("string");
+        expect(log.terminalError?.message.length).toBeGreaterThan(0);
+        expect(log.failures).toHaveLength(1);
+      }
+      expect((await readdir(logDir)).every((name) => name.endsWith(".json"))).toBe(true);
+    } finally {
+      await rm(logDir, { recursive: true, force: true });
+    }
+  });
+
   test("emits human-readable status updates when a writer is configured", async () => {
     const lines: string[] = [];
     const monitor = new WorkflowMonitor("codex", {
@@ -41,7 +138,7 @@ describe("workflow monitor", () => {
     expect(lines.some((line) => line.startsWith("orcats | stage agent turn failed (") && line.endsWith(": boom"))).toBe(true);
     expect(lines).toContain("orcats | outcome src/a.ts repaired (42ms): fixed");
     expect(lines).toContain(
-      'orcats | failure src/b.ts agent (7ms): {"_tag":"BackendFailed","backend":"codex","message":"stalled"}'
+      "orcats | failure src/b.ts agent (7ms): codex backend failed: stalled."
     );
     expect(lines).toContain("orcats | cycle 2 measure=1 delta=0 stop=running usage=input=1 output=2");
   });

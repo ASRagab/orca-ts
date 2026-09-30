@@ -18,6 +18,7 @@ import {
   parseStructuredOutput,
   sessionId,
   structuredOutputValidationFailed,
+  type BackendFailureContext,
   type BackendTag,
   type Usage
 } from "../model/index.ts";
@@ -38,6 +39,7 @@ export interface AcpBackendRuntimeOptions<B extends BackendTag, Output = unknown
   readonly shutdownTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
   readonly inactivityTimeoutMs?: number;
+  readonly failureContext?: Omit<BackendFailureContext, "phase">;
 }
 
 export function experimentalAcpBackendEnabled(backend: "claude" | "codex"): boolean {
@@ -203,7 +205,14 @@ export async function runAcpConversation<Output, B extends "claude" | "codex">(
     });
   } catch (error) {
     if (!conversation.signal.aborted) {
-      conversation.fail(backendFailed(options.backend, errorMessage(error)));
+      conversation.fail(
+        options.failureContext === undefined
+          ? backendFailed(options.backend, errorMessage(error))
+          : backendFailed(options.backend, errorMessage(error), {
+              ...options.failureContext,
+              phase: error instanceof AcpPhaseError ? error.phase : "turn"
+            })
+      );
     }
   } finally {
     client?.close();
@@ -619,7 +628,14 @@ async function runAcpPhase<T>(
   try {
     return await operation();
   } catch (error) {
-    throw new Error(`${backendLabel(backend)} ACP ${phase} failed: ${errorMessage(error)}`);
+    throw new AcpPhaseError(phase, `${backendLabel(backend)} ACP ${phase} failed: ${errorMessage(error)}`);
+  }
+}
+
+class AcpPhaseError extends Error {
+  constructor(readonly phase: string, message: string) {
+    super(message);
+    this.name = "AcpPhaseError";
   }
 }
 

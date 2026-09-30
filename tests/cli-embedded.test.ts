@@ -106,7 +106,7 @@ process.stdout.write("source-cli-ok");
     );
 
     const result = Bun.spawnSync(
-      [process.execPath, cliPath, "--no-typecheck", flowArg],
+      [cliPath, "--no-typecheck", flowArg],
       {
         cwd: root,
         env: { ...process.env },

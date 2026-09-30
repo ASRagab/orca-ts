@@ -232,15 +232,40 @@ output for tool-using turns may need post-hoc parsing of `outcome.result.output`
 ## Monitoring
 
 ```ts
-import { WorkflowMonitor } from "@twelvehart/orcats";
+import { selectBackend, WorkflowMonitor, type SelectedBackend, type WorkflowFinalization } from "@twelvehart/orcats";
 
-const monitor = new WorkflowMonitor(selected.tag);
-await monitor.stage("setup", async () => { /* … */ });
-monitor.recordOutcome({ file, verdict: "clean", durationMs, smellsRemoved: [] });
-await monitor.writeLog(process.env.ORCA_MONITOR_DIR ?? `${cwd}/.orca/monitoring`);
+const monitor = new WorkflowMonitor(backendTag, { transport });
+let selected: SelectedBackend | undefined;
+let finalization: WorkflowFinalization = { status: "succeeded" };
+try {
+  try {
+    selected = await monitor.stage("initialize", () => Promise.resolve(selectBackend({ default: backendTag })));
+    await monitor.stage("implement", async () => { /* use selected.backend */ });
+    monitor.recordOutcome({ file, verdict: "clean", durationMs, smellsRemoved: [] });
+  } catch (error) {
+    finalization = { status: "failed", error };
+    throw error;
+  } finally {
+    await selected?.shutdown?.();
+  }
+} catch (error) {
+  if (finalization.status === "failed") throw finalization.error;
+  finalization = { status: "failed", error };
+  throw error;
+} finally {
+  await monitor.finalize(process.env.ORCA_MONITOR_DIR ?? `${cwd}/.orca/monitoring`, finalization);
+}
 // monitor.runId -> the log file stem: <runId>.json
 ```
 
-`orcats-flow` tails `.orca/monitoring/<runId>.json` for progress/stall
-detection. Wrap a flow's stages in `monitor.stage(...)` so progress is
-observable.
+Use the intended backend tag and selected transport when creating the monitor,
+before backend initialization. Wrap meaningful stages with `monitor.stage(...)`
+and retain typed backend errors when rethrowing. Finalize exactly once after
+backend shutdown on both success and failure, preserving the original failure
+if shutdown also fails. A captured finalization object
+also records `throw undefined` as a failure. `writeLog()` is an interim snapshot
+and does not terminate the run.
+
+`orcats-flow` uses stderr/heartbeats, plan, loop state, and Git for active
+progress. After termination it reads the terminal JSON as the authoritative
+result; missing JSON during an active run is not evidence of a stall.

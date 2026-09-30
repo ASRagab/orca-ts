@@ -58,10 +58,10 @@ flow back (and before the typecheck gate, when one is reachable).
 11. **Zod for non-native backends.** When a flow may run on `pi` (or OpenCode
     for structured output), wrap brittle fields in `z.preprocess(...)` and be
     ready to parse JSON from `outcome.result.output`.
-12. **Standalone typecheck skip.** In a repo with no `tsconfig.json`, the `orcats`
-    binary **skips** its typecheck pre-flight and warns. The flow still runs;
-    correctness rides on this cookbook + the CI-gated templates. Note this in
-    the runbook for non-TS targets.
+12. **Artifact checking never skips.** Run `orcats check <artifact.ts>` before
+    handoff. The checker is self-contained and offline; it must pass even when
+    the target repo has no `tsconfig.json`, package manager, dependencies, or
+    network. Do not replace failure with a cookbook-only self-audit.
 13. **Never destroy or publish unrelated work.** A flow that mutates the repo
     must protect the user's tree: require a clean baseline (or auto-stash and
     restore) before editing; cut a feature branch before commit/push (never
@@ -70,12 +70,12 @@ flow back (and before the typecheck gate, when one is reachable).
     off-target edits (files the agent touched but wasn't asked to). Destructive
     or irreversible ops (force-push, history rewrite, `reset --hard`, broad
     `clean -fd`) are never auto-performed — escalate to the user.
-14. **Typed-lint repos must ignore the workflow dir.** If the target repo lints
+14. **Typed-lint repos must exclude authored artifacts intentionally.** If the target repo lints
     TypeScript with type information (e.g. ESLint flat config with
     `projectService: true` / `parserOptions.project`, the `typescript-eslint`
     default), a flow saved to `.orca/workflows/*.ts` will make the repo's own
     lint command FAIL on the flow file itself ("not found by the project
-    service") — because `.orca/` is gitignored scratch not in any tsconfig. That
+    service") when the authored directory is outside its tsconfig. That
     turns the workflow's own lint gate RED at baseline, so every task fails and
     the workflow is dead on arrival. Before relying on a detected lint gate in a
     TS repo, confirm the lint config ignores `.orca/**` (or `.orca/workflows/**`);
@@ -102,10 +102,14 @@ flow back (and before the typecheck gate, when one is reachable).
     script, but it cannot infer domain stages like "preflight", "plan",
     "repair", or "publish". Every long-running mutating workflow should create a
     `WorkflowMonitor`, wrap meaningful steps in `monitor.stage(...)`, record
-    per-unit `recordOutcome`/`recordFailure`, and write
-    `.orca/monitoring/<runId>.json` in `finally`. The framework owns the monitor
-    transport, heartbeat, and log schema; the script owns the stage names and
-    work-unit outcomes.
+    per-unit `recordOutcome`/`recordFailure`, and call `monitor.finalize(...)`
+    exactly once in `finally`, with `succeeded` or the caught terminal error.
+    Final JSON is the durable terminal summary, not a live stream. The framework
+    owns stderr heartbeat and schema; the script owns semantic stage names.
+20. **Runtime scratch stays local.** Before handoff, run
+    `orca-git-exclude.sh` for the target repo. Commit-capable templates stage
+    workflow-owned changes with negative pathspecs matching
+    `assets/runtime-scratch-patterns.txt`; never ignore all of `.orca/`.
 
 ## Pre-handoff self-audit checklist
 
@@ -118,8 +122,8 @@ Before declaring a generated flow done, confirm each:
 - [ ] Every `awaitResult()` is followed by an `outcome.type` narrow before `.result`.
 - [ ] Every non-success outcome report includes `outcome.error` or `outcome.reason`, not just `outcome.type`.
 - [ ] Long-running mutating workflows instantiate `WorkflowMonitor`, wrap
-      semantic stages, record outcomes/failures, and write the monitor log in
-      `finally`.
+      semantic stages, record outcomes/failures, and finalize exactly once in
+      `finally` with success or the caught terminal error.
 - [ ] If `selectBackend` (or `opencode()`) is used, `selected.shutdown?.()` runs in a `finally`.
 - [ ] Verification commands are the **detected target-repo** commands, not `bun`/`npm` assumptions.
 - [ ] At least one test gate **and** one lint gate are wired (the skill refuses an ungated flow).
@@ -129,6 +133,8 @@ Before declaring a generated flow done, confirm each:
 - [ ] Managed context is only enabled intentionally, and runbooks mention offload/compaction behavior when used.
 - [ ] Any Zod schema used with `pi`/OpenCode tolerates off-shape output (`z.preprocess`).
 - [ ] No dependency on the agent asking the operator a question (autonomous only).
-- [ ] If the target repo has no `tsconfig.json`, the runbook records the skipped-typecheck note.
+- [ ] `orcats check <artifact.ts>` passes offline; no skipped typecheck is accepted.
+- [ ] Runtime patterns come from `runtime-scratch-patterns.txt`; local excludes
+      preserve `.orca/workflows/`, `.orca/loops/`, and runbooks.
 - [ ] In a typed-lint TS target, the lint config ignores `.orca/**` (else the flow's own lint gate is red at baseline).
 - [ ] Loop runbooks use `orcats loops`, `orcats run`, and `orcats serve`, not the legacy `orcats <flow.ts>` shape; custom `Source`/`Sink` adapters do not read `ORCA_LOOP_EVENT` or supervisor internals.

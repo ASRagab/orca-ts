@@ -1,7 +1,7 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { Usage } from "../model/index.ts";
+import { describeRuntimeError, type Usage } from "../model/index.ts";
 import { TokenBudgetCounter, type TokenUsageSummary } from "../loop/termination.ts";
 import type { LoopStopReason } from "../loop/builder/types.ts";
 import type { LoopContextPressure } from "../loop/execution.ts";
@@ -143,6 +143,14 @@ export interface WorkflowRunLog {
   readonly runId: string;
   readonly startedAt: string;
   readonly backend: string;
+  /** Optional for compatibility with monitor logs written before terminal finalization. */
+  readonly transport?: string;
+  readonly status?: WorkflowRunStatus;
+  readonly endedAt?: string;
+  readonly currentStage?: string;
+  readonly finalStage?: string;
+  readonly failedStage?: string;
+  readonly terminalError?: TerminalErrorLog;
   readonly stages: readonly StageLog[];
   readonly outcomes: readonly OutcomeLog[];
   readonly failures: readonly FailureLog[];
@@ -155,7 +163,24 @@ export interface WorkflowMonitorOptions {
   readonly writeStatus?: (line: string) => void;
   readonly reporter?: RunReporter;
   readonly statusIntervalMs?: number;
+  readonly transport?: string;
 }
+
+export type WorkflowRunStatus = "running" | "succeeded" | "failed";
+
+export interface TerminalErrorLog {
+  readonly message: string;
+  readonly _tag?: string;
+  readonly backend?: string;
+  readonly transport?: string;
+  readonly phase?: string;
+  readonly artifactPath?: string;
+  readonly recovery?: string;
+}
+
+export type WorkflowFinalization =
+  | { readonly status: "succeeded" }
+  | { readonly status: "failed"; readonly error: unknown };
 
 const DefaultStatusIntervalMs = 30_000;
 
@@ -163,6 +188,7 @@ export class WorkflowMonitor {
   readonly #runId: string;
   readonly #startedAt: Date;
   readonly #backend: string;
+  readonly #transport: string | undefined;
   readonly #reporter: RunReporter;
   readonly #statusIntervalMs: number;
   readonly #stages: StageLog[] = [];
@@ -171,11 +197,19 @@ export class WorkflowMonitor {
   readonly #progress: CycleProgress[] = [];
   readonly #cumulativeUsage = new TokenBudgetCounter();
   #lastMeasure: number | undefined;
+  #status: WorkflowRunStatus = "running";
+  #endedAt: string | undefined;
+  #currentStage: string | undefined;
+  #lastStage = "initialize";
+  #failedStage: string | undefined;
+  #terminalError: TerminalErrorLog | undefined;
+  #finalization: Promise<void> | undefined;
 
   constructor(backend: string, options: WorkflowMonitorOptions = {}) {
     this.#runId = randomUUID();
     this.#startedAt = new Date();
     this.#backend = backend;
+    this.#transport = options.transport;
     this.#reporter = options.reporter ?? defaultRunReporter(options.writeStatus);
     this.#statusIntervalMs = options.statusIntervalMs ?? DefaultStatusIntervalMs;
     this.#emit({ type: "run_started", runId: this.#runId, backend });
@@ -189,19 +223,26 @@ export class WorkflowMonitor {
     const startedAt = new Date().toISOString();
     const start = Date.now();
     const heartbeat = this.#startHeartbeat(name, start);
+    this.#currentStage = name;
     this.#emit({ type: "stage", name, status: "started" });
     try {
       const result = await fn();
       const durationMs = Date.now() - start;
       this.#stages.push({ name, startedAt, durationMs, status: "completed" });
+      this.#lastStage = name;
       this.#emit({ type: "stage", name, status: "completed", durationMs });
       return result;
     } catch (error) {
       const durationMs = Date.now() - start;
       this.#stages.push({ name, startedAt, durationMs, status: "failed" });
+      this.#lastStage = name;
+      this.#failedStage = name;
       this.#emit({ type: "stage", name, status: "failed", durationMs, message: describeError(error) });
       throw error;
     } finally {
+      if (this.#currentStage === name) {
+        this.#currentStage = undefined;
+      }
       if (heartbeat !== undefined) {
         clearInterval(heartbeat);
       }
@@ -281,10 +322,22 @@ export class WorkflowMonitor {
     const fail = count("regressed") + count("guard-reject") + this.#failures.length;
     const skip = count("declined");
     const preconditionSkip = count("precondition-skip");
+    const currentStage = this.#currentStage ?? this.#lastStage;
     return {
       runId: this.#runId,
       startedAt: this.#startedAt.toISOString(),
       backend: this.#backend,
+      ...(this.#transport === undefined ? {} : { transport: this.#transport }),
+      status: this.#status,
+      ...(this.#endedAt === undefined ? {} : { endedAt: this.#endedAt }),
+      currentStage,
+      ...(this.#status === "running"
+        ? {}
+        : { finalStage: this.#lastStage }),
+      ...(this.#status !== "failed" || this.#failedStage === undefined
+        ? {}
+        : { failedStage: this.#failedStage }),
+      ...(this.#terminalError === undefined ? {} : { terminalError: this.#terminalError }),
       stages: [...this.#stages],
       outcomes: [...this.#outcomes],
       failures: [...this.#failures],
@@ -294,9 +347,43 @@ export class WorkflowMonitor {
   }
 
   async writeLog(logDir: string): Promise<void> {
+    await this.#writeLog(logDir);
+  }
+
+  finalize(logDir: string, finalization: WorkflowFinalization): Promise<void> {
+    if (this.#finalization !== undefined) {
+      return this.#finalization;
+    }
+    this.#status = finalization.status;
+    this.#endedAt = new Date().toISOString();
+    if (finalization.status === "failed") {
+      this.#failedStage = this.#currentStage ?? this.#lastStage;
+      this.#terminalError = normalizeTerminalError(finalization.error);
+    }
+    this.#finalization = this.#writeLog(logDir);
+    return this.#finalization;
+  }
+
+  async #writeLog(logDir: string): Promise<void> {
     const path = join(logDir, `${this.#runId}.json`);
+    const temporaryPath = `${path}.${randomUUID()}.tmp`;
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, JSON.stringify(this.toJson(), null, 2));
+    try {
+      const log = this.toJson();
+      let serialized: string;
+      try {
+        serialized = JSON.stringify(log, null, 2);
+      } catch {
+        serialized = JSON.stringify({
+          ...log,
+          failures: log.failures.map((failure) => ({ ...failure, error: normalizeTerminalError(failure.error) })),
+        }, null, 2);
+      }
+      await writeFile(temporaryPath, serialized);
+      await rename(temporaryPath, path);
+    } finally {
+      await rm(temporaryPath, { force: true });
+    }
     this.#emit({ type: "artifact", artifact: "monitor-log", path });
   }
 
@@ -353,15 +440,21 @@ function defaultStatusWriter(): ((line: string) => void) | undefined {
 }
 
 function describeError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
+  return describeRuntimeError(error);
+}
+
+function normalizeTerminalError(error: unknown): TerminalErrorLog {
+  if (typeof error === "object" && error !== null) {
+    const value = error as Record<string, unknown>;
+    return {
+      message: describeRuntimeError(error),
+      ...(typeof value._tag === "string" ? { _tag: value._tag } : {}),
+      ...(typeof value.backend === "string" ? { backend: value.backend } : {}),
+      ...(typeof value.transport === "string" ? { transport: value.transport } : {}),
+      ...(typeof value.phase === "string" ? { phase: value.phase } : {}),
+      ...(typeof value.artifactPath === "string" ? { artifactPath: value.artifactPath } : {}),
+      ...(typeof value.recovery === "string" ? { recovery: value.recovery } : {}),
+    };
   }
-  if (typeof error === "string") {
-    return error;
-  }
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
+  return { message: describeRuntimeError(error) };
 }

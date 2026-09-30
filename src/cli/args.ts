@@ -3,7 +3,7 @@ import { extractFlowArgs } from "../flow/args.ts";
 
 /** Loop verbs (spec distribution). Absent => the legacy `orcats <flow.ts>` script path. */
 export type LoopCommand = "run" | "serve" | "loops";
-export type CliCommand = LoopCommand | "skills";
+export type CliCommand = LoopCommand | "check" | "skills";
 
 export interface SkillsArgs {
   readonly list: boolean;
@@ -21,6 +21,8 @@ export interface CliArgs {
   readonly loop?: string;
   /** The legacy flow-script path (no loop verb). */
   readonly script?: string;
+  /** Artifact path for the standalone `check` command. */
+  readonly artifact?: string;
   readonly backend?: BackendTag;
   readonly skipTypecheck: boolean;
   readonly help: boolean;
@@ -34,7 +36,7 @@ export interface CliArgs {
   readonly flowArgs: readonly string[];
 }
 
-const LOOP_COMMANDS = new Set<string>(["run", "serve", "loops"]);
+const COMMANDS = new Set<string>(["run", "serve", "loops", "check"]);
 
 /** Invalid CLI input that must be reported before a command starts. */
 export class CliUsageError extends Error {
@@ -109,14 +111,16 @@ export function parseCliArgs(argv: readonly string[]): CliArgs {
   }
 
   const first = positionals.at(0);
-  const isCommand = first !== undefined && LOOP_COMMANDS.has(first);
-  const command = isCommand ? (first as LoopCommand) : undefined;
-  const loop = isCommand && command !== "loops" ? positionals.at(1) : undefined;
+  const isCommand = first !== undefined && COMMANDS.has(first);
+  const command = isCommand ? (first as Exclude<CliCommand, "skills">) : undefined;
+  const loop = command === "run" || command === "serve" ? positionals.at(1) : undefined;
+  const artifact = command === "check" ? positionals.at(1) : undefined;
   const script = isCommand ? undefined : first;
 
   return {
     ...(command === undefined ? {} : { command }),
     ...(loop === undefined ? {} : { loop }),
+    ...(artifact === undefined ? {} : { artifact }),
     ...(script === undefined ? {} : { script }),
     ...(backend === undefined ? {} : { backend }),
     skipTypecheck,
