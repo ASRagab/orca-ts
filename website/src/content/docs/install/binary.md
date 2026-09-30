@@ -17,8 +17,8 @@ ambient `BUN_OPTIONS` before entering the compiled runtime.
 ## Pin a release
 
 ```bash
-ORCA_VERSION=0.3.0 ORCA_INSTALL_DIR="$HOME/.local/bin" \
-  bash <(curl -fsSL https://github.com/ASRagab/orca-ts/releases/download/v0.3.0/install.sh)
+ORCA_VERSION=0.4.0 ORCA_INSTALL_DIR="$HOME/.local/bin" \
+  bash <(curl -fsSL https://github.com/ASRagab/orca-ts/releases/download/v0.4.0/install.sh)
 ```
 
 ## How flow imports resolve
